@@ -1,0 +1,4 @@
+format_version,session_id,date,start_time,gym,workout_name,duration_minutes,exercise_order,exercise_id,exercise_name,set_number,set_type,status,weight_kg,reps,seconds,meters,rir,rest_seconds,set_duration_seconds,exercise_notes,session_notes
+1,2026-06-14-push,2026-06-14,18:30,Basic Fit,Push Day,55,1,Chest_Press_Machine,Chest Press Machine,1,working,completed,60,12,,,2,,38,Seat 4,Felt strong
+1,2026-06-14-push,2026-06-14,18:30,Basic Fit,Push Day,55,1,Chest_Press_Machine,Chest Press Machine,2,working,completed,65,10,,,1,95,41,,
+1,2026-06-14-push,2026-06-14,18:30,Basic Fit,Push Day,55,2,,Triceps Pushdown,1,working,completed,25,12,,,2,110,34,,

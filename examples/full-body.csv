@@ -1,0 +1,5 @@
+format_version,plan_name,order,exercise_id,exercise_name,normal_sets,fast_sets,ultra_fast_sets,target_metric,target_min,target_max,starting_weight_kg,target_rir_min,target_rir_max,rest_seconds,superset_group
+1,Full Body,1,Leg_Press,Leg Press,3,2,1,reps,8,12,40,1,2,90,
+1,Full Body,2,Chest_Press_Machine,Chest Press Machine,3,2,0,reps,8,12,20,1,2,90,A
+1,Full Body,3,Lat_Pulldown,Lat Pulldown,3,2,1,reps,8,12,25,1,2,90,A
+1,Full Body,4,Farmers_Carry,Farmer's Carry,2,1,0,seconds,30,45,16,1,2,120,
