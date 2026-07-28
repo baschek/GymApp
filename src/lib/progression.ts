@@ -14,17 +14,19 @@ export interface WeightSuggestion {
   weightKg: number;
   reason: string;
   detail: string;
-  confidence: "low" | "medium" | "high";
+  evidence: string;
 }
 
-function roundDown(value: number, step = 0.5): number {
-  return Math.max(0, Math.floor(value / step) * step);
+function roundNearest(value: number, step = 0.5): number {
+  return Math.max(0, Math.round(value / step) * step);
 }
 
-function chooseAvailable(value: number, weights?: number[]): number {
-  if (!weights?.length) return roundDown(value);
+export function nearestAvailableWeight(value: number, weights?: number[]): number {
+  if (!weights?.length) return roundNearest(value);
   const sorted = [...weights].sort((a, b) => a - b);
-  return [...sorted].reverse().find((item) => item <= value) ?? sorted[0];
+  return sorted.reduce((closest, item) =>
+    Math.abs(item - value) < Math.abs(closest - value) ? item : closest
+  );
 }
 
 export function estimatedOneRepMax(set: SetLog, baseLoadKg = 0): number | undefined {
@@ -59,12 +61,12 @@ export function suggestNextWeight(
       0,
       estimate / (1 + desiredEffectiveReps / 30) - baseLoadKg
     );
-    const chosen = chooseAvailable(calculated, weights);
+    const chosen = nearestAvailableWeight(calculated, weights);
     return {
       weightKg: chosen,
-      reason: chosen > (set.weightKg ?? 0) ? "This set supports a heavier trial" : "Use this conservative target",
-      detail: `Calculated from ${set.reps} reps and ${effort} or more reps in reserve, rounded down to available equipment.`,
-      confidence: performedReps + effort >= 20 ? "low" : "medium"
+      reason: chosen > (set.weightKg ?? 0) ? "This set supports a heavier trial" : "Use this target",
+      detail: `Calculated ${calculated.toFixed(1)} kg from ${set.reps} reps and at least ${effort} reps in reserve; ${chosen} kg is the nearest available weight.`,
+      evidence: `Current working set: ${set.reps} reps at ${set.weightKg ?? 0} kg with ${effort} or more reps in reserve.`
     };
   }
 
@@ -76,7 +78,7 @@ export function suggestNextWeight(
         weightKg: sorted[currentIndex + 1],
         reason: "Try less assistance",
         detail: "You reached the top of the target with reserve. Lower assistance is harder.",
-        confidence: "medium"
+        evidence: `Current working set reached ${set.reps} reps with at least ${effort} reps in reserve.`
       };
     }
   }
@@ -94,7 +96,7 @@ export function suggestNextWeight(
         weightKg: sorted[currentIndex + 1],
         reason: "Try the next available load",
         detail: "The target duration or distance was reached with reserve.",
-        confidence: "medium"
+        evidence: `Current working set reached ${achieved} ${target.metric} with at least ${effort} reps in reserve.`
       };
     }
   }
@@ -154,13 +156,19 @@ export function guidedStartingEstimate(
         relatedTotal * 0.6,
         targetExercise.loadBasis
       );
-      const chosen = chooseAvailable(conservativeTarget, equipment?.availableWeightsKg);
+      const chosen = nearestAvailableWeight(
+        conservativeTarget,
+        equipment?.availableWeightsKg
+      );
       return {
         weightKg: chosen,
         reason: `Conservative starting point from ${performed.name}`,
-        detail:
-          "Uses 60% of your latest related working load, normalizes per-hand weights, and rounds down. Treat this as a first-set check, not a strength prediction.",
-        confidence: "low"
+        detail: `Uses 60% of the related ${relatedTotal} kg total load (${conservativeTarget.toFixed(
+          1
+        )} kg calculated) and selects the nearest available ${chosen} kg. Treat this as a first-set check, not a strength prediction.`,
+        evidence: `Latest related working set: ${performed.name} on ${new Date(
+          session.completedAt ?? session.startedAt
+        ).toLocaleDateString()}.`
       };
     }
   }
@@ -214,7 +222,9 @@ export function historicalWorkingWeight(
     detail: `Uses the most frequently recorded working weight from ${new Date(
       latest.completedAt ?? latest.startedAt
     ).toLocaleDateString()} at the selected gym.`,
-    confidence: weightedSets.length >= 2 ? "medium" : "low"
+    evidence: `${weightedSets.length} completed weighted working ${
+      weightedSets.length === 1 ? "set" : "sets"
+    } from that workout.`
   };
 }
 
@@ -256,6 +266,35 @@ export function planWeightAfterSession(
     sessionExercise,
     planEntry.currentWeightKg ?? planEntry.startingWeightKg
   );
+}
+
+export function progressionEvidence(
+  exercise: SessionExercise,
+  currentWeightKg?: number
+): string {
+  const qualifying = exercise.sets
+    .filter((set) => set.weightKg !== undefined && setMeetsTarget(set, exercise.target))
+    .map((set) => set.weightKg as number);
+  const proven = provenWorkingWeight(exercise, currentWeightKg);
+
+  if (proven !== undefined) {
+    return `${proven} kg is proven by two qualifying working sets and will be saved when the workout finishes.`;
+  }
+
+  if (currentWeightKg === undefined) {
+    return `${Math.min(qualifying.length, 1)} of 2 qualifying weighted working sets recorded for a permanent starting level.`;
+  }
+
+  const improving = qualifying.filter((weight) =>
+    exercise.loadDirection === "lower_assistance"
+      ? weight < currentWeightKg
+      : weight > currentWeightKg
+  );
+  const direction =
+    exercise.loadDirection === "lower_assistance"
+      ? `below ${currentWeightKg} kg assistance`
+      : `above ${currentWeightKg} kg`;
+  return `${Math.min(improving.length, 1)} of 2 qualifying working sets ${direction}; two are required in this workout for a permanent change.`;
 }
 
 export function totalVolume(exercise: SessionExercise): number {

@@ -7,14 +7,16 @@ The `dev` branch is the integration branch. Only `main` deploys.
 
 Use semantic prerelease versions:
 
-- Package version: `0.1.0-beta.1`
-- Git tag: `v0.1.0-beta.1`
-- GitHub Release title: `GymApp 0.1.0 Beta 1`
-- Pull request title: `Release GymApp 0.1.0 Beta 1`
+- Package version: `0.2.0-beta.1`
+- Git tag: `v0.2.0-beta.1`
+- GitHub Release title: `GymApp 0.2.0 Beta 1`
+- Pull request title: `Release GymApp 0.2.0 Beta 1`
 
-Increment the beta suffix for fixes made during real-use testing:
-`0.1.0-beta.2`, `0.1.0-beta.3`, and so on. Use `0.1.0` only after the beta
-checklist has been completed without a release-blocking issue.
+Increment the beta suffix for fixes made without changing the feature set:
+`0.2.0-beta.2`, `0.2.0-beta.3`, and so on. Increment the minor version for
+another substantial beta feature set. Use `1.0.0` only after the beta checklist
+has been completed without a release-blocking issue and the owner explicitly
+approves the stable release.
 
 ## Release Gate
 

@@ -36,6 +36,45 @@ function defaultRanges(): WeightIncrementRange[] {
   ];
 }
 
+interface WeightRangeDraft {
+  id: string;
+  minKg: string;
+  maxKg: string;
+  stepKg: string;
+}
+
+function rangeToDraft(range: WeightIncrementRange): WeightRangeDraft {
+  return {
+    id: range.id,
+    minKg: String(range.minKg),
+    maxKg: String(range.maxKg),
+    stepKg: String(range.stepKg)
+  };
+}
+
+function parseDecimal(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseRange(range: WeightRangeDraft): WeightIncrementRange | undefined {
+  const minKg = parseDecimal(range.minKg);
+  const maxKg = parseDecimal(range.maxKg);
+  const stepKg = parseDecimal(range.stepKg);
+  if (
+    minKg === undefined ||
+    maxKg === undefined ||
+    stepKg === undefined ||
+    minKg < 0 ||
+    maxKg < minKg ||
+    stepKg <= 0
+  ) {
+    return undefined;
+  }
+  return { id: range.id, minKg, maxKg, stepKg };
+}
+
 export function MachineProfileEditor({
   exerciseName,
   gymName,
@@ -51,8 +90,8 @@ export function MachineProfileEditor({
   onSave: (values: MachineProfileValues) => Promise<void>;
   onSkip?: () => Promise<void>;
 }) {
-  const [ranges, setRanges] = useState<WeightIncrementRange[]>(() =>
-    profile ? structuredClone(profile.weightRanges ?? []) : defaultRanges()
+  const [ranges, setRanges] = useState<WeightRangeDraft[]>(() =>
+    (profile ? structuredClone(profile.weightRanges ?? []) : defaultRanges()).map(rangeToDraft)
   );
   const [parameters, setParameters] = useState<MachineSetupParameter[]>(() =>
     structuredClone(profile?.setupParameters ?? [])
@@ -67,9 +106,14 @@ export function MachineProfileEditor({
     .split(/[,;\s]+/)
     .map(Number)
     .filter((value) => Number.isFinite(value) && value >= 0);
-  const availableWeightsKg = generateWeightValues(ranges, extras);
+  const parsedRanges = ranges.map(parseRange);
+  const validRanges = parsedRanges.filter(
+    (range): range is WeightIncrementRange => range !== undefined
+  );
+  const rangesValid = validRanges.length === ranges.length;
+  const availableWeightsKg = generateWeightValues(validRanges, extras);
 
-  function updateRange(id: string, patch: Partial<WeightIncrementRange>) {
+  function updateRange(id: string, patch: Partial<WeightRangeDraft>) {
     setRanges((current) =>
       current.map((range) => (range.id === id ? { ...range, ...patch } : range))
     );
@@ -100,7 +144,12 @@ export function MachineProfileEditor({
             onClick={() =>
               setRanges((current) => [
                 ...current,
-                { id: createId("weight_range"), minKg: 5, maxKg: 100, stepKg: 5 }
+                rangeToDraft({
+                  id: createId("weight_range"),
+                  minKg: 5,
+                  maxKg: 100,
+                  stepKg: 5
+                })
               ])
             }
           >
@@ -113,31 +162,28 @@ export function MachineProfileEditor({
               <label className="field compact-field">
                 <span>From kg</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.5"
+                  type="text"
+                  inputMode="decimal"
                   value={range.minKg}
-                  onChange={(event) => updateRange(range.id, { minKg: Number(event.target.value) })}
+                  onChange={(event) => updateRange(range.id, { minKg: event.target.value })}
                 />
               </label>
               <label className="field compact-field">
                 <span>Through kg</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.5"
+                  type="text"
+                  inputMode="decimal"
                   value={range.maxKg}
-                  onChange={(event) => updateRange(range.id, { maxKg: Number(event.target.value) })}
+                  onChange={(event) => updateRange(range.id, { maxKg: event.target.value })}
                 />
               </label>
               <label className="field compact-field">
                 <span>Step kg</span>
                 <input
-                  type="number"
-                  min="0.1"
-                  step="0.5"
+                  type="text"
+                  inputMode="decimal"
                   value={range.stepKg}
-                  onChange={(event) => updateRange(range.id, { stepKg: Number(event.target.value) })}
+                  onChange={(event) => updateRange(range.id, { stepKg: event.target.value })}
                 />
               </label>
               <IconButton
@@ -152,6 +198,11 @@ export function MachineProfileEditor({
             </div>
           ))}
         </div>
+        {!rangesValid && (
+          <p className="field-error" role="alert">
+            Complete each range with valid numbers. Commas and decimal points are accepted.
+          </p>
+        )}
         <label className="field">
           <span>Additional individual weights</span>
           <input
@@ -223,12 +274,11 @@ export function MachineProfileEditor({
         )}
         <button
           className="primary"
+          disabled={!rangesValid}
           onClick={() =>
             void onSave({
               availableWeightsKg,
-              weightRanges: ranges.filter(
-                (range) => range.stepKg > 0 && range.maxKg >= range.minKg
-              ),
+              weightRanges: validRanges,
               setupParameters: parameters
                 .map((parameter) => ({ ...parameter, name: parameter.name.trim() }))
                 .filter((parameter) => parameter.name)

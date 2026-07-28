@@ -4,6 +4,8 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Bell,
+  BellOff,
   Check,
   Clock3,
   Dumbbell,
@@ -35,8 +37,16 @@ import { getGym } from "../lib/gyms";
 import {
   historicalWorkingWeight,
   planWeightAfterSession,
+  progressionEvidence,
   suggestNextWeight
 } from "../lib/progression";
+import {
+  closeTimerNotification,
+  disableTimerNotifications,
+  enableTimerNotifications,
+  showTimerNotification,
+  timerNotificationsEnabled
+} from "../lib/timerNotification";
 import type {
   BodyWeightEntry,
   EffortBand,
@@ -49,7 +59,7 @@ import type {
   WorkoutPlan,
   WorkoutSession
 } from "../types";
-import { effortLabels } from "../types";
+import { effortLabels, selectableEffortBands } from "../types";
 import { CustomExerciseModal } from "./ExercisesScreen";
 
 const loadMeasurements = new Set([
@@ -85,23 +95,38 @@ function useWakeLock(active: boolean) {
 
 function ElapsedTimer({
   session,
-  suggestedRestSeconds
+  suggestedRestSeconds,
+  notificationEnabled,
+  onToggleNotification
 }: {
   session: WorkoutSession;
   suggestedRestSeconds: number;
+  notificationEnabled: boolean;
+  onToggleNotification: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
   const activeSince = session.setStartedAt ?? session.restStartedAt;
   const elapsed = activeSince
     ? Math.max(0, Math.floor((now - new Date(activeSince).getTime()) / 1000))
     : 0;
-  const phase = session.setStartedAt ? "set" : session.restStartedAt ? "rest" : "idle";
+  const phase = session.setStartedAt
+    ? "set"
+    : session.restStartedAt
+      ? session.timerPhase === "machine_setup"
+        ? "machine-setup"
+        : "rest"
+      : "idle";
 
   useEffect(() => {
     setNow(Date.now());
     if (!activeSince) return;
     const timer = window.setInterval(() => setNow(Date.now()), 500);
-    return () => window.clearInterval(timer);
+    const syncNow = () => setNow(Date.now());
+    document.addEventListener("visibilitychange", syncNow);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", syncNow);
+    };
   }, [activeSince]);
 
   return (
@@ -109,14 +134,40 @@ function ElapsedTimer({
       <div>
         <Clock3 size={20} />
         <span>
-          <small>{phase === "set" ? "Current set" : phase === "rest" ? "Rest" : "Ready"}</small>
+          <small>
+            {phase === "set"
+              ? "Current set"
+              : phase === "rest"
+                ? "Rest"
+                : phase === "machine-setup"
+                  ? "Machine change & setup"
+                  : "Ready"}
+          </small>
           <strong>{formatTimer(elapsed)}</strong>
         </span>
       </div>
-      <span className="suggested-rest-reference">
-        <small>Suggested rest</small>
-        <strong>{formatTimer(suggestedRestSeconds)}</strong>
-      </span>
+      {phase === "machine-setup" ? (
+        <span className="suggested-rest-reference">
+          <small>Machine change</small>
+          <strong>Setup</strong>
+        </span>
+      ) : (
+        <span className="suggested-rest-reference">
+          <small>Suggested rest</small>
+          <strong>{formatTimer(suggestedRestSeconds)}</strong>
+        </span>
+      )}
+      <IconButton
+        label={
+          notificationEnabled
+            ? "Hide timer status notification"
+            : "Show timer in status notification"
+        }
+        className={notificationEnabled ? "timer-notification-enabled" : ""}
+        onClick={onToggleNotification}
+      >
+        {notificationEnabled ? <Bell size={18} /> : <BellOff size={18} />}
+      </IconButton>
     </div>
   );
 }
@@ -157,11 +208,13 @@ function FinishModal({
   );
 }
 
-function WorkoutNoteModal({
+function ExerciseNoteModal({
+  exerciseName,
   initialValue,
   onClose,
   onSave
 }: {
+  exerciseName: string;
   initialValue: string;
   onClose: () => void;
   onSave: (value: string) => Promise<void>;
@@ -180,9 +233,9 @@ function WorkoutNoteModal({
   }
 
   return (
-    <Modal title="Workout note" onClose={onClose}>
+    <Modal title={`${exerciseName} note`} onClose={onClose}>
       <label className="field">
-        <span>Note for this workout</span>
+        <span>Note for this exercise</span>
         <textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
@@ -248,6 +301,7 @@ function OverviewModal({
                   <strong>{exercise.name}</strong>
                   <small>
                     {completed}/{exercise.sets.length} sets
+                    {exercise.notes ? " · note saved" : ""}
                   </small>
                 </span>
               </button>
@@ -304,7 +358,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
   );
   const workoutGymId = session.gymId ?? gymId;
   const catalog = useQuery(() => getCatalog(profileId), [] as Exercise[]);
-  const equipmentProfiles = useQuery(
+  const equipmentProfiles = useQuery<EquipmentProfile[] | undefined>(
     () =>
       db.equipmentProfiles
         .where("profileId")
@@ -313,7 +367,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
         .then((profiles) =>
           profiles.filter((profile) => (profile.gymId ?? "basic_fit") === workoutGymId)
         ),
-    [] as EquipmentProfile[],
+    undefined,
     [workoutGymId]
   );
   const latestBodyWeight = useQuery<BodyWeightEntry | undefined>(
@@ -335,10 +389,21 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
     [] as WorkoutSession[],
     [workoutGymId]
   );
+  const workoutPlan = useQuery<WorkoutPlan | undefined>(
+    () =>
+      initialSession.planId
+        ? db.plans.get(initialSession.planId)
+        : Promise.resolve(undefined),
+    undefined,
+    [initialSession.planId]
+  );
   const [overview, setOverview] = useState(false);
   const [picker, setPicker] = useState(false);
   const [creatingExercise, setCreatingExercise] = useState(false);
-  const [workoutNoteOpen, setWorkoutNoteOpen] = useState(false);
+  const [exerciseNoteOpen, setExerciseNoteOpen] = useState(false);
+  const [notificationEnabled, setNotificationEnabled] = useState(
+    timerNotificationsEnabled
+  );
   const [finish, setFinish] = useState(false);
   const [weightSetup, setWeightSetup] = useState(false);
   const [exerciseInfo, setExerciseInfo] = useState<Exercise | null>(null);
@@ -353,7 +418,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
 
   const exercise = session.exercises[session.currentExerciseIndex];
   const currentSet = exercise?.sets.find((set) => set.status === "pending");
-  const equipment = equipmentProfiles.find(
+  const equipment = equipmentProfiles?.find(
     (item) =>
       item.exerciseId === exercise?.exerciseId &&
       (item.gymId ?? "basic_fit") === workoutGymId
@@ -369,8 +434,17 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
     exercise?.suggestionReason ?? historicalEstimate?.reason;
   const displayedSuggestionDetail =
     exercise?.suggestionDetail ?? historicalEstimate?.detail;
-  const displayedSuggestionConfidence =
-    exercise?.suggestionConfidence ?? historicalEstimate?.confidence;
+  const displayedSuggestionEvidence =
+    exercise?.suggestionEvidence ?? historicalEstimate?.evidence;
+  const planEntry = workoutPlan?.exercises.find(
+    (entry) => entry.id === exercise?.sourcePlanExerciseId
+  );
+  const permanentProgressionEvidence = exercise
+    ? progressionEvidence(
+        exercise,
+        planEntry?.currentWeightKg ?? planEntry?.startingWeightKg
+      )
+    : "";
   const needsWeight = exercise ? loadMeasurements.has(exercise.measurementType) : false;
   const needsReps = exercise?.target.metric === "reps";
   const needsSeconds =
@@ -382,21 +456,65 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
     if (
       exercise &&
       exercise.loadDirection !== "none" &&
+      equipmentProfiles !== undefined &&
+      !session.setStartedAt &&
+      currentSet?.setDurationSeconds === undefined &&
       !equipment &&
       !handledWeightPrompts.has(`${workoutGymId}:${exercise.exerciseId}`)
     ) {
       setWeightSetup(true);
     }
-  }, [equipment, exercise, handledWeightPrompts, workoutGymId]);
+  }, [
+    equipment,
+    equipmentProfiles,
+    currentSet,
+    exercise,
+    handledWeightPrompts,
+    session.setStartedAt,
+    workoutGymId
+  ]);
+
+  useEffect(() => {
+    if (!exercise || !notificationEnabled) return;
+    void showTimerNotification(
+      session,
+      exercise.name,
+      exercise.restSeconds || 90
+    );
+  }, [
+    exercise,
+    notificationEnabled,
+    session,
+    session.restStartedAt,
+    session.setStartedAt,
+    session.timerPhase
+  ]);
 
   async function persist(next: WorkoutSession) {
     await db.sessions.put(next);
     refresh();
   }
 
-  async function saveWorkoutNote(notes: string) {
-    await persist({ ...session, notes });
-    notify(notes ? "Workout note saved" : "Workout note removed");
+  async function saveExerciseNote(notes: string) {
+    if (!exercise) return;
+    await persist(updateExercise({ ...exercise, notes }));
+    notify(notes ? "Exercise note saved" : "Exercise note removed");
+  }
+
+  async function toggleTimerNotification() {
+    if (notificationEnabled) {
+      await disableTimerNotifications();
+      setNotificationEnabled(false);
+      notify("Timer status notification disabled");
+      return;
+    }
+    const enabled = await enableTimerNotifications();
+    setNotificationEnabled(enabled);
+    notify(
+      enabled
+        ? "Timer status notification enabled"
+        : "Notification permission was not granted"
+    );
   }
 
   function clearInputs() {
@@ -458,13 +576,23 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
   async function startCurrentSet() {
     if (!exercise || !currentSet || session.setStartedAt) return;
     const now = new Date();
-    const restBeforeSeconds = session.restStartedAt
+    const elapsedBeforeSeconds = session.restStartedAt
       ? Math.max(
           0,
           Math.round((now.getTime() - new Date(session.restStartedAt).getTime()) / 1000)
         )
       : undefined;
-    const timedSet = { ...currentSet, restBeforeSeconds };
+    const timedSet = {
+      ...currentSet,
+      restBeforeSeconds:
+        session.timerPhase === "machine_setup"
+          ? currentSet.restBeforeSeconds
+          : elapsedBeforeSeconds,
+      setupBeforeSeconds:
+        session.timerPhase === "machine_setup"
+          ? elapsedBeforeSeconds
+          : currentSet.setupBeforeSeconds
+    };
     await persist({
       ...updateExercise({
         ...exercise,
@@ -473,6 +601,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       setStartedAt: now.toISOString(),
       timingSetId: currentSet.id,
       restStartedAt: undefined,
+      timerPhase: undefined,
       restEndsAt: undefined,
       restDurationSeconds: undefined
     });
@@ -493,7 +622,8 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       }),
       setStartedAt: undefined,
       timingSetId: undefined,
-      restStartedAt: finishedAt.toISOString()
+      restStartedAt: finishedAt.toISOString(),
+      timerPhase: "rest"
     });
   }
 
@@ -533,10 +663,8 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
         suggestion?.reason ?? exercise.suggestionReason ?? historicalEstimate?.reason,
       suggestionDetail:
         suggestion?.detail ?? exercise.suggestionDetail ?? historicalEstimate?.detail,
-      suggestionConfidence:
-        suggestion?.confidence ??
-        exercise.suggestionConfidence ??
-        historicalEstimate?.confidence,
+      suggestionEvidence:
+        suggestion?.evidence ?? exercise.suggestionEvidence ?? historicalEstimate?.evidence,
       sets: exercise.sets.map((set) => (set.id === currentSet.id ? nextSet : set))
     };
     let nextIndex = session.currentExerciseIndex;
@@ -556,10 +684,14 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
         nextIndex = Math.min(session.currentExerciseIndex + 1, session.exercises.length - 1);
       }
     }
+    const changedExercise = nextIndex !== session.currentExerciseIndex;
     await persist({
       ...updateExercise(nextExercise),
       currentExerciseIndex: nextIndex,
-      restStartedAt: session.restStartedAt ?? new Date().toISOString(),
+      restStartedAt: changedExercise
+        ? new Date().toISOString()
+        : session.restStartedAt ?? new Date().toISOString(),
+      timerPhase: changedExercise ? "machine_setup" : "rest",
       restEndsAt: undefined,
       restDurationSeconds: undefined
     });
@@ -593,7 +725,8 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       }),
       setStartedAt: undefined,
       timingSetId: undefined,
-      restStartedAt: session.restStartedAt ?? new Date().toISOString()
+      restStartedAt: session.restStartedAt ?? new Date().toISOString(),
+      timerPhase: "rest"
     });
     clearInputs();
   }
@@ -619,6 +752,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       setStartedAt: undefined,
       timingSetId: undefined,
       restStartedAt: undefined,
+      timerPhase: undefined,
       restEndsAt: undefined,
       exercises: session.exercises.map((item) => ({
         ...item,
@@ -657,6 +791,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       if (milestones.length) await db.milestones.bulkAdd(milestones);
     });
     setFinish(false);
+    void closeTimerNotification();
     refresh();
     notify("Workout completed");
   }
@@ -679,6 +814,28 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
     await persist({ ...session, exercises: [...session.exercises, added] });
     setPicker(false);
     setOverview(false);
+  }
+
+  async function switchExercise(index: number) {
+    if (
+      index < 0 ||
+      index >= session.exercises.length ||
+      index === session.currentExerciseIndex ||
+      session.setStartedAt
+    ) {
+      return;
+    }
+    await persist({
+      ...session,
+      currentExerciseIndex: index,
+      restStartedAt:
+        session.timerPhase === "machine_setup" && session.restStartedAt
+          ? session.restStartedAt
+          : new Date().toISOString(),
+      timerPhase: "machine_setup",
+      restEndsAt: undefined,
+      restDurationSeconds: undefined
+    });
   }
 
   if (!exercise) {
@@ -733,8 +890,8 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
         </div>
         <div className="heading-actions">
           <button
-            className={`secondary compact ${session.notes ? "has-note" : ""}`}
-            onClick={() => setWorkoutNoteOpen(true)}
+            className={`secondary compact ${exercise.notes ? "has-note" : ""}`}
+            onClick={() => setExerciseNoteOpen(true)}
           >
             <NotebookPen size={18} /> Note
           </button>
@@ -747,12 +904,17 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
           </button>
         </div>
       </div>
-      <ElapsedTimer session={session} suggestedRestSeconds={exercise.restSeconds || 90} />
+      <ElapsedTimer
+        session={session}
+        suggestedRestSeconds={exercise.restSeconds || 90}
+        notificationEnabled={notificationEnabled}
+        onToggleNotification={() => void toggleTimerNotification()}
+      />
       <div className="exercise-position">
         <IconButton
           label="Previous exercise"
           disabled={session.currentExerciseIndex === 0 || Boolean(session.setStartedAt)}
-          onClick={() => void persist({ ...session, currentExerciseIndex: session.currentExerciseIndex - 1 })}
+          onClick={() => void switchExercise(session.currentExerciseIndex - 1)}
         >
           <ArrowLeft size={19} />
         </IconButton>
@@ -765,7 +927,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
             session.currentExerciseIndex === session.exercises.length - 1 ||
             Boolean(session.setStartedAt)
           }
-          onClick={() => void persist({ ...session, currentExerciseIndex: session.currentExerciseIndex + 1 })}
+          onClick={() => void switchExercise(session.currentExerciseIndex + 1)}
         >
           <ArrowRight size={19} />
         </IconButton>
@@ -793,13 +955,21 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
             </strong>
           </span>
         </div>
-        {displayedSuggestionReason && (
+        {(displayedSuggestionReason || displayedSuggestedWeight !== undefined) && (
           <details className="suggestion-detail">
             <summary>
-              <span>{displayedSuggestionReason}</span>
-              <small>{displayedSuggestionConfidence ?? "low"} confidence</small>
+              <span>{displayedSuggestionReason ?? "Saved plan weight"}</span>
+              <small>See evidence</small>
             </summary>
             {displayedSuggestionDetail && <p>{displayedSuggestionDetail}</p>}
+            {displayedSuggestionEvidence && (
+              <p>
+                <strong>Evidence:</strong> {displayedSuggestionEvidence}
+              </p>
+            )}
+            <p>
+              <strong>Permanent progression:</strong> {permanentProgressionEvidence}
+            </p>
           </details>
         )}
         <div className="machine-setup-panel">
@@ -847,6 +1017,9 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
                   : ""}
                 {set.restBeforeSeconds !== undefined
                   ? ` / rest ${formatTimer(set.restBeforeSeconds)}`
+                  : ""}
+                {set.setupBeforeSeconds !== undefined
+                  ? ` / setup ${formatTimer(set.setupBeforeSeconds)}`
                   : ""}
               </small>
             </div>
@@ -952,7 +1125,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
                 <fieldset className="effort-fieldset">
                   <legend>{needsReps ? "Repetitions in reserve" : "Effort reserve"}</legend>
                   <div className="effort-options">
-                    {(Object.keys(effortLabels) as EffortBand[]).map((value) => (
+                    {selectableEffortBands.map((value) => (
                       <button
                         type="button"
                         key={value}
@@ -1028,7 +1201,7 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
           catalog={catalog}
           onClose={() => setOverview(false)}
           onChange={persist}
-          onSelect={(index) => void persist({ ...session, currentExerciseIndex: index })}
+          onSelect={(index) => void switchExercise(index)}
           onAdd={() => setPicker(true)}
           onInfo={(item) => setExerciseInfo(item)}
         />
@@ -1054,11 +1227,12 @@ export function ActiveWorkoutScreen({ session: initialSession }: { session: Work
       {exerciseInfo && (
         <ExerciseInfoModal exercise={exerciseInfo} onClose={() => setExerciseInfo(null)} />
       )}
-      {workoutNoteOpen && (
-        <WorkoutNoteModal
-          initialValue={session.notes}
-          onClose={() => setWorkoutNoteOpen(false)}
-          onSave={saveWorkoutNote}
+      {exerciseNoteOpen && (
+        <ExerciseNoteModal
+          exerciseName={exercise.name}
+          initialValue={exercise.notes}
+          onClose={() => setExerciseNoteOpen(false)}
+          onSave={saveExerciseNote}
         />
       )}
       {finish && <FinishModal session={session} onClose={() => setFinish(false)} onFinish={finishWorkout} />}

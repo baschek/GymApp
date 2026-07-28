@@ -13,7 +13,13 @@ export type MeasurementType =
   | "load_distance_duration"
   | "duration_only";
 export type LoadDirection = "higher" | "lower_assistance" | "none";
-export type EffortBand = "limit" | "one" | "two_three" | "four_plus";
+export type LegacyEffortBand = "one" | "two_three" | "four_plus";
+export type SelectableEffortBand =
+  | "limit"
+  | "one_two"
+  | "three_four"
+  | "five_plus";
+export type EffortBand = SelectableEffortBand | LegacyEffortBand;
 export type SetStatus =
   | "pending"
   | "completed"
@@ -117,6 +123,7 @@ export interface SetLog {
   effort?: EffortBand;
   setDurationSeconds?: number;
   restBeforeSeconds?: number;
+  setupBeforeSeconds?: number;
   completedAt?: string;
 }
 
@@ -137,6 +144,8 @@ export interface SessionExercise {
   suggestedWeightKg?: number;
   suggestionReason?: string;
   suggestionDetail?: string;
+  suggestionEvidence?: string;
+  /** Retained so existing stored sessions and backups remain readable. */
   suggestionConfidence?: "low" | "medium" | "high";
   sets: SetLog[];
 }
@@ -159,6 +168,7 @@ export interface WorkoutSession {
   setStartedAt?: string;
   timingSetId?: string;
   restStartedAt?: string;
+  timerPhase?: "rest" | "machine_setup";
   restEndsAt?: string;
   restDurationSeconds?: number;
 }
@@ -228,12 +238,25 @@ export const effortLowerBound: Record<EffortBand, number> = {
   limit: 0,
   one: 1,
   two_three: 2,
-  four_plus: 4
+  four_plus: 4,
+  one_two: 1,
+  three_four: 3,
+  five_plus: 5
 };
 
 export const effortLabels: Record<EffortBand, string> = {
   limit: "At limit",
   one: "1 left",
   two_three: "2-3 left",
-  four_plus: "4+ / easy"
+  four_plus: "4+ / easy",
+  one_two: "1-2 left",
+  three_four: "3-4 left",
+  five_plus: "5+ / easy"
 };
+
+export const selectableEffortBands: SelectableEffortBand[] = [
+  "limit",
+  "one_two",
+  "three_four",
+  "five_plus"
+];
