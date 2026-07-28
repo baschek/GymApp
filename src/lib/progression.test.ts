@@ -9,6 +9,8 @@ import type {
 import {
   estimatedOneRepMax,
   guidedStartingEstimate,
+  nearestAvailableWeight,
+  progressionEvidence,
   provenWorkingWeight,
   suggestNextWeight
 } from "./progression";
@@ -58,6 +60,12 @@ function sessionExercise(sets: SetLog[], direction: SessionExercise["loadDirecti
 }
 
 describe("progression", () => {
+  it("selects the nearest available weight and resolves ties downward", () => {
+    expect(nearestAvailableWeight(23.9, [22.5, 25])).toBe(25);
+    expect(nearestAvailableWeight(23.75, [22.5, 25])).toBe(22.5);
+    expect(nearestAvailableWeight(23.8)).toBe(24);
+  });
+
   it("calculates a conservative between-set target and uses an available value", () => {
     const result = suggestNextWeight(
       set(20, 15, "four_plus"),
@@ -66,7 +74,7 @@ describe("progression", () => {
       equipment
     );
     expect(result?.weightKg).toBe(22.5);
-    expect(result?.confidence).toBe("medium");
+    expect(result?.evidence).toContain("Current working set");
   });
 
   it("advances to the highest load corroborated by two qualifying sets", () => {
@@ -76,6 +84,19 @@ describe("progression", () => {
       set(25, 9, "one")
     ]);
     expect(provenWorkingWeight(exercise, 20)).toBe(25);
+  });
+
+  it("uses the new effort bands and explains permanent progression evidence", () => {
+    const oneProof = sessionExercise([set(25, 8, "one_two")]);
+    expect(provenWorkingWeight(oneProof, 20)).toBeUndefined();
+    expect(progressionEvidence(oneProof, 20)).toContain("1 of 2");
+
+    const proven = sessionExercise([
+      set(25, 8, "one_two"),
+      set(25, 8, "one_two")
+    ]);
+    expect(provenWorkingWeight(proven, 20)).toBe(25);
+    expect(progressionEvidence(proven, 20)).toContain("will be saved");
   });
 
   it("does not treat one good set or a time-skipped set as proof", () => {
@@ -104,7 +125,7 @@ describe("progression", () => {
     expect(estimatedOneRepMax(set(10, 10, "two_three"), 80)).toBeCloseTo(126);
   });
 
-  it("offers a low-confidence related-exercise estimate and normalizes per-hand load", () => {
+  it("offers a related-exercise estimate, normalizes per-hand load, and picks the nearest weight", () => {
     const source: Exercise = {
       id: "dumbbell-press",
       name: "Dumbbell Bench Press",
@@ -149,8 +170,8 @@ describe("progression", () => {
       ...equipment,
       exerciseId: targetExercise.id
     });
-    expect(result?.weightKg).toBe(22.5);
-    expect(result?.confidence).toBe("low");
+    expect(result?.weightKg).toBe(25);
+    expect(result?.evidence).toContain("Latest related working set");
     expect(result?.reason).toContain("Dumbbell Bench Press");
   });
 });

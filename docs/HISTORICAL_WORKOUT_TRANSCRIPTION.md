@@ -86,9 +86,12 @@ GymApp imports kilograms only.
 Numeric RIR is stored in the app's effort bands:
 
 - `0` becomes `At limit`
-- `1` becomes `1 left`
-- `2` or `3` becomes `2-3 left`
-- `4` or more becomes `4+ / easy`
+- `1` or `2` becomes `1-2 left`
+- `3` or `4` becomes `3-4 left`
+- `5` or more becomes `5+ / easy`
+
+Older sessions retain their original legacy effort labels instead of being
+reinterpreted into the new ranges.
 
 Leave `rir` blank if it was not recorded. Imported sets without RIR remain visible but do not prove automatic permanent plan progression.
 

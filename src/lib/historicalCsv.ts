@@ -122,9 +122,9 @@ function parseGym(value: string): GymId | undefined {
 function effortFromRir(rir?: number): EffortBand | undefined {
   if (rir === undefined) return undefined;
   if (rir < 1) return "limit";
-  if (rir < 2) return "one";
-  if (rir < 4) return "two_three";
-  return "four_plus";
+  if (rir < 3) return "one_two";
+  if (rir < 5) return "three_four";
+  return "five_plus";
 }
 
 export function parseHistoricalCsv(content: string): HistoricalCsvParseResult {

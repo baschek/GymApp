@@ -1,6 +1,6 @@
 # GymApp Beta Testing
 
-Current beta: `0.1.0-beta.1`
+Current beta: `0.2.0-beta.1`
 
 This beta is intended for real workout sessions on an Android phone. It is not
 yet a stable `1.0` release. Training data remains local to the browser profile,
@@ -31,12 +31,17 @@ During at least two normal sessions, verify:
 - Starting and finishing a set records its duration.
 - The rest timer starts immediately after **Finish set**.
 - Starting the next set records the actual rest duration.
+- Moving to another exercise shows and records **Machine change & setup** separately from rest.
+- If enabled, the Android status notification shows the active set, rest, or setup phase.
 - Repetitions, weight, effort, seconds, and distance appear where expected.
-- A workout-specific note can be added during the session.
+- The effort choices are **At limit**, **1–2 left**, **3–4 left**, and **5+ / easy**.
+- An exercise-specific note can be added during the session.
 - Temporary exercise additions do not modify the saved plan.
 - Finishing the workout creates a dated History entry.
-- The workout note appears only on that dated History entry.
+- Each exercise note appears under its exercise on the dated History entry.
 - Closing and reopening the installed app preserves the active session.
+- A running timer catches up from its stored timestamp after leaving and reopening the app.
+- Clearing and replacing a machine weight range does not prepend a zero, including with a decimal comma.
 - The app opens without a network connection after one complete online load.
 
 ## Data Safety
@@ -69,9 +74,9 @@ training data.
 The release workflow currently requires:
 
 - ESLint
-- 15 Vitest unit tests
+- 18 Vitest unit tests
 - Production TypeScript and Vite build
-- 8 Playwright flows across Android and desktop viewports
+- 12 Playwright flows across Android and desktop viewports
 - Installed-PWA cold launch while offline
 
 The automated checks do not replace real-device validation of Android keyboard

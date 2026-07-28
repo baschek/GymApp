@@ -81,6 +81,7 @@ export default function App() {
     needRefresh: [updateReady],
     updateServiceWorker
   } = useRegisterSW({
+    immediate: true,
     onRegistered() {
       // Updates are checked by the service worker and activated only after confirmation.
     },
@@ -93,6 +94,15 @@ export default function App() {
     const listener = () => setRoute(currentRoute());
     window.addEventListener("hashchange", listener);
     return () => window.removeEventListener("hashchange", listener);
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const listener = (event: MessageEvent) => {
+      if (event.data?.type === "OPEN_ACTIVE_WORKOUT") navigate("workouts");
+    };
+    navigator.serviceWorker.addEventListener("message", listener);
+    return () => navigator.serviceWorker.removeEventListener("message", listener);
   }, []);
 
   useEffect(() => {

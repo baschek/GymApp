@@ -80,5 +80,5 @@ Define this exercise with **Weight, distance, and duration**. This row selects s
 - Use one row per exercise, not one row per set.
 - Save or export as UTF-8 comma-separated CSV.
 - Quote text containing commas; Excel and Google Sheets handle this automatically.
-- Add a workout-specific note during the active workout instead of storing permanent notes in the plan.
+- Add exercise-specific notes during the active workout instead of storing permanent notes in the plan.
 - Download the in-app template or start from [`examples/full-body.csv`](../examples/full-body.csv).

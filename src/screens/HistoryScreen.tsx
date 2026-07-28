@@ -23,7 +23,7 @@ import {
 } from "../lib/historicalCsv";
 import { recalculatePlanProgression } from "../lib/recalculate";
 import type { EffortBand, Exercise, WorkoutSession } from "../types";
-import { effortLabels } from "../types";
+import { effortLabels, selectableEffortBands } from "../types";
 
 function formatDuration(seconds?: number) {
   if (!seconds) return "No duration";
@@ -234,9 +234,9 @@ function SessionModal({
         <span>{session.mode === "ultra" ? "Ultra fast" : session.mode}</span>
         <span>{getGym(session.gymId ?? "basic_fit").name}</span>
       </div>
-      {editing ? (
+      {editing && session.notes ? (
         <label className="field">
-          <span>Workout note</span>
+          <span>Legacy workout note</span>
           <textarea
             value={session.notes}
             onChange={(event) =>
@@ -256,6 +256,26 @@ function SessionModal({
         {session.exercises.map((exercise, exerciseIndex) => (
           <section key={exercise.id} className="history-exercise">
             <h3>{exercise.name}</h3>
+            {editing ? (
+              <label className="field">
+                <span>Note for {exercise.name}</span>
+                <textarea
+                  value={exercise.notes}
+                  onChange={(event) => {
+                    const exercises = structuredClone(session.exercises);
+                    exercises[exerciseIndex].notes = event.target.value;
+                    setSession({ ...session, exercises });
+                  }}
+                />
+              </label>
+            ) : (
+              exercise.notes && (
+                <div className="session-note exercise-note">
+                  <small>Exercise note</small>
+                  <p>{exercise.notes}</p>
+                </div>
+              )
+            )}
             {exercise.sets.map((set, setIndex) => (
               <div className="history-set" key={set.id}>
                 <span>Set {set.order}</span>
@@ -307,7 +327,13 @@ function SessionModal({
                         setSession({ ...session, exercises });
                       }}
                     >
-                      {(Object.keys(effortLabels) as EffortBand[]).map((value) => (
+                      {([
+                        ...(set.effort &&
+                        !selectableEffortBands.some((value) => value === set.effort)
+                          ? [set.effort]
+                          : []),
+                        ...selectableEffortBands
+                      ] as EffortBand[]).map((value) => (
                         <option key={value} value={value}>
                           {effortLabels[value]}
                         </option>
@@ -327,6 +353,9 @@ function SessionModal({
                       {set.restBeforeSeconds !== undefined
                         ? ` / rest ${formatClock(set.restBeforeSeconds)}`
                         : ""}
+                      {set.setupBeforeSeconds !== undefined
+                        ? ` / setup ${formatClock(set.setupBeforeSeconds)}`
+                        : ""}
                     </small>
                   </>
                 )}
@@ -335,7 +364,7 @@ function SessionModal({
           </section>
         ))}
       </div>
-      <div className="button-row">
+      <div className="button-row session-actions">
         {editing ? (
           <>
             <button className="secondary" onClick={() => setSession(structuredClone(initial))}>

@@ -125,14 +125,26 @@ export function SettingsScreen() {
   );
   const [restorePayload, setRestorePayload] = useState<BackupPayload | null>(null);
   const [editingEquipment, setEditingEquipment] = useState<EquipmentProfile | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
   const restoreRef = useRef<HTMLInputElement>(null);
 
   async function backup() {
-    const payload = await createPersonalBackup();
-    await shareOrDownloadBackup(backupFile(payload));
-    await db.settings.put({ key: "lastBackupAt", value: payload.exportedAt });
-    refresh();
-    notify("Backup created");
+    setBackingUp(true);
+    try {
+      const payload = await createPersonalBackup();
+      const result = await shareOrDownloadBackup(backupFile(payload));
+      await db.settings.put({ key: "lastBackupAt", value: payload.exportedAt });
+      refresh();
+      notify(result === "shared" ? "Backup shared" : "Backup downloaded");
+    } catch (error) {
+      notify(
+        error instanceof DOMException && error.name === "AbortError"
+          ? "Backup cancelled"
+          : "Backup could not be created"
+      );
+    } finally {
+      setBackingUp(false);
+    }
   }
 
   async function switchProfile(next: "personal" | "test") {
@@ -194,7 +206,7 @@ export function SettingsScreen() {
             ]}
           />
           {profileId === "test" && (
-            <button className="secondary danger-text" onClick={() => void resetTest()}>
+            <button className="secondary danger-text reset-test-button" onClick={() => void resetTest()}>
               <RefreshCcw size={17} /> Reset Test profile
             </button>
           )}
@@ -255,8 +267,8 @@ export function SettingsScreen() {
               </div>
             </header>
             <div className="button-row">
-              <button className="primary" onClick={() => void backup()}>
-                <Upload size={17} /> Back up now
+              <button className="primary" disabled={backingUp} onClick={() => void backup()}>
+                <Upload size={17} /> {backingUp ? "Preparing backup..." : "Back up now"}
               </button>
               <button className="secondary" onClick={() => restoreRef.current?.click()}>
                 <Download size={17} /> Restore backup

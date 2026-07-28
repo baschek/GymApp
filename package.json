@@ -1,7 +1,7 @@
 {
   "name": "gymapp",
   "private": true,
-  "version": "0.1.0-beta.1",
+  "version": "0.2.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,7 +23,7 @@
     "zod": "^4.0.17"
   },
   "devDependencies": {
-    "@eslint/js": "^9.33.0",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.54.2",
     "@testing-library/jest-dom": "^6.6.4",
     "@testing-library/react": "^16.3.0",
@@ -32,18 +32,27 @@
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",
-    "eslint": "^9.33.0",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-refresh": "^0.4.20",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
     "fake-indexeddb": "^6.2.5",
     "globals": "^16.3.0",
     "jsdom": "^26.1.0",
+    "minimatch": "^10.2.6",
     "sharp": "^0.35.3",
     "tsx": "^4.20.4",
     "typescript": "~5.8.3",
-    "typescript-eslint": "^8.39.1",
+    "typescript-eslint": "^8.65.0",
     "vite": "^7.1.2",
     "vite-plugin-pwa": "^1.0.2",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "workbox-core": "^7.4.1",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1"
+  },
+  "overrides": {
+    "filelist@1.0.6": {
+      "minimatch": "10.2.6"
+    }
   }
 }

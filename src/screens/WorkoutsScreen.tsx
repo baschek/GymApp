@@ -110,7 +110,7 @@ function StartWorkoutModal({
         suggestedWeightKg: savedWeight ?? startingEstimate?.weightKg,
         suggestionReason: startingEstimate?.reason,
         suggestionDetail: startingEstimate?.detail,
-        suggestionConfidence: startingEstimate?.confidence,
+        suggestionEvidence: startingEstimate?.evidence,
         sets: Array.from({ length: setCount }, (_, setIndex) => ({
           id: createId("set"),
           order: setIndex + 1,
@@ -338,7 +338,10 @@ export function WorkoutsScreen() {
     () => db.plans.where("profileId").equals(profileId).sortBy("updatedAt").then((rows) => rows.reverse()),
     [] as WorkoutPlan[]
   );
-  const exercises = useQuery(() => getCatalog(profileId), [] as Exercise[]);
+  const loadedExercises = useQuery(
+    () => getCatalog(profileId),
+    undefined as Exercise[] | undefined
+  );
   const completedSessions = useQuery(
     () =>
       db.sessions
@@ -362,7 +365,11 @@ export function WorkoutsScreen() {
   );
   const [startPlan, setStartPlan] = useState<WorkoutPlan | null>(null);
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
+  const [packlistOpen, setPacklistOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  if (!loadedExercises) return <div className="loading">Loading workouts...</div>;
+  const exercises = loadedExercises;
 
   async function createPlan() {
     const now = new Date().toISOString();
@@ -424,6 +431,9 @@ export function WorkoutsScreen() {
           <h1>Workouts</h1>
         </div>
         <div className="heading-actions">
+          <IconButton label="Gym packlist" onClick={() => setPacklistOpen(true)}>
+            <Info size={20} />
+          </IconButton>
           <IconButton label="Download CSV template" onClick={downloadTemplate}>
             <Download size={20} />
           </IconButton>
@@ -503,6 +513,19 @@ export function WorkoutsScreen() {
             notify("Workout started");
           }}
         />
+      )}
+      {packlistOpen && (
+        <Modal title="Gym packlist" onClose={() => setPacklistOpen(false)}>
+          <p className="modal-copy">Pack these before leaving for the gym:</p>
+          <ul className="packlist">
+            <li>Headphones</li>
+            <li>Towel</li>
+            <li>Gym clothes</li>
+            <li>Shoes</li>
+            <li>Water bottle</li>
+            <li>Lock</li>
+          </ul>
+        </Modal>
       )}
       {importPreview && (
         <ImportModal

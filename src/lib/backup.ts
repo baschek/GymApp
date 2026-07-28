@@ -53,15 +53,25 @@ export function backupFile(payload: BackupPayload): File {
 
 export async function shareOrDownloadBackup(file: File): Promise<"shared" | "downloaded"> {
   if (navigator.canShare?.({ files: [file] })) {
-    await navigator.share({ files: [file], title: "GymApp backup" });
-    return "shared";
+    try {
+      await navigator.share({ files: [file], title: "GymApp backup" });
+      return "shared";
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
   }
+
   const url = URL.createObjectURL(file);
   const link = document.createElement("a");
   link.href = url;
   link.download = file.name;
+  link.hidden = true;
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, 1000);
   return "downloaded";
 }
 

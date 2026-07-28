@@ -9,11 +9,9 @@ export function ExerciseInfoModal({
   onClose: () => void;
 }) {
   const images = exercise.customPhoto ? [exercise.customPhoto] : exercise.imageUrls;
-  const description =
-    exercise.instructions[0] ??
-    `A ${exercise.equipment || "general"} exercise primarily targeting ${
-      exercise.primaryMuscles.join(", ") || "the selected muscle groups"
-    }.`;
+  const description = `A ${exercise.equipment || "general"} exercise primarily targeting ${
+    exercise.primaryMuscles.join(", ") || "the selected muscle groups"
+  }.`;
 
   return (
     <Modal title={exercise.name} onClose={onClose} wide>
@@ -22,18 +20,20 @@ export function ExerciseInfoModal({
           <img src={images[0]} alt={`${exercise.name} illustration`} />
         </div>
       )}
-      <p className="exercise-description">{description}</p>
+      {exercise.instructions.length === 0 && (
+        <p className="exercise-description">{description}</p>
+      )}
       <div className="tag-row">
         <span>{exercise.equipment}</span>
         {exercise.primaryMuscles.map((muscle) => (
           <span key={muscle}>{muscle}</span>
         ))}
       </div>
-      {exercise.instructions.length > 1 && (
+      {exercise.instructions.length > 0 && (
         <div className="instruction-list">
-          {exercise.instructions.slice(1, 4).map((instruction, index) => (
+          {exercise.instructions.slice(0, 4).map((instruction, index) => (
             <p key={`${instruction}-${index}`}>
-              <strong>{index + 2}</strong>
+              <strong>{index + 1}</strong>
               {instruction}
             </p>
           ))}

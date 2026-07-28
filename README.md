@@ -11,10 +11,10 @@ GymApp is an offline-first workout planner and training log. It installs as a Pr
 - Reusable workout plans with Normal, Fast, and Ultra Fast prescriptions
 - CSV plan import with validation, mapping preview, and conflict handling
 - Gym-specific machine profiles with configurable weight ranges and freely named setup parameters
-- Start/stop set timing, count-up rest timing, and actual rest-duration logging
-- Workout-specific notes stored only with the dated session
+- Start/stop set timing, separate rest and machine-setup timing, and an opt-in Android status notification
+- Exercise-specific notes stored only with the dated session
 - Exercise information modals with offline illustrations and concise instructions
-- Focused active-workout screen with variable weights per set, RIR/effort, temporary edits, and supersets
+- Focused active-workout screen with variable weights per set, RIR/effort, evidence-based weight suggestions, temporary edits, and supersets
 - Two-set evidence rule for automatic saved-weight progression
 - Dated editable history, exercise charts, activity summaries, and optional body-weight log
 - Historical workout CSV import with exercise mapping and duplicate detection
@@ -55,7 +55,7 @@ npm.cmd run preview
 
 PowerShell on this machine blocks `npm.ps1`, so examples use `npm.cmd`. Ordinary shells can use `npm`.
 
-The current prerelease is `0.1.0-beta.1`.
+The current prerelease is `0.2.0-beta.1`.
 
 - [Beta testing guide](docs/BETA_TESTING.md)
 - [Release process](docs/RELEASE_PROCESS.md)

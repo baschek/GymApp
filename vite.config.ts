@@ -6,12 +6,15 @@ export default defineConfig({
   base: "/GymApp/",
   define: {
     __APP_VERSION__: JSON.stringify(
-      process.env.npm_package_version ?? "0.1.0-beta.1"
+      process.env.npm_package_version ?? "0.2.0-beta.1"
     )
   },
   plugins: [
     react(),
     VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       registerType: "prompt",
       includeAssets: ["icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png"],
       manifest: {
@@ -45,9 +48,8 @@ export default defineConfig({
           }
         ]
       },
-      workbox: {
+      injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,json,webp,png,jpg}"],
-        navigateFallback: "index.html",
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024
       }
     })
