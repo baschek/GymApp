@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-- The current public release is `v0.2.0-beta.1`, titled
-  `GymApp 0.2.0 Beta 1`.
+- The current public release is `v0.2.0-beta.2`, titled
+  `GymApp 0.2.0 Beta 2`.
 - Production is deployed at `https://baschek.github.io/GymApp/`.
 - The owner is now testing the app in real workouts on Android.
 - Expect the next sessions to begin with informal bug reports, screenshots, or

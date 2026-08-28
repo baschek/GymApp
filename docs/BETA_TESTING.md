@@ -1,6 +1,6 @@
 # GymApp Beta Testing
 
-Current beta: `0.2.0-beta.1`
+Current beta: `0.2.0-beta.2`
 
 This beta is intended for real workout sessions on an Android phone. It is not
 yet a stable `1.0` release. Training data remains local to the browser profile,
@@ -10,11 +10,12 @@ so backups are part of the beta procedure.
 
 1. Open the deployed GitHub Pages URL in Android Chrome.
 2. Install GymApp from Chrome's **Install app** action.
-3. Open **Settings** and select the current gym.
-4. Define or import the exercises needed for the planned workout.
-5. Configure each machine's available increments and setup parameters.
-6. Create or import a workout plan.
-7. Create a backup after the initial setup.
+3. Open **Settings > Storage**, tap **Protect local data**, and confirm that protection is enabled.
+4. Select the current gym.
+5. Define or import the exercises needed for the planned workout.
+6. Configure each machine's available increments and setup parameters.
+7. Create or import a workout plan.
+8. Create a backup after the initial setup.
 
 Data created on `localhost`, GitHub Pages, and the installed Android app belongs
 to separate browser origins. Transfer existing PC data with **Settings > Backup
@@ -43,10 +44,12 @@ During at least two normal sessions, verify:
 - A running timer catches up from its stored timestamp after leaving and reopening the app.
 - Clearing and replacing a machine weight range does not prepend a zero, including with a decimal comma.
 - The app opens without a network connection after one complete online load.
+- **Settings > Storage** still reports protection from automatic browser cleanup.
 
 ## Data Safety
 
 - Create a backup after every few beta sessions.
+- Treat the persistent-storage status as one protection layer, not as a replacement for backups.
 - Keep the original manually recorded workouts until their imported data has
   been checked.
 - Do not clear Chrome site data or uninstall the browser before exporting a
@@ -74,9 +77,9 @@ training data.
 The release workflow currently requires:
 
 - ESLint
-- 18 Vitest unit tests
+- 21 Vitest unit tests
 - Production TypeScript and Vite build
-- 12 Playwright flows across Android and desktop viewports
+- 14 Playwright flows across Android and desktop viewports
 - Installed-PWA cold launch while offline
 
 The automated checks do not replace real-device validation of Android keyboard

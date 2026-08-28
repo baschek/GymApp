@@ -4,7 +4,7 @@ import { AppShell, navigate } from "./components/AppShell";
 import { MilestoneCelebration } from "./components/MilestoneCelebration";
 import { useApp } from "./context/AppContext";
 import { useQuery } from "./hooks/useQuery";
-import { db } from "./lib/db";
+import { db, getStoragePersistenceStatus, type StoragePersistenceStatus } from "./lib/db";
 import type { Milestone, WorkoutSession } from "./types";
 
 const ActiveWorkoutScreen = lazy(() =>
@@ -62,20 +62,38 @@ export default function App() {
   );
   const backupState = useQuery(
     async () => {
-      if (profileId !== "personal") return { due: false };
-      const [sessions, setting] = await Promise.all([
+      const [sessions, setting, planCount, bodyWeightCount, exerciseCount, equipmentCount, milestoneCount] =
+        await Promise.all([
         db.sessions.where("profileId").equals("personal").toArray(),
-        db.settings.get("lastBackupAt")
+        db.settings.get("lastBackupAt"),
+        db.plans.where("profileId").equals("personal").count(),
+        db.bodyWeights.where("profileId").equals("personal").count(),
+        db.customExercises.where("profileId").equals("personal").count(),
+        db.equipmentProfiles.where("profileId").equals("personal").count(),
+        db.milestones.where("profileId").equals("personal").count()
       ]);
       const completed = sessions.filter((session) => session.status === "completed");
       const last = typeof setting?.value === "string" ? setting.value : undefined;
+      const hasPersonalData =
+        sessions.length +
+          planCount +
+          bodyWeightCount +
+          exerciseCount +
+          equipmentCount +
+          milestoneCount >
+        0;
       const since = last
         ? completed.filter((session) => (session.completedAt ?? session.startedAt) > last).length
         : completed.length;
       const ageDue = last ? Date.now() - new Date(last).getTime() >= 30 * 24 * 60 * 60 * 1000 : false;
-      return { due: since >= 5 || ageDue };
+      const due = profileId === "personal" && (last ? since >= 5 || ageDue : hasPersonalData);
+      return { due, hasPersonalData };
     },
-    { due: false }
+    { due: false, hasPersonalData: false }
+  );
+  const storageState = useQuery<StoragePersistenceStatus | "checking">(
+    getStoragePersistenceStatus,
+    "checking"
   );
   const {
     needRefresh: [updateReady],
@@ -143,6 +161,10 @@ export default function App() {
       updateReady={updateReady}
       applyUpdate={() => void updateServiceWorker(true)}
       backupDue={backupState.due}
+      storageAtRisk={
+        backupState.hasPersonalData &&
+        (storageState === "best-effort" || storageState === "unsupported")
+      }
     >
       <Suspense fallback={<div className="loading">Loading GymApp...</div>}>{content}</Suspense>
       {unseenMilestone && <MilestoneCelebration milestone={unseenMilestone} />}

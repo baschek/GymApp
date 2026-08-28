@@ -29,8 +29,11 @@ Production is deployed from `main` to GitHub Pages.
 2. Open Chrome's menu and choose **Install app** or **Add to Home screen**.
 3. Launch GymApp from the Android app list.
 4. Open it once while online so the service worker can cache the application.
+5. In **Settings > Storage**, tap **Protect local data** and confirm that protection is enabled.
 
-Workout data is not uploaded to GitHub Pages. It stays in the installed browser profile. Create periodic backups in **Settings > Backup and restore**.
+Workout data is not uploaded to GitHub Pages. It stays in the installed browser profile. Persistent storage protects it from
+automatic browser eviction, but it cannot protect against clearing Chrome site data or uninstalling the PWA. Create periodic
+backups in **Settings > Backup and restore**.
 
 ## PC Development
 
@@ -55,7 +58,7 @@ npm.cmd run preview
 
 PowerShell on this machine blocks `npm.ps1`, so examples use `npm.cmd`. Ordinary shells can use `npm`.
 
-The current prerelease is `0.2.0-beta.1`.
+The current prerelease is `0.2.0-beta.2`.
 
 - [Beta testing guide](docs/BETA_TESTING.md)
 - [Release process](docs/RELEASE_PROCESS.md)
