@@ -51,13 +51,29 @@ class GymDatabase extends Dexie {
 
 export const db = new GymDatabase();
 
+export type StoragePersistenceStatus = "persistent" | "best-effort" | "unsupported";
+
 export function createId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID()}`;
 }
 
+export async function getStoragePersistenceStatus(): Promise<StoragePersistenceStatus> {
+  if (typeof navigator === "undefined" || !navigator.storage?.persisted) return "unsupported";
+  try {
+    return (await navigator.storage.persisted()) ? "persistent" : "best-effort";
+  } catch {
+    return "unsupported";
+  }
+}
+
 export async function requestPersistentStorage(): Promise<boolean> {
-  if (!navigator.storage?.persist) return false;
-  return navigator.storage.persist();
+  if (typeof navigator === "undefined" || !navigator.storage?.persist) return false;
+  try {
+    if (await navigator.storage.persisted?.()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
 }
 
 export async function resetTestProfile(): Promise<void> {

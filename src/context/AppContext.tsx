@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { GymId, ProfileId, ThemeMode } from "../types";
-import { requestPersistentStorage } from "../lib/db";
 
 interface AppContextValue {
   profileId: ProfileId;
@@ -37,10 +36,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [gymId, setGymState] = useState<GymId>(() => storedGym(profileId));
   const [revision, setRevision] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
-
-  useEffect(() => {
-    void requestPersistentStorage();
-  }, []);
 
   useEffect(() => {
     const root = document.documentElement;

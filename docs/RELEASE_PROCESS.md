@@ -7,10 +7,10 @@ The `dev` branch is the integration branch. Only `main` deploys.
 
 Use semantic prerelease versions:
 
-- Package version: `0.2.0-beta.1`
-- Git tag: `v0.2.0-beta.1`
-- GitHub Release title: `GymApp 0.2.0 Beta 1`
-- Pull request title: `Release GymApp 0.2.0 Beta 1`
+- Package version: `0.2.0-beta.2`
+- Git tag: `v0.2.0-beta.2`
+- GitHub Release title: `GymApp 0.2.0 Beta 2`
+- Pull request title: `Release GymApp 0.2.0 Beta 2`
 
 Increment the beta suffix for fixes made without changing the feature set:
 `0.2.0-beta.2`, `0.2.0-beta.3`, and so on. Increment the minor version for

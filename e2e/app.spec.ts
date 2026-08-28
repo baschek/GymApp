@@ -35,6 +35,7 @@ test("creates a profile-owned exercise without overflow", async ({
     .getByLabel("Instructions, one step per line")
     .fill("Set the seat\nPress under control");
   await page.getByRole("button", { name: "Create exercise" }).click();
+  await expect(page.getByRole("button", { name: "Personal backup is due" })).toBeVisible();
   const exerciseCard = page
     .locator(".exercise-card")
     .filter({ hasText: "Beta Chest Press" });
@@ -289,6 +290,27 @@ test("switches to an isolated Test profile", async ({ page }) => {
   await expect(page.getByText("TEST PROFILE", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Workouts" }).click();
   await expect(page.getByText("No saved workouts")).toBeVisible();
+});
+
+test("requests persistent storage from the Settings user action", async ({ page }) => {
+  await page.addInitScript(() => {
+    let persistent = false;
+    Object.defineProperty(navigator, "storage", {
+      configurable: true,
+      value: {
+        persisted: async () => persistent,
+        persist: async () => {
+          persistent = true;
+          return true;
+        }
+      }
+    });
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByText("Local data is not protected yet")).toBeVisible();
+  await page.getByRole("button", { name: "Protect local data" }).click();
+  await expect(page.getByText("Protected from automatic browser cleanup")).toBeVisible();
 });
 
 test("cold-launches the installed app while offline", async ({

@@ -25,7 +25,13 @@ import {
   replacePersonalData,
   shareOrDownloadBackup
 } from "../lib/backup";
-import { db, resetTestProfile } from "../lib/db";
+import {
+  db,
+  getStoragePersistenceStatus,
+  requestPersistentStorage,
+  resetTestProfile,
+  type StoragePersistenceStatus
+} from "../lib/db";
 import { getCatalog } from "../lib/catalog";
 import { getGym, gyms } from "../lib/gyms";
 import type {
@@ -123,9 +129,14 @@ export function SettingsScreen() {
     () => db.settings.get("lastBackupAt").then((setting) => setting?.value as string | undefined),
     undefined as string | undefined
   );
+  const storagePersistence = useQuery<StoragePersistenceStatus | "checking">(
+    getStoragePersistenceStatus,
+    "checking"
+  );
   const [restorePayload, setRestorePayload] = useState<BackupPayload | null>(null);
   const [editingEquipment, setEditingEquipment] = useState<EquipmentProfile | null>(null);
   const [backingUp, setBackingUp] = useState(false);
+  const [protectingStorage, setProtectingStorage] = useState(false);
   const restoreRef = useRef<HTMLInputElement>(null);
 
   async function backup() {
@@ -162,6 +173,21 @@ export function SettingsScreen() {
     await resetTestProfile();
     refresh();
     notify("Test profile reset");
+  }
+
+  async function protectStorage() {
+    setProtectingStorage(true);
+    try {
+      const protectedStorage = await requestPersistentStorage();
+      refresh();
+      notify(
+        protectedStorage
+          ? "Local data protection enabled"
+          : "Browser did not grant storage protection; keep current backups"
+      );
+    } finally {
+      setProtectingStorage(false);
+    }
   }
 
   async function saveEquipment(values: MachineProfileValues) {
@@ -333,9 +359,39 @@ export function SettingsScreen() {
               <p>Workout data is stored only in this browser installation.</p>
             </div>
           </header>
+          {storagePersistence === "checking" ? (
+            <div className="storage-status">
+              <strong>Checking storage protection...</strong>
+            </div>
+          ) : storagePersistence === "persistent" ? (
+            <div className="storage-status protected">
+              <strong>Protected from automatic browser cleanup</strong>
+              <p>Chrome has marked this origin's local storage as persistent.</p>
+            </div>
+          ) : storagePersistence === "best-effort" ? (
+            <div className="storage-status warning">
+              <strong>Local data is not protected yet</strong>
+              <p>
+                Android or Chrome may remove inactive app data when device storage is low.
+              </p>
+              <button
+                className="primary"
+                disabled={protectingStorage}
+                onClick={() => void protectStorage()}
+              >
+                <ShieldCheck size={17} />
+                {protectingStorage ? "Requesting protection..." : "Protect local data"}
+              </button>
+            </div>
+          ) : (
+            <div className="storage-status warning">
+              <strong>Storage protection cannot be verified</strong>
+              <p>This browser does not expose persistent-storage status. Keep current backups.</p>
+            </div>
+          )}
           <p className="storage-note">
-            Clearing Chrome site data or uninstalling the PWA may remove local data. GitHub Pages hosts only the app files,
-            never your workout history.
+            Clearing Chrome site data or uninstalling the PWA can still remove local data. GitHub Pages hosts only the app
+            files, never your workout history.
           </p>
         </section>
       </div>

@@ -5,7 +5,8 @@ import {
   Dumbbell,
   History,
   MapPin,
-  Settings
+  Settings,
+  ShieldAlert
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useApp } from "../context/AppContext";
@@ -29,13 +30,15 @@ export function AppShell({
   children,
   updateReady,
   applyUpdate,
-  backupDue
+  backupDue,
+  storageAtRisk
 }: {
   route: string;
   children: ReactNode;
   updateReady: boolean;
   applyUpdate: () => void;
   backupDue: boolean;
+  storageAtRisk: boolean;
 }) {
   const { profileId, gymId, setGymId, toast } = useApp();
   const activeGym = getGym(gymId);
@@ -78,6 +81,11 @@ export function AppShell({
       {backupDue && route !== "settings" && (
         <button className="backup-reminder" onClick={() => navigate("settings")}>
           <DatabaseBackup size={18} /> Personal backup is due
+        </button>
+      )}
+      {storageAtRisk && route !== "settings" && route !== "workout" && (
+        <button className="storage-reminder" onClick={() => navigate("settings")}>
+          <ShieldAlert size={18} /> Protect local data from automatic cleanup
         </button>
       )}
       <main className="page">{children}</main>

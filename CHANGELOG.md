@@ -2,6 +2,32 @@
 
 All notable GymApp changes are documented here.
 
+## [0.2.0-beta.2] - 2026-08-28
+
+### Added
+
+- Storage protection status in Settings with a user-triggered persistent-storage request
+- A prominent warning when Personal data is stored in best-effort browser storage
+- A non-destructive startup error screen when IndexedDB cannot be opened
+
+### Changed
+
+- Personal backup reminders now begin as soon as any Personal data exists without a backup
+- Android installation and beta-testing guidance now include verification of persistent storage
+
+### Fixed
+
+- Persistent storage is requested from an explicit user action and its granted or denied state is no longer ignored
+- IndexedDB open failures no longer render normal empty-data screens that can be mistaken for deleted entries
+
+### Validation
+
+- 21 Vitest unit tests
+- 14 Playwright Android and desktop flows
+- Pixel-width visual verification of the storage protection states
+- Offline installed-PWA cold-launch coverage
+- ESLint and production TypeScript/Vite build
+
 ## [0.2.0-beta.1] - 2026-07-28
 
 ### Added

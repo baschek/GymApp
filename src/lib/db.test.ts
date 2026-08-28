@@ -1,7 +1,21 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkoutPlan } from "../types";
 import { createPersonalBackup } from "./backup";
-import { db, resetTestProfile } from "./db";
+import {
+  db,
+  getStoragePersistenceStatus,
+  requestPersistentStorage,
+  resetTestProfile
+} from "./db";
+
+const originalStorage = Object.getOwnPropertyDescriptor(navigator, "storage");
+
+function mockStorage(storage: Partial<StorageManager>) {
+  Object.defineProperty(navigator, "storage", {
+    configurable: true,
+    value: storage as StorageManager
+  });
+}
 
 function plan(id: string, profileId: "personal" | "test"): WorkoutPlan {
   const date = new Date(0).toISOString();
@@ -17,8 +31,30 @@ function plan(id: string, profileId: "personal" | "test"): WorkoutPlan {
 }
 
 afterEach(async () => {
+  if (originalStorage) Object.defineProperty(navigator, "storage", originalStorage);
+  else Reflect.deleteProperty(navigator, "storage");
   await db.delete();
   await db.open();
+});
+
+describe("storage persistence", () => {
+  it("reports when browser storage is persistent", async () => {
+    mockStorage({ persisted: vi.fn().mockResolvedValue(true) });
+    await expect(getStoragePersistenceStatus()).resolves.toBe("persistent");
+  });
+
+  it("requests persistence after confirming it is not already granted", async () => {
+    const persist = vi.fn().mockResolvedValue(true);
+    mockStorage({ persisted: vi.fn().mockResolvedValue(false), persist });
+    await expect(requestPersistentStorage()).resolves.toBe(true);
+    expect(persist).toHaveBeenCalledOnce();
+  });
+
+  it("handles unavailable or rejected persistence requests safely", async () => {
+    mockStorage({ persisted: vi.fn().mockRejectedValue(new Error("blocked")) });
+    await expect(getStoragePersistenceStatus()).resolves.toBe("unsupported");
+    await expect(requestPersistentStorage()).resolves.toBe(false);
+  });
 });
 
 describe("profile isolation", () => {

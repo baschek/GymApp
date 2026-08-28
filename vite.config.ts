@@ -6,7 +6,7 @@ export default defineConfig({
   base: "/GymApp/",
   define: {
     __APP_VERSION__: JSON.stringify(
-      process.env.npm_package_version ?? "0.2.0-beta.1"
+      process.env.npm_package_version ?? "0.2.0-beta.2"
     )
   },
   plugins: [

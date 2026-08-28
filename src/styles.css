@@ -1726,8 +1726,54 @@ textarea:focus {
   color: var(--muted);
 }
 
+.storage-status {
+  border-left: 3px solid var(--warning);
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface-2));
+}
+
+.storage-status.protected {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, var(--surface-2));
+}
+
+.storage-status p {
+  margin: 4px 0 10px;
+}
+
+.storage-status.protected p {
+  margin-bottom: 0;
+}
+
+.startup-state {
+  width: min(560px, calc(100% - 32px));
+  margin: 18vh auto 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.startup-state.error {
+  border-color: var(--danger);
+}
+
+.startup-state h1 {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 1.25rem;
+}
+
+.startup-state p {
+  line-height: 1.5;
+}
+
 .update-banner,
-.backup-reminder {
+.backup-reminder,
+.storage-reminder {
   display: flex;
   width: 100%;
   min-height: 44px;
@@ -1739,6 +1785,11 @@ textarea:focus {
   color: var(--accent-strong);
   gap: 12px;
   padding: 8px 18px;
+}
+
+.storage-reminder {
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  color: var(--text);
 }
 
 .update-banner button {
