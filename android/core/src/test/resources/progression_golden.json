@@ -3160,5 +3160,258 @@
       ]
     },
     "expected": null
+  },
+  {
+    "name": "addons: candidates are every level plus every add-on subset",
+    "fn": "weightCandidates",
+    "input": {
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": [
+      20,
+      21.25,
+      22.5,
+      23.75,
+      25,
+      26.25,
+      27.5,
+      28.75,
+      30,
+      31.25,
+      32.5,
+      33.75
+    ]
+  },
+  {
+    "name": "addons: no add-ons gives the levels",
+    "fn": "weightCandidates",
+    "input": {
+      "levels": [
+        30,
+        20,
+        25
+      ],
+      "addons": []
+    },
+    "expected": [
+      20,
+      25,
+      30
+    ]
+  },
+  {
+    "name": "addons: overlapping totals are de-duplicated",
+    "fn": "weightCandidates",
+    "input": {
+      "levels": [
+        5,
+        7.5,
+        10
+      ],
+      "addons": [
+        2.5
+      ]
+    },
+    "expected": [
+      5,
+      7.5,
+      10,
+      12.5
+    ]
+  },
+  {
+    "name": "addons: more than two add-ons are ignored beyond the first two",
+    "fn": "weightCandidates",
+    "input": {
+      "levels": [
+        10
+      ],
+      "addons": [
+        1,
+        2,
+        4
+      ]
+    },
+    "expected": [
+      10,
+      11,
+      12,
+      13
+    ]
+  },
+  {
+    "name": "addons: no levels means no candidates",
+    "fn": "weightCandidates",
+    "input": {
+      "levels": [],
+      "addons": [
+        2.5
+      ]
+    },
+    "expected": []
+  },
+  {
+    "name": "addons: round down to a candidate total",
+    "fn": "roundDownToCandidate",
+    "input": {
+      "value": 27.0,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": 26.25
+  },
+  {
+    "name": "addons: exact candidate stays",
+    "fn": "roundDownToCandidate",
+    "input": {
+      "value": 27.5,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": 27.5
+  },
+  {
+    "name": "addons: below the smallest candidate gives the smallest",
+    "fn": "roundDownToCandidate",
+    "input": {
+      "value": 10,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25
+      ]
+    },
+    "expected": 20
+  },
+  {
+    "name": "addons: split prefers the fewest add-ons",
+    "fn": "splitTotal",
+    "input": {
+      "total": 27.5,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": {
+      "level_kg": 25,
+      "addons_kg": [
+        2.5
+      ]
+    }
+  },
+  {
+    "name": "addons: split with a single small add-on",
+    "fn": "splitTotal",
+    "input": {
+      "total": 26.25,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": {
+      "level_kg": 25,
+      "addons_kg": [
+        1.25
+      ]
+    }
+  },
+  {
+    "name": "addons: split with both add-ons",
+    "fn": "splitTotal",
+    "input": {
+      "total": 33.75,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": {
+      "level_kg": 30,
+      "addons_kg": [
+        1.25,
+        2.5
+      ]
+    }
+  },
+  {
+    "name": "addons: a plain level needs no add-on",
+    "fn": "splitTotal",
+    "input": {
+      "total": 25,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        1.25,
+        2.5
+      ]
+    },
+    "expected": {
+      "level_kg": 25,
+      "addons_kg": []
+    }
+  },
+  {
+    "name": "addons: a total that is no candidate falls back to the level below",
+    "fn": "splitTotal",
+    "input": {
+      "total": 22,
+      "levels": [
+        20,
+        25,
+        30
+      ],
+      "addons": [
+        2.5
+      ]
+    },
+    "expected": {
+      "level_kg": 20,
+      "addons_kg": []
+    }
   }
 ]

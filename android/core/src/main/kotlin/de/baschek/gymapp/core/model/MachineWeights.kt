@@ -19,3 +19,9 @@ fun MachineProfile.effectiveWeights(maxValues: Int = 400): List<Double> {
     }
     return out.toList()
 }
+
+/** Add-on weights of the machine (0 to 2 positive values, sorted, de-duplicated; amendment C). */
+fun MachineProfile.effectiveAddons(): List<Double> =
+    addonWeightsKg.orEmpty().filter { it > 0.0 }.map { Math.round(it * 1000.0) / 1000.0 }.distinct().sorted().take(MAX_ADDONS)
+
+const val MAX_ADDONS = 2

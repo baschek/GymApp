@@ -21,6 +21,9 @@ import de.baschek.gymapp.core.progression.progressionEvidence
 import de.baschek.gymapp.core.progression.provenWorkingWeight
 import de.baschek.gymapp.core.progression.recalculatePlanProgression
 import de.baschek.gymapp.core.progression.suggestNextWeight
+import de.baschek.gymapp.core.progression.roundDownToCandidate
+import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.progression.weightCandidates
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -130,6 +133,14 @@ class ProgressionGoldenTest {
                 put("weight_kg", s.weightKg)
                 put("reason", s.reason)
                 put("source_gym_id", s.sourceGymId)
+            }
+        }
+        "weightCandidates" -> JsonArray(weightCandidates(i.weights("levels")!!, i.weights("addons")!!).map(::JsonPrimitive))
+        "roundDownToCandidate" -> JsonPrimitive(roundDownToCandidate(i.num("value")!!, i.weights("levels")!!, i.weights("addons")!!))
+        "splitTotal" -> splitTotal(i.num("total")!!, i.weights("levels")!!, i.weights("addons")!!).let { s ->
+            if (s == null) JsonNull else buildJsonObject {
+                put("level_kg", s.levelKg)
+                put("addons_kg", JsonArray(s.addonsKg.map(::JsonPrimitive)))
             }
         }
         else -> fail("unknown fn $fn")

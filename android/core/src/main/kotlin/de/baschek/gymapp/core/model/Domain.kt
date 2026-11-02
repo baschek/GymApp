@@ -113,6 +113,10 @@ data class Gym(
     val notes: String? = null,
     @SerialName("sort_order") val sortOrder: Int? = null,
     val packlist: List<PackItem>? = null,
+    /** Identity stripe colour as "#rrggbb" (amendment C). The app never hardcodes gym colours. */
+    val color: String? = null,
+    /** Short line below the name, e.g. the equipment brand (amendment C). */
+    val subtitle: String? = null,
 )
 
 @Serializable
@@ -130,6 +134,8 @@ data class Exercise(
     @SerialName("movement_family") val movementFamily: String? = null,
     @SerialName("photo_ref") val photoRef: String? = null,
     val notes: String? = null,
+    /** Fixed muscle group keys, first = primary (amendment C); see [MuscleGroup]. */
+    @SerialName("muscle_groups") val muscleGroups: List<String>? = null,
 )
 
 @Serializable
@@ -170,6 +176,9 @@ data class Plan(
     val notes: String? = null,
     @SerialName("created_at") val createdAt: String? = null,
     val archived: Boolean? = null,
+    /** Set by the server when the assistant changed the plan (amendment C). */
+    @SerialName("changed_by_assistant_at") val changedByAssistantAt: String? = null,
+    @SerialName("change_summary") val changeSummary: String? = null,
     val exercises: List<PlanExercise> = emptyList(),
 )
 
@@ -198,6 +207,8 @@ data class MachineProfile(
     @SerialName("working_weight_kg") val workingWeightKg: Double? = null,
     @SerialName("working_weight_updated_at") val workingWeightUpdatedAt: String? = null,
     @SerialName("working_weight_source_session_id") val workingWeightSourceSessionId: String? = null,
+    /** Up to two add-on weights that can be added to a main level (amendment C). */
+    @SerialName("addon_weights_kg") val addonWeightsKg: List<Double>? = null,
 )
 
 @Serializable
@@ -206,7 +217,10 @@ data class SetLog(
     val order: Int = 0,
     @SerialName("set_type") val setType: String = SetType.WORKING,
     val status: String = SetStatus.PENDING,
+    /** TOTAL weight: main level plus the selected add-ons. */
     @SerialName("weight_kg") val weightKg: Double? = null,
+    /** Add-ons that are part of [weightKg] (amendment C). */
+    @SerialName("addon_weights_kg") val addonWeightsKg: List<Double>? = null,
     val reps: Int? = null,
     val seconds: Int? = null,
     val meters: Double? = null,
@@ -277,3 +291,28 @@ data class Milestone(
     val direction: String? = null,
     val seen: Boolean? = null,
 )
+
+/** Id of the singleton goal document (amendment C). */
+const val GOAL_ID = "weekly"
+
+@Serializable
+data class TargetSets(
+    val brust: Int = 0,
+    val schultern: Int = 0,
+    val arme: Int = 0,
+    val beine: Int = 0,
+    val bauch: Int = 0,
+    val ruecken: Int = 0,
+)
+
+@Serializable
+data class Goal(
+    @SerialName("training_days_per_week") val trainingDaysPerWeek: Int = 3,
+    @SerialName("target_sets") val targetSets: TargetSets = TargetSets(),
+    @SerialName("updated_by") val updatedBy: String? = null,
+)
+
+object GoalAuthor {
+    const val APP = "app"
+    const val SERVER = "server"
+}

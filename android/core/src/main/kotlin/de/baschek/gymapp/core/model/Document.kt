@@ -13,8 +13,9 @@ object Entity {
     const val SESSION = "session"
     const val BODY_WEIGHT = "body_weight"
     const val MILESTONE = "milestone"
+    const val GOAL = "goal"
 
-    val ALL = listOf(GYM, EXERCISE, PLAN, MACHINE_PROFILE, SESSION, BODY_WEIGHT, MILESTONE)
+    val ALL = listOf(GYM, EXERCISE, PLAN, MACHINE_PROFILE, SESSION, BODY_WEIGHT, MILESTONE, GOAL)
 }
 
 object Origin {

@@ -14,13 +14,14 @@ Entity names and `data` fields (all optional unless marked *):
 
 | entity | data |
 |---|---|
-| `gym` | name*, short_name, archived(bool), has_sauna(bool), notes, sort_order(int), packlist: [{id*, text*, order*, done_default(bool)}] |
-| `exercise` | name*, aliases[], equipment, category, primary_muscles[], secondary_muscles[], instructions[], measurement_type*, load_direction*, load_basis*, movement_family, photo_ref (string; photo bytes are NOT synced in v1), notes |
-| `plan` | name*, notes, created_at, archived(bool), exercises: [{id*, exercise_id*, order*, mode_sets{normal,fast,ultra}*, target{metric,min,max,rir_min,rir_max}*, starting_weight_kg, current_weight_kg, rest_seconds*, superset_group, notes}] |
-| `machine_profile` | gym_id*, exercise_id*, available_weights_kg[], weight_ranges[{id,min_kg,max_kg,step_kg}], setup_parameters[{id,name,value}], machine_brand, machine_model, notes |
-| `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
+| `gym` | name*, short_name, archived(bool), has_sauna(bool), notes, sort_order(int), packlist: [{id*, text*, order*, done_default(bool)}], color ("#rrggbb"), subtitle |
+| `exercise` | name*, aliases[], equipment, category, primary_muscles[], secondary_muscles[], instructions[], measurement_type*, load_direction*, load_basis*, movement_family, photo_ref (string; photo bytes are NOT synced in v1), notes, muscle_groups[] |
+| `plan` | name*, notes, created_at, archived(bool), changed_by_assistant_at, change_summary, exercises: [{id*, exercise_id*, order*, mode_sets{normal,fast,ultra}*, target{metric,min,max,rir_min,rir_max}*, starting_weight_kg, current_weight_kg, rest_seconds*, superset_group, notes}] |
+| `machine_profile` | gym_id*, exercise_id*, available_weights_kg[], weight_ranges[{id,min_kg,max_kg,step_kg}], setup_parameters[{id,name,value}], machine_brand, machine_model, notes, addon_weights_kg[] |
+| `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, addon_weights_kg[], reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
 | `body_weight` | date* (YYYY-MM-DD), weight_kg*, notes |
 | `milestone` | plan_id, plan_exercise_id, exercise_id*, exercise_name, session_id, occurred_at*, previous_weight_kg, new_weight_kg*, direction, seen(bool) |
+| `goal` | singleton with id `weekly`: training_days_per_week (1–7), target_sets{brust, schultern, arme, beine, bauch, ruecken: 0–60}, updated_by (`app`/`server`) |
 
 Enum values are exactly those of the old app (measurement_type: load_reps, bodyweight_reps, added_weight_reps, assisted_reps, reps_only, load_duration, load_distance_duration, duration_only; load_direction: higher, lower_assistance, none; load_basis: stack,total,per_hand,added,assistance,none; effort: limit, one_two, three_four, five_plus + legacy one, two_three, four_plus; set status: pending, completed, skipped_time, skipped_equipment, failed, pain, skipped_other).
 Unknown extra fields in `data` must be preserved (round-trip), never dropped.
@@ -96,3 +97,11 @@ Goal: knowing the server address gives an attacker nothing; only one phone has a
 
 ### Client note: machine profiles
 The server may create a `machine_profile` with its own UUID for a gym x exercise. Before the app creates one it looks up an existing profile by (`gym_id`, `exercise_id`) among its local documents and updates that one; with duplicates the lowest id is used.
+
+## v1 amendment C: data for the redesigned app
+
+1. **Gym identity.** `gym.data.color` (optional `#rrggbb`) is the identity stripe colour, `gym.data.subtitle` an optional short line. The app falls back to a neutral grey and never hardcodes gym names, ids or colours.
+2. **Add-on weights.** `machine_profile.data.addon_weights_kg` holds 0 to 2 positive numbers. The add-ons selected for a set are stored in `sets[].addon_weights_kg` (a subset). `sets[].weight_kg` stays the **total** (main level plus selected add-ons), so progression is unchanged. Rounding candidates are every main level plus every subset of the add-ons; values are rounded to the nearest candidate (or down, where the rule says so). Golden cases `weightCandidates`, `roundDownToCandidate` and `splitTotal` in `progression_golden.json` pin the behaviour on both sides.
+3. **Goal.** Entity `goal` with the fixed id `weekly`: `training_days_per_week` (1–7), `target_sets` per radar area (0–60) and `updated_by`. It is editable in the app (Mehr › Ziele) and by the server.
+4. **Muscle groups.** `exercise.data.muscle_groups` is an array from the fixed set `brust, ruecken, unterer_ruecken, schultern, bizeps, trizeps, unterarme, bauch, quadrizeps, beinbeuger, gesaess, waden`; the first entry is the primary group. Radar areas: Brust = brust; Schultern = schultern; Arme = bizeps + trizeps + unterarme; Beine = quadrizeps + beinbeuger + gesaess + waden; Bauch = bauch + unterer_ruecken; Rücken = ruecken. A completed working set counts 1 for the primary group and 0.5 for every further group. Without `muscle_groups` the groups are derived from `primary_muscles` / `secondary_muscles` with a fixed table (`android/core/src/main/resources/muscle_mapping.json`; legacy catalog names to the twelve groups).
+5. **Plans changed by the assistant.** The server sets `plan.data.changed_by_assistant_at` and `plan.data.change_summary` (one sentence). The app shows a notice until the plan is opened once; that seen state is stored on the device only.
