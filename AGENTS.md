@@ -1,4 +1,62 @@
-# GymApp Beta Development Guide
+# GymApp Development Guide
+
+## Repository Layout
+
+This public repository contains two apps:
+
+- **Legacy PWA** (repository root: `src/`, `public/`, `e2e/`, `package.json`).
+  The React/Dexie web app deployed to GitHub Pages by `.github/workflows/ci-pages.yml`.
+  Keep it working and untouched unless the owner asks otherwise. Everything in the
+  sections "Current Phase" to "Stable Release Gate" below applies to it.
+- **Native Android app** (`android/`). Kotlin, Jetpack Compose, Room. Data lives in
+  Room (SQLite) and is synchronized with a sync server, because Android evicted the
+  PWA storage once and data was lost. Protocol: `android/docs/sync-protocol.md`.
+
+Android modules:
+
+- `android/core`: pure Kotlin/JVM (no Android dependencies): contract documents,
+  unknown-field-preserving JSON merge, progression and recalculation rules, sync
+  engine against interfaces, Ktor API client, release checker. Unit-testable with
+  `./gradlew :core:test`.
+- `android/app`: Android application (Room, repository, WorkManager sync, timer
+  foreground service, updater, minimal Compose UI in `ui/<feature>/` with ViewModels).
+  The repository (`data/GymRepository`) is the only code that touches the database.
+
+## Android Rules
+
+- **Public repository.** Never commit secrets or personal data: no tokens, pairing
+  codes, keystores or passwords, no server host names or addresses of the owner,
+  no real training data (use synthetic data in tests and examples), no backups
+  (`gymapp-backup-*.json` is ignored). The app only knows "a sync server" whose
+  URL the user types in when pairing. Secrets for releases live in GitHub Actions
+  secrets only. A gitleaks scan runs on every push and pull request.
+- **Room migration duty.** The on-device database is the primary copy of the data
+  until it is synced. `exportSchema = true`; schemas are committed in
+  `android/app/schemas`. Every entity change needs a version bump, a `Migration`,
+  the new committed schema file and a migration test. Never use destructive
+  migrations. CI fails when existing schema files change.
+- **Test profile.** The Test profile is local-only: its documents have
+  `profile = 'test'`, never get outbox entries and are never touched by pulls or
+  snapshots. Use it for destructive experiments and demo data.
+- **Contract.** Do not change the sync protocol on one side only. Documents keep
+  unknown fields (`DocumentCodec`); never rebuild a document from typed fields alone.
+- **Progression.** `core/progression` is the single implementation. Behavior is
+  pinned by `core/src/test/resources/progression_golden.json`; change the rules only
+  together with the golden cases.
+- **Network.** HTTPS only (`network_security_config`); cleartext only in debug
+  builds for `10.0.2.2`/`localhost`. No exported components except the launcher
+  activity. Never log tokens or request bodies.
+- **Releases.** Push a tag `android-v<version>` (for example `android-v0.2.0`) on a
+  commit on `main`. The workflow `android.yml` builds a signed APK (keystore from the
+  secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+  `ANDROID_KEY_PASSWORD`) and publishes it as a GitHub release; the in-app updater
+  installs it. Do not create release tags unless the owner asks.
+- **Checks before committing:** `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`.
+
+---
+
+# GymApp Beta Development Guide (legacy PWA)
+
 
 ## Current Phase
 
