@@ -126,4 +126,7 @@
     <string name="notif_perm_later">Später</string>
     <string name="notif_perm_settings_message">Ohne Benachrichtigungen funktioniert der Timer nur in der App. Du kannst sie in den Android-Einstellungen aktivieren.</string>
     <string name="notif_perm_open_settings">Einstellungen</string>
+    <string name="home_sync_disconnected">Verbindung getrennt – neu koppeln</string>
+    <string name="home_sync_repair">Neu koppeln</string>
+    <string name="pairing_error_unavailable">Koppeln ist gerade nicht möglich. Erzeuge am Server einen neuen Kopplungscode; ist noch ein altes Gerät aktiv, muss es dort zuerst getrennt werden.</string>
 </resources>

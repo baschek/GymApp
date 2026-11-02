@@ -31,6 +31,7 @@ import de.baschek.gymapp.core.progression.StartSuggestion
 import de.baschek.gymapp.core.progression.WorkingWeight
 import de.baschek.gymapp.core.progression.reassignSessionGym as coreReassignSessionGym
 import de.baschek.gymapp.core.progression.suggestStartWeight
+import de.baschek.gymapp.core.sync.ReconnectBackoff
 import de.baschek.gymapp.core.sync.SyncStore
 import de.baschek.gymapp.core.sync.TelemetryStore
 import de.baschek.gymapp.data.db.DocumentEntity
@@ -99,10 +100,30 @@ class GymRepository(
         db.withTransaction {
             dao.putSetting(SettingEntity(SettingKeys.LAST_SYNC_AT, clock().toString()))
             dao.deleteSetting(SettingKeys.AUTH_ERROR)
+            dao.deleteSetting(SettingKeys.CONNECTION_LOST)
             if (notices.isEmpty()) dao.deleteSetting(SettingKeys.SYNC_NOTICES)
             else dao.putSetting(SettingEntity(SettingKeys.SYNC_NOTICES, notices.joinToString("\n")))
         }
     }
+
+    /** True after the server stopped recognising this device following a successful sync. */
+    val connectionLost: Flow<Boolean> = dao.observeSetting(SettingKeys.CONNECTION_LOST).map { it != null }
+
+    /** Epoch millis before which background syncs must not retry, or null if the connection is fine. */
+    suspend fun nextReconnectAttemptAt(): Long? =
+        dao.getSetting(SettingKeys.CONNECTION_LOST)?.substringAfter(':')?.toLongOrNull()
+
+    suspend fun hasSyncedBefore(): Boolean = dao.getSetting(SettingKeys.LAST_SYNC_AT) != null
+
+    /** Records a lost connection and returns the time of the next allowed automatic attempt (exponential backoff). */
+    suspend fun recordConnectionLost(nowMillis: Long): Long = db.withTransaction {
+        val attempts = (dao.getSetting(SettingKeys.CONNECTION_LOST)?.substringBefore(':')?.toIntOrNull() ?: 0) + 1
+        val next = nowMillis + ReconnectBackoff.delayMillis(attempts)
+        dao.putSetting(SettingEntity(SettingKeys.CONNECTION_LOST, "$attempts:$next"))
+        next
+    }
+
+    suspend fun clearConnectionLost() = dao.deleteSetting(SettingKeys.CONNECTION_LOST)
 
     suspend fun recordAuthError() = dao.putSetting(SettingEntity(SettingKeys.AUTH_ERROR, "1"))
 
@@ -111,6 +132,8 @@ class GymRepository(
         db.withTransaction {
             dao.deleteSetting(SettingKeys.SYNC_CURSOR)
             dao.deleteSetting(SettingKeys.AUTH_ERROR)
+            dao.deleteSetting(SettingKeys.CONNECTION_LOST)
+            dao.deleteSetting(SettingKeys.LAST_SYNC_AT)
             dao.deleteSetting(SettingKeys.SYNC_NOTICES)
         }
     }
@@ -327,10 +350,19 @@ class GymRepository(
     /** Removes all review flags ("geprüft"). */
     suspend fun clearReviewFlags(sessionId: String) = updateSession(sessionId) { it.copy(reviewFlags = null) }
 
+    /**
+     * Existing machine profile of a gym x exercise, including ones the server created with its own
+     * id. A profile is only ever created when this finds none; with duplicates the lowest id wins.
+     */
+    private suspend fun findMachineProfile(profile: String, gymId: String, exerciseId: String): Stored<MachineProfile>? =
+        dao.getDocsByGym(profile, Entity.MACHINE_PROFILE, gymId)
+            .mapNotNull { it.toStored(MachineProfile.serializer()) }
+            .filter { it.value.exerciseId == exerciseId }
+            .minByOrNull { it.id }
+
     /** Stores (or clears, with null) the working weight on the machine profile of a gym x exercise. */
     private suspend fun setWorkingWeight(profile: String, key: GymExerciseKey, weight: WorkingWeight?) {
-        val existing = dao.getDocsByGym(profile, Entity.MACHINE_PROFILE, key.gymId)
-            .mapNotNull { it.toStored(MachineProfile.serializer()) }.firstOrNull { it.value.exerciseId == key.exerciseId }
+        val existing = findMachineProfile(profile, key.gymId, key.exerciseId)
         if (existing == null) {
             if (weight == null) return
             put(

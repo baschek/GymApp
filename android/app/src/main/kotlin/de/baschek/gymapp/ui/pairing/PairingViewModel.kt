@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-enum class PairingFailure { URL, CODE, RATE, NETWORK, OTHER }
+enum class PairingFailure { URL, CODE, UNAVAILABLE, RATE, NETWORK, OTHER }
 
 sealed interface PairingUiState {
     data object Idle : PairingUiState
@@ -31,6 +31,7 @@ class PairingViewModel(private val c: AppContainer) : ViewModel() {
                 PairResult.Success -> PairingUiState.Done
                 PairResult.InvalidUrl -> PairingUiState.Failed(PairingFailure.URL)
                 PairResult.InvalidCode -> PairingUiState.Failed(PairingFailure.CODE)
+                PairResult.Unavailable -> PairingUiState.Failed(PairingFailure.UNAVAILABLE)
                 PairResult.RateLimited -> PairingUiState.Failed(PairingFailure.RATE)
                 PairResult.Network -> PairingUiState.Failed(PairingFailure.NETWORK)
                 PairResult.Other -> PairingUiState.Failed(PairingFailure.OTHER)

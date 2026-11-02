@@ -24,4 +24,5 @@ object SettingKeys {
     const val CURRENT_GYM = "current_gym_id"
     const val KEEP_SCREEN_ON = "keep_screen_on"
     const val TIMER_STATE = "timer_state"
+    const val CONNECTION_LOST = "connection_lost"
 }

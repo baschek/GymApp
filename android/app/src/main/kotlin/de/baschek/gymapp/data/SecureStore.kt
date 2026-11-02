@@ -20,7 +20,7 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class SecureStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("pairing", Context.MODE_PRIVATE)
-    private val _paired = MutableStateFlow(readToken() != null && baseUrl() != null)
+    private val _paired = MutableStateFlow(readToken() != null && baseUrl() != null && keyAlias() != null)
 
     /** True while a server address and a usable token are stored. */
     val paired: StateFlow<Boolean> = _paired.asStateFlow()
@@ -29,9 +29,12 @@ class SecureStore(context: Context) {
 
     fun token(): String? = readToken()
 
-    fun save(baseUrl: String, token: String) {
+    /** Alias of the device key (in the Android Keystore) belonging to this pairing. */
+    fun keyAlias(): String? = prefs.getString(KEY_ALIAS, null)
+
+    fun save(baseUrl: String, token: String, keyAlias: String) {
         val encrypted = encrypt(token)
-        prefs.edit().putString(KEY_URL, baseUrl).putString(KEY_TOKEN, encrypted).apply()
+        prefs.edit().putString(KEY_URL, baseUrl).putString(KEY_TOKEN, encrypted).putString(KEY_ALIAS, keyAlias).apply()
         _paired.value = true
     }
 
@@ -76,6 +79,7 @@ class SecureStore(context: Context) {
     private companion object {
         const val KEY_URL = "base_url"
         const val KEY_TOKEN = "token_enc"
+        const val KEY_ALIAS = "device_key_alias"
         const val ALIAS = "gymapp_pairing_key"
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

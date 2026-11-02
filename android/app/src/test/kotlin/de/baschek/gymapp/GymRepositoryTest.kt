@@ -205,4 +205,36 @@ class GymRepositoryTest {
         assertEquals("\"keep-me\"", op.data["future"].toString())
         assertEquals(3L, op.baseRev)
     }
+
+    @Test
+    fun existingServerCreatedMachineProfileIsReusedInsteadOfCreatingASecondOne() = runBlocking {
+        repo.syncStore.applyRemote(
+            listOf(
+                doc("plan", "p1", 5, plan), doc("exercise", "ex1", 6, exercise),
+                doc("machine_profile", "11111111-aaaa", 7, """{"gym_id":"gym-a","exercise_id":"ex1","available_weights_kg":[10,20,30],"server_note":"keep"}"""),
+            ),
+        )
+        val id = repo.startSession("p1", gymId = "gym-a")!!
+        completeTwoSets(id, 30.0)
+        repo.finishSession(id)
+        val ops = repo.syncStore.pendingOps(100).filter { it.entity == "machine_profile" }
+        assertEquals(1, ops.size)
+        assertEquals("11111111-aaaa", ops.single().id)
+        assertEquals(7L, ops.single().baseRev)
+        assertEquals("\"keep\"", ops.single().data["server_note"].toString())
+        assertTrue(ops.single().data["available_weights_kg"] != null)
+    }
+
+    @Test
+    fun reconnectBackoffDoublesAndIsClearedBySuccess() = runBlocking {
+        assertNull(repo.nextReconnectAttemptAt())
+        val first = repo.recordConnectionLost(0)
+        val second = repo.recordConnectionLost(0)
+        assertEquals(15 * 60_000L, first)
+        assertEquals(30 * 60_000L, second)
+        assertTrue(repo.connectionLost.first())
+        repo.recordSyncSuccess(emptyList())
+        assertNull(repo.nextReconnectAttemptAt())
+        assertTrue(!repo.connectionLost.first())
+    }
 }

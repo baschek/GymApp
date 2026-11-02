@@ -56,6 +56,7 @@ fun PairingScreen(onDone: () -> Unit) {
                     when (it.reason) {
                         PairingFailure.URL -> R.string.pairing_error_url
                         PairingFailure.CODE -> R.string.pairing_error_code
+                        PairingFailure.UNAVAILABLE -> R.string.pairing_error_unavailable
                         PairingFailure.RATE -> R.string.pairing_error_rate
                         PairingFailure.NETWORK -> R.string.pairing_error_network
                         PairingFailure.OTHER -> R.string.pairing_error_other

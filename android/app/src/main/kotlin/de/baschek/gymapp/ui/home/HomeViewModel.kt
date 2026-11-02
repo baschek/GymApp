@@ -38,6 +38,7 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     val paired: StateFlow<Boolean> = c.secureStore.paired
     val syncState: StateFlow<SyncState> = c.syncManager.state
     val lastSyncAt: StateFlow<Instant?> = repo.lastSyncAt.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+    val connectionLost: StateFlow<Boolean> = repo.connectionLost.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val authError: StateFlow<Boolean> = repo.authError.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
     val notices: StateFlow<List<String>> = repo.syncNotices.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val plans: StateFlow<List<Stored<Plan>>> = repo.observePlans().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -51,12 +52,12 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
 
     fun syncNow() {
         Telemetry.track("home", "sync_now")
-        viewModelScope.launch { c.syncManager.runSync() }
+        viewModelScope.launch { c.syncManager.runSync(manual = true) }
     }
 
     fun unpair() {
         Telemetry.track("home", "unpair")
-        c.syncManager.unpair()
+        viewModelScope.launch { c.syncManager.unpair() }
     }
 
     fun setProfile(p: String) {

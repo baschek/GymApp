@@ -2,6 +2,7 @@ package de.baschek.gymapp
 
 import android.app.Application
 import de.baschek.gymapp.core.api.createHttpClient
+import de.baschek.gymapp.data.DeviceKeys
 import de.baschek.gymapp.data.GymRepository
 import de.baschek.gymapp.data.SecureStore
 import de.baschek.gymapp.data.db.GymDatabase
@@ -25,7 +26,7 @@ class AppContainer(app: Application) {
     val secureStore = SecureStore(app)
     val scheduler = SyncScheduler(app)
     private val httpClient = createHttpClient(OkHttp.create())
-    val syncManager = SyncManager(repository, secureStore, httpClient, scheduler)
+    val syncManager = SyncManager(repository, secureStore, httpClient, scheduler, DeviceKeys())
     val timer = TimerController(repository, appScope)
     val workout = WorkoutActions(repository, timer, scheduler)
     val updater = AppUpdater(app, httpClient)

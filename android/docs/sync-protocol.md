@@ -70,3 +70,29 @@ Rules (binding for server + app):
 - **Gym id `other`** is the placeholder for a place that is not a configured gym.
 - **Reassigning** a completed session's gym recomputes the weights of both the old and the new gym for all exercises of that session; the app also removes the `gym_suspect`/`gym_missing` flags because the gym was confirmed by the user.
 - Golden cases for these functions are in `core/src/test/resources/progression_golden.json` (`recalculateWorkingWeights`, `estimateStartWeight`, `reassignSessionGym`).
+
+## v1 amendment B: single device, device-key signatures, no fingerprinting
+
+Goal: knowing the server address gives an attacker nothing; only one phone has access.
+
+1. **Single device.** The server allows at most one active (non-revoked) device. Pairing while an active device exists is impossible (same response as below); the owner revokes the device first, or requests a pairing code that replaces it (the old device is revoked only when the new pairing completes).
+2. **Pairing window.** `POST /gym/v1/pair` exists only while an unexpired, unused pairing code exists; otherwise it answers with the neutral 404. Codes are at least 10 characters from an unambiguous alphabet, expire after 10 minutes, are single use, and a global lockout applies to wrong attempts.
+3. **Device key (proof of possession).** At pairing the app generates an EC P-256 key pair in the Android Keystore (non-exportable; StrongBox if available, otherwise the TEE; no user-authentication requirement because syncing runs in the background) and sends the public key in the pair request: `{ "code", "device_name", "public_key" }` with `public_key` = SubjectPublicKeyInfo (X.509 DER), base64url without padding. Every authenticated request carries:
+   - `Authorization: Bearer <token>`
+   - `X-Gym-Timestamp`: unix seconds (the server accepts +/- 300 s)
+   - `X-Gym-Nonce`: at least 16 random bytes, base64url without padding (the server rejects reuse within 10 minutes)
+   - `X-Gym-Signature`: base64url (no padding) ECDSA-P256-SHA256 signature, DER encoded, over the canonical string
+
+   ```
+   METHOD \n PATH \n QUERY \n TIMESTAMP \n NONCE \n SHA256_HEX(body)
+   ```
+   `METHOD` upper case; `PATH` is the request path without host (including any path prefix of the configured base URL); `QUERY` is the raw query string without `?` (empty if none); `SHA256_HEX` is the lower-case hex SHA-256 of the exact request body bytes (of the empty string for requests without body). Test vector: `GET`, `/gym/v1/changes`, `since=5&limit=500`, `1700000000`, `AAAAAAAAAAAAAAAAAAAAAA`, empty body gives
+   `GET\n/gym/v1/changes\nsince=5&limit=500\n1700000000\nAAAAAAAAAAAAAAAAAAAAAA\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+   A token alone, or a signature by another key, is rejected.
+4. **No fingerprinting.** Every unauthenticated or invalid request to any `/gym/v1/*` path (missing/invalid token, bad signature, stale timestamp, replayed nonce, revoked device, unknown path, closed pairing window) gets the same response: HTTP 404 with the server's generic not-found body, no protocol-specific headers, and similar timing. Details are only logged server-side. Flooding with unauthenticated requests leads to a temporary global lockout of the whole `/gym/v1` area.
+5. **Lifecycle.** A device expires after 120 days without a successful request (the app pairs again). The owner can revoke the device at any time; there is no undo besides pairing again.
+6. **Scope.** The device credentials grant access to the gym documents and telemetry endpoints only.
+7. **Client behavior.** A 404 on an authenticated call after a sync had already succeeded is shown as "Verbindung getrennt – neu koppeln" (re-pair). Automatic retries use exponential backoff (15 minutes, doubling, at most 24 hours); the manual "sync now" button may still try. A 404 on the pair request means pairing is currently not possible. Unpairing in the app deletes the token and the device key.
+
+### Client note: machine profiles
+The server may create a `machine_profile` with its own UUID for a gym x exercise. Before the app creates one it looks up an existing profile by (`gym_id`, `exercise_id`) among its local documents and updates that one; with duplicates the lowest id is used.

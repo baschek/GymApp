@@ -48,6 +48,7 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenHistory: () -> Unit, onOpenWorko
     val syncState by vm.syncState.collectAsStateWithLifecycle()
     val lastSync by vm.lastSyncAt.collectAsStateWithLifecycle()
     val authError by vm.authError.collectAsStateWithLifecycle()
+    val connectionLost by vm.connectionLost.collectAsStateWithLifecycle()
     val notices by vm.notices.collectAsStateWithLifecycle()
     val plans by vm.plans.collectAsStateWithLifecycle()
     val gyms by vm.gyms.collectAsStateWithLifecycle()
@@ -88,17 +89,22 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenHistory: () -> Unit, onOpenWorko
                                 ?: stringResource(R.string.home_sync_never),
                         )
                         if (syncState is SyncState.Running) Text(stringResource(R.string.home_sync_running))
-                        (syncState as? SyncState.Failed)?.let { failed ->
+                        (syncState as? SyncState.Failed)?.takeIf { it.kind != FailureKind.DISCONNECTED }?.let { failed ->
                             Text(
                                 stringResource(
                                     when (failed.kind) {
                                         FailureKind.UNAUTHORIZED -> R.string.home_sync_error_unauthorized
+                                        FailureKind.DISCONNECTED -> R.string.home_sync_disconnected
                                         FailureKind.NETWORK -> R.string.home_sync_error_network
                                         else -> R.string.home_sync_error_server
                                     },
                                 ),
                                 color = MaterialTheme.colorScheme.error,
                             )
+                        }
+                        if (connectionLost) {
+                            Text(stringResource(R.string.home_sync_disconnected), color = MaterialTheme.colorScheme.error)
+                            Button(onClick = onOpenPairing) { Text(stringResource(R.string.home_sync_repair)) }
                         }
                         if (authError && syncState !is SyncState.Failed) {
                             Text(stringResource(R.string.home_sync_error_unauthorized), color = MaterialTheme.colorScheme.error)
