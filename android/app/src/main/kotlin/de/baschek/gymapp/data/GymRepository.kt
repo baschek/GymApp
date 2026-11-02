@@ -5,7 +5,15 @@ import de.baschek.gymapp.core.model.BodyWeight
 import de.baschek.gymapp.core.model.DocumentCodec
 import de.baschek.gymapp.core.model.Entity
 import de.baschek.gymapp.core.model.Exercise
+import de.baschek.gymapp.core.model.GOAL_ID
+import de.baschek.gymapp.core.model.Goal
+import de.baschek.gymapp.core.model.GoalAuthor
 import de.baschek.gymapp.core.model.Gym
+import de.baschek.gymapp.core.model.Milestone
+import de.baschek.gymapp.core.model.SetupParameter
+import de.baschek.gymapp.core.model.effectiveAddons
+import de.baschek.gymapp.core.progression.weightCandidates
+import de.baschek.gymapp.core.stats.PackState
 import de.baschek.gymapp.core.model.IndexColumns
 import de.baschek.gymapp.core.model.MachineProfile
 import de.baschek.gymapp.core.model.ModeSets
@@ -39,6 +47,7 @@ import de.baschek.gymapp.data.db.GymDatabase
 import de.baschek.gymapp.data.db.OutboxEntity
 import de.baschek.gymapp.data.db.SettingEntity
 import de.baschek.gymapp.data.db.TelemetryEntity
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -50,6 +59,26 @@ import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+
+/** What the training screen needs to know about a machine. */
+data class MachineInfo(
+    val levels: List<Double>,
+    val addons: List<Double>,
+    val setup: List<SetupParameter>,
+    val brand: String?,
+    val model: String?,
+    val workingWeightKg: Double?,
+) {
+    /** Every selectable total: main levels plus add-on combinations (progression rounding). */
+    val candidates: List<Double> get() = weightCandidates(levels, addons)
+}
+
+internal fun MachineProfile.toInfo() = MachineInfo(
+    effectiveWeights(), effectiveAddons(), setupParameters.orEmpty(), machineBrand, machineModel, workingWeightKg,
+)
+
+/** The goal document plus its last change time. */
+data class GoalState(val goal: Goal, val updatedAt: String?)
 
 /**
  * The ONLY access path to the database. ViewModels, workers and services talk
@@ -179,6 +208,38 @@ class GymRepository(
                 .associate { it.value.exerciseId to it.value.effectiveWeights() }
         }
 
+    /** Levels, add-ons and setup values of every machine profile of the gym, by exercise id. */
+    fun observeMachineInfo(gymId: String?): Flow<Map<String, MachineInfo>> =
+        activeProfile.flatMapLatest { p ->
+            if (gymId == null) flowOf(emptyList<DocumentEntity>())
+            else dao.observeDocsByGym(p, Entity.MACHINE_PROFILE, gymId)
+        }.map { rows ->
+            rows.mapNotNull { it.toStored(MachineProfile.serializer()) }
+                .associate { it.value.exerciseId to it.value.toInfo() }
+        }
+
+    suspend fun getMachineInfo(gymId: String?): Map<String, MachineInfo> {
+        if (gymId == null) return emptyMap()
+        return dao.getDocsByGym(currentProfile(), Entity.MACHINE_PROFILE, gymId)
+            .mapNotNull { it.toStored(MachineProfile.serializer()) }
+            .associate { it.value.exerciseId to it.value.toInfo() }
+    }
+
+    fun observeMachineProfiles(): Flow<List<Stored<MachineProfile>>> = observeAll(Entity.MACHINE_PROFILE, MachineProfile.serializer())
+
+    fun observeMilestones(): Flow<List<Stored<Milestone>>> = observeAll(Entity.MILESTONE, Milestone.serializer())
+
+    /** Every gym incl. archived ones (needed to label old sessions). */
+    fun observeAllGyms(): Flow<List<Stored<Gym>>> =
+        observeAll(Entity.GYM, Gym.serializer()).map { list -> list.sortedBy { it.value.sortOrder ?: Int.MAX_VALUE } }
+
+    fun observePlan(id: String): Flow<Stored<Plan>?> =
+        activeProfile.flatMapLatest { p -> dao.observeDoc(p, Entity.PLAN, id) }.map { it?.toStored(Plan.serializer()) }
+
+    fun observeGoal(): Flow<GoalState?> =
+        activeProfile.flatMapLatest { p -> dao.observeDoc(p, Entity.GOAL, GOAL_ID) }
+            .map { row -> row?.toStored(Goal.serializer())?.let { GoalState(it.value, row?.updatedAt) } }
+
     // ---- writing ------------------------------------------------------------
 
     private fun nowIso(): String = clock().truncatedTo(ChronoUnit.MILLIS).toString()
@@ -226,6 +287,9 @@ class GymRepository(
     suspend fun getSession(id: String): Session? =
         dao.getDoc(currentProfile(), Entity.SESSION, id)?.takeIf { !it.deleted }?.toStored(Session.serializer())?.value
 
+    suspend fun getExercise(id: String): Exercise? =
+        dao.getDoc(currentProfile(), Entity.EXERCISE, id)?.takeIf { !it.deleted }?.toStored(Exercise.serializer())?.value
+
     suspend fun getActiveSession(): Stored<Session>? =
         dao.getActiveSession(currentProfile())?.toStored(Session.serializer())
 
@@ -266,7 +330,8 @@ class GymRepository(
                 .mapIndexed { index, pe ->
                     val machine = machines[pe.exerciseId]
                     val suggestion = suggestStartWeight(
-                        pe.exerciseId, gymId, history, infos, machine?.effectiveWeights(),
+                        pe.exerciseId, gymId, history, infos,
+                        machine?.let { weightCandidates(it.effectiveWeights(), it.effectiveAddons()) }?.takeIf { it.isNotEmpty() },
                         machine?.workingWeightKg, pe.currentWeightKg ?: pe.startingWeightKg,
                     )
                     buildSessionExercise(pe, index + 1, mode, exercises[pe.exerciseId], suggestion)
@@ -381,6 +446,101 @@ class GymRepository(
             workingWeightSourceSessionId = weight?.sourceSessionId,
         )
         if (updated != existing.value) put(profile, Entity.MACHINE_PROFILE, existing.id, updated, MachineProfile.serializer())
+    }
+
+    // ---- plans, exercises, machines, goals -------------------------------------
+
+    suspend fun updatePlan(id: String, transform: (Plan) -> Plan) = db.withTransaction {
+        val p = currentProfile()
+        val current = dao.getDoc(p, Entity.PLAN, id)?.takeIf { !it.deleted }?.toStored(Plan.serializer()) ?: return@withTransaction
+        val updated = transform(current.value)
+        if (updated != current.value) put(p, Entity.PLAN, id, updated, Plan.serializer())
+    }
+
+    suspend fun createPlan(name: String): String = db.withTransaction {
+        val id = newId()
+        put(currentProfile(), Entity.PLAN, id, Plan(name = name, createdAt = nowIso()), Plan.serializer())
+        id
+    }
+
+    suspend fun archivePlan(id: String) = updatePlan(id) { it.copy(archived = true) }
+
+    suspend fun updateExercise(id: String, transform: (Exercise) -> Exercise) = db.withTransaction {
+        val p = currentProfile()
+        val current = dao.getDoc(p, Entity.EXERCISE, id)?.takeIf { !it.deleted }?.toStored(Exercise.serializer()) ?: return@withTransaction
+        val updated = transform(current.value)
+        if (updated != current.value) put(p, Entity.EXERCISE, id, updated, Exercise.serializer())
+    }
+
+    /** Creates or changes the machine profile of a gym x exercise. */
+    suspend fun saveMachineProfile(gymId: String, exerciseId: String, transform: (MachineProfile) -> MachineProfile) = db.withTransaction {
+        val p = currentProfile()
+        val existing = findMachineProfile(p, gymId, exerciseId)
+        val base = existing?.value ?: MachineProfile(gymId = gymId, exerciseId = exerciseId)
+        val updated = transform(base)
+        if (existing == null) put(p, Entity.MACHINE_PROFILE, newId(), updated, MachineProfile.serializer())
+        else if (updated != base) put(p, Entity.MACHINE_PROFILE, existing.id, updated, MachineProfile.serializer())
+    }
+
+    suspend fun saveGoal(transform: (Goal) -> Goal) = db.withTransaction {
+        val p = currentProfile()
+        val base = dao.getDoc(p, Entity.GOAL, GOAL_ID)?.takeIf { !it.deleted }?.toStored(Goal.serializer())?.value ?: Goal()
+        val updated = transform(base).copy(updatedBy = GoalAuthor.APP)
+        put(p, Entity.GOAL, GOAL_ID, updated, Goal.serializer())
+    }
+
+    // ---- local-only UI state --------------------------------------------------
+
+    /** Plan id -> `changed_by_assistant_at` the user has already seen (never synced). */
+    val plansSeen: Flow<Map<String, String>> =
+        dao.observeSetting(SettingKeys.PLANS_SEEN).map { raw ->
+            raw?.lines()?.mapNotNull { l -> l.split('=', limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }?.toMap().orEmpty()
+        }
+
+    suspend fun markPlanSeen(planId: String, changedAt: String) = db.withTransaction {
+        val current = dao.getSetting(SettingKeys.PLANS_SEEN)?.lines()?.filter { it.isNotBlank() && !it.startsWith("$planId=") }.orEmpty()
+        dao.putSetting(SettingEntity(SettingKeys.PLANS_SEEN, (current + "$planId=$changedAt").joinToString("\n")))
+    }
+
+    fun observePackChecked(gymId: String): Flow<String?> = dao.observeSetting(SettingKeys.PACK_PREFIX + gymId)
+
+    /** Checks or unchecks one packing-list item; [defaults] are the items checked at the start of the day. */
+    suspend fun togglePackItem(gymId: String, itemId: String, day: String, defaults: Set<String>) = db.withTransaction {
+        val key = SettingKeys.PACK_PREFIX + gymId
+        val current = PackState.decodeOrNull(dao.getSetting(key), day) ?: defaults
+        dao.putSetting(SettingEntity(key, PackState.encode(day, PackState.toggle(current, itemId))))
+    }
+
+    // ---- sync conflicts ---------------------------------------------------------
+
+    /**
+     * Resolves a conflict notice ("conflict:entity:id"). [keepMine] writes the local version that lost
+     * against the server back as a new edit (it is then newer than the server copy); otherwise the
+     * server's version stays.
+     */
+    suspend fun resolveConflict(notice: String, keepMine: Boolean) = db.withTransaction {
+        val parts = notice.split(':', limit = 3)
+        if (parts.size == 3 && parts[0] == "conflict") {
+            val key = SettingKeys.CONFLICT_PREFIX + parts[1] + ":" + parts[2]
+            val backup = dao.getSetting(key)
+            if (keepMine && backup != null) putRaw(currentProfile(), parts[1], parts[2], parseObject(backup))
+            dao.deleteSetting(key)
+        }
+        val left = dao.getSetting(SettingKeys.SYNC_NOTICES)?.lines()?.filter { it.isNotBlank() && it != notice }.orEmpty()
+        if (left.isEmpty()) dao.deleteSetting(SettingKeys.SYNC_NOTICES) else dao.putSetting(SettingEntity(SettingKeys.SYNC_NOTICES, left.joinToString("\n")))
+    }
+
+    private suspend fun putRaw(profile: String, entity: String, id: String, data: JsonObject) {
+        val existing = dao.getDoc(profile, entity, id)
+        val ts = nowIso()
+        val idx = IndexColumns.extract(entity, data)
+        dao.upsertDoc(
+            DocumentEntity(
+                profile, entity, id, existing?.rev, ts, false, existing?.origin ?: Origin.APP, data.toString(),
+                idx.planId, idx.gymId, idx.exerciseId, idx.status, idx.sortAt,
+            ),
+        )
+        if (profile == Profile.PERSONAL) enqueue(entity, id, PushOp.UPSERT, existing?.rev, ts, data)
     }
 
     // ---- demo data (test profile only) ---------------------------------------

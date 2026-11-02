@@ -54,6 +54,10 @@ internal class RoomSyncStore(private val db: GymDatabase) : SyncStore {
 
     override suspend fun resolveConflict(op: OutboxOp, serverDoc: Document?) = db.withTransaction {
         dao.deleteOutboxIfSame(op.seq, op.opId)
+        // Keep the losing local version so the user can still choose "Meine behalten".
+        if (op.op == "upsert") {
+            dao.putSetting(SettingEntity(SettingKeys.CONFLICT_PREFIX + op.entity + ":" + op.id, op.data.toString()))
+        }
         adopt(op, serverDoc)
     }
 

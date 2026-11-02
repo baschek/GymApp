@@ -8,11 +8,27 @@ import de.baschek.gymapp.data.GymRepository
 import de.baschek.gymapp.sync.SyncScheduler
 import de.baschek.gymapp.timer.TimerController
 import de.baschek.gymapp.timer.TimerPhase
+import de.baschek.gymapp.core.model.Session
+import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.core.training.addExercise as coreAddExercise
+import de.baschek.gymapp.core.training.insertWarmup as coreInsertWarmup
+import de.baschek.gymapp.core.training.moveExercise as coreMoveExercise
+import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
+import de.baschek.gymapp.core.training.skipSet as coreSkipSet
+import de.baschek.gymapp.core.training.templateFor
+import de.baschek.gymapp.core.training.toggleSkipExercise as coreToggleSkipExercise
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import java.util.UUID
 
 /** Values the user entered for one set. [value] is reps, seconds or meters depending on the exercise target. */
-data class SetInput(val weightKg: Double?, val value: Double?, val effort: String?)
+data class SetInput(
+    val weightKg: Double?,
+    val value: Double?,
+    val effort: String?,
+    /** Add-ons that are part of [weightKg] (the total). */
+    val addonWeightsKg: List<Double>? = null,
+)
 
 /** Workout operations shared by the UI and the notification actions. */
 class WorkoutActions(
@@ -38,6 +54,7 @@ class WorkoutActions(
                             else set.copy(
                                 status = SetStatus.COMPLETED,
                                 weightKg = input.weightKg,
+                                addonWeightsKg = input.addonWeightsKg?.takeIf { it.isNotEmpty() },
                                 reps = if (ex.target.metric == Metric.REPS) input.value?.toInt() else set.reps,
                                 seconds = if (ex.target.metric == Metric.SECONDS) input.value?.toInt() else set.seconds,
                                 meters = if (ex.target.metric == Metric.METERS) input.value else set.meters,
@@ -69,6 +86,32 @@ class WorkoutActions(
         val pre = prefillSet(exercise, weights)
         logSet(active.id, exercise.id, set.id, SetInput(pre.weightKg, pre.value, pre.effort))
         return true
+    }
+
+    /** Skips one set with a reason and ends a running rest. */
+    suspend fun skipSet(sessionId: String, exerciseId: String, setId: String, reason: SkipReason) {
+        repository.updateSession(sessionId) { coreSkipSet(it, exerciseId, setId, reason) }
+        timer.stop()
+    }
+
+    /** Inserts a warm-up set before the first pending working set of the exercise. */
+    suspend fun addWarmup(sessionId: String, exerciseId: String) =
+        repository.updateSession(sessionId) { coreInsertWarmup(it, exerciseId) { UUID.randomUUID().toString() } }
+
+    suspend fun moveExercise(sessionId: String, exerciseId: String, delta: Int) =
+        repository.updateSession(sessionId) { coreMoveExercise(it, exerciseId, delta) }
+
+    suspend fun toggleSkipExercise(sessionId: String, exerciseId: String) =
+        repository.updateSession(sessionId) { coreToggleSkipExercise(it, exerciseId) }
+
+    suspend fun setNote(sessionId: String, exerciseId: String, note: String) =
+        repository.updateSession(sessionId) { coreSetExerciseNote(it, exerciseId, note) }
+
+    /** Appends a catalog exercise (three sets) to the running workout. */
+    suspend fun addExercise(sessionId: String, catalogExerciseId: String) {
+        val exercise = repository.getExercise(catalogExerciseId) ?: return
+        val template = templateFor(catalogExerciseId, exercise.name, exercise.measurementType, exercise.loadDirection, exercise.loadBasis)
+        repository.updateSession(sessionId) { s: Session -> coreAddExercise(s, template, 3) { UUID.randomUUID().toString() } }
     }
 
     fun skipRest() {

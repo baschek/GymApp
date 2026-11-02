@@ -20,6 +20,10 @@ import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.model.TargetSets
 import de.baschek.gymapp.core.model.effectiveAddons
+import de.baschek.gymapp.core.model.RangeSpec
+import de.baschek.gymapp.core.model.levelsMatch
+import de.baschek.gymapp.core.model.rangeSpec
+import de.baschek.gymapp.core.model.WeightRange
 import de.baschek.gymapp.core.model.forArea
 import de.baschek.gymapp.core.progression.freeWeights
 import de.baschek.gymapp.core.progression.nearestLevelIndex
@@ -235,6 +239,25 @@ class AmendmentCTest {
         assertEquals(emptySet(), PackState.decode(null, "2026-11-03"))
         assertEquals(setOf("a"), PackState.toggle(setOf("a", "b"), "b"))
         assertEquals(emptySet(), PackState.decode(PackState.encode("2026-11-02", emptySet()), "2026-11-02"))
+    }
+
+    @Test
+    fun packStateFallsBackToDefaultsOnlyWhenNothingWasSavedToday() {
+        assertNull(PackState.decodeOrNull(null, "2026-11-02"))
+        assertNull(PackState.decodeOrNull(PackState.encode("2026-11-01", setOf("a")), "2026-11-02"))
+        assertEquals(emptySet(), PackState.decodeOrNull(PackState.encode("2026-11-02", emptySet()), "2026-11-02"))
+    }
+
+    @Test
+    fun machineRangeIsReadFromRangesOrInferredFromLevels() {
+        val ranged = MachineProfile(weightRanges = listOf(WeightRange("r", 5.0, 100.0, 5.0)))
+        assertEquals(RangeSpec(5.0, 100.0, 5.0), ranged.rangeSpec())
+        assertEquals(20, ranged.rangeSpec()!!.count)
+        assertTrue(ranged.levelsMatch(ranged.rangeSpec()!!))
+        val listed = MachineProfile(availableWeightsKg = listOf(10.0, 20.0, 30.0, 35.0, 40.0))
+        assertEquals(RangeSpec(10.0, 40.0, 5.0), listed.rangeSpec())
+        assertFalse(listed.levelsMatch(listed.rangeSpec()!!))
+        assertNull(MachineProfile().rangeSpec())
     }
 
     @Test

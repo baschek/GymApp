@@ -7,10 +7,13 @@ package de.baschek.gymapp.core.stats
 object PackState {
     fun encode(day: String, checked: Set<String>): String = day + "|" + checked.sorted().joinToString("\n")
 
-    fun decode(raw: String?, today: String): Set<String> {
-        if (raw == null) return emptySet()
+    fun decode(raw: String?, today: String): Set<String> = decodeOrNull(raw, today) ?: emptySet()
+
+    /** The checked ids saved today, or null when nothing was saved today (callers then use the defaults). */
+    fun decodeOrNull(raw: String?, today: String): Set<String>? {
+        if (raw == null) return null
         val day = raw.substringBefore('|')
-        if (day != today) return emptySet()
+        if (day != today) return null
         return raw.substringAfter('|', "").lines().filter { it.isNotBlank() }.toSet()
     }
 

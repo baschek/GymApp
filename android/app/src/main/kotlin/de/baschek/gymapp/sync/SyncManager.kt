@@ -124,7 +124,7 @@ class SyncManager(
     }
 
     private fun noticesOf(report: SyncReport): List<String> =
-        report.notices.map { "${it.kind}:${it.entity}" }
+        report.notices.map { "${it.kind}:${it.entity}:${it.id}" }
 
     suspend fun pair(urlInput: String, code: String): PairResult {
         val base = try {

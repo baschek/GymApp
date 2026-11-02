@@ -97,6 +97,7 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.kotlinx.coroutines.android)
 

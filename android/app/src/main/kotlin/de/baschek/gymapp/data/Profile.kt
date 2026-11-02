@@ -25,4 +25,7 @@ object SettingKeys {
     const val KEEP_SCREEN_ON = "keep_screen_on"
     const val TIMER_STATE = "timer_state"
     const val CONNECTION_LOST = "connection_lost"
+    const val PLANS_SEEN = "plans_seen"
+    const val PACK_PREFIX = "pack_checked:"
+    const val CONFLICT_PREFIX = "conflict_local:"
 }

@@ -237,4 +237,80 @@ class GymRepositoryTest {
         assertNull(repo.nextReconnectAttemptAt())
         assertTrue(!repo.connectionLost.first())
     }
+
+    @Test
+    fun goalIsASingletonDocumentMarkedAsEditedByTheApp() = runBlocking {
+        assertNull(repo.observeGoal().first())
+        repo.saveGoal { it.copy(trainingDaysPerWeek = 4, targetSets = it.targetSets.copy(brust = 12)) }
+        val goal = repo.observeGoal().first()!!.goal
+        assertEquals(4, goal.trainingDaysPerWeek)
+        assertEquals(12, goal.targetSets.brust)
+        assertEquals("app", goal.updatedBy)
+        val ops = repo.syncStore.pendingOps(10).filter { it.entity == "goal" }
+        assertEquals(listOf("weekly"), ops.map { it.id })
+    }
+
+    @Test
+    fun machineProfileEditsReuseTheExistingDocumentAndKeepUnknownFields() = runBlocking {
+        repo.syncStore.applyRemote(
+            listOf(doc("machine_profile", "mp-1", 4, """{"gym_id":"gym-a","exercise_id":"ex1","available_weights_kg":[10,20],"server_note":"keep"}""")),
+        )
+        repo.saveMachineProfile("gym-a", "ex1") { it.copy(addonWeightsKg = listOf(1.25, 2.5)) }
+        repo.saveMachineProfile("gym-b", "ex1") { it.copy(machineModel = "Synthetic") }
+        val ops = repo.syncStore.pendingOps(10).filter { it.entity == "machine_profile" }
+        assertEquals(2, ops.size)
+        val existing = ops.first { it.id == "mp-1" }
+        assertEquals(4L, existing.baseRev)
+        assertEquals("\"keep\"", existing.data["server_note"].toString())
+        assertNotNull(existing.data["addon_weights_kg"])
+        assertEquals(null, ops.first { it.id != "mp-1" }.baseRev)
+        val info = repo.getMachineInfo("gym-a")["ex1"]!!
+        assertEquals(listOf(10.0, 20.0), info.levels)
+        assertTrue(11.25 in info.candidates && 12.5 in info.candidates && 13.75 in info.candidates)
+        assertTrue(21.25 in info.candidates && 23.75 in info.candidates)
+    }
+
+    @Test
+    fun keepingMyVersionAfterAConflictWritesTheLosingEditBackAsNewEdit() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("plan", "p1", 5, plan)))
+        repo.updatePlan("p1") { it.copy(name = "Mine") }
+        val op = repo.syncStore.pendingOps(10).single()
+        repo.syncStore.resolveConflict(op, doc("plan", "p1", 8, plan))
+        repo.recordSyncSuccess(listOf("conflict:plan:p1"))
+        assertEquals("Synthetic plan", repo.observePlan("p1").first()!!.value.name)
+
+        repo.resolveConflict("conflict:plan:p1", keepMine = true)
+        assertEquals("Mine", repo.observePlan("p1").first()!!.value.name)
+        val again = repo.syncStore.pendingOps(10).single()
+        assertEquals(8L, again.baseRev)
+        assertTrue(repo.syncNotices.first().isEmpty())
+    }
+
+    @Test
+    fun keepingTheNewestAfterAConflictOnlyClearsTheNotice() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("plan", "p1", 5, plan)))
+        repo.updatePlan("p1") { it.copy(name = "Mine") }
+        repo.syncStore.resolveConflict(repo.syncStore.pendingOps(10).single(), doc("plan", "p1", 8, plan))
+        repo.recordSyncSuccess(listOf("conflict:plan:p1"))
+        repo.resolveConflict("conflict:plan:p1", keepMine = false)
+        assertEquals("Synthetic plan", repo.observePlan("p1").first()!!.value.name)
+        assertTrue(repo.syncStore.pendingOps(10).isEmpty())
+        assertTrue(repo.syncNotices.first().isEmpty())
+    }
+
+    @Test
+    fun packingChecksResetOnANewDayAndStartFromTheGymDefaults() = runBlocking {
+        repo.togglePackItem("gym-a", "bottle", "2026-11-02", defaults = setOf("towel"))
+        assertEquals("2026-11-02|bottle\ntowel", repo.observePackChecked("gym-a").first())
+        repo.togglePackItem("gym-a", "bottle", "2026-11-03", defaults = setOf("towel"))
+        assertEquals("2026-11-03|bottle\ntowel", repo.observePackChecked("gym-a").first())
+    }
+
+    @Test
+    fun assistantNoticeStaysSeenUntilTheServerChangesThePlanAgain() = runBlocking {
+        repo.markPlanSeen("p1", "2026-10-28T10:00:00Z")
+        repo.markPlanSeen("p2", "2026-10-29T10:00:00Z")
+        repo.markPlanSeen("p1", "2026-11-01T10:00:00Z")
+        assertEquals(mapOf("p2" to "2026-10-29T10:00:00Z", "p1" to "2026-11-01T10:00:00Z"), repo.plansSeen.first())
+    }
 }
