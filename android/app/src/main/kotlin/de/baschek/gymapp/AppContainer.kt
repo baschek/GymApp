@@ -14,6 +14,8 @@ import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import de.baschek.gymapp.workout.WorkoutActions
 
 /** Hand-wired dependencies (no DI framework needed at this size). */
 class AppContainer(app: Application) {
@@ -24,10 +26,13 @@ class AppContainer(app: Application) {
     val scheduler = SyncScheduler(app)
     private val httpClient = createHttpClient(OkHttp.create())
     val syncManager = SyncManager(repository, secureStore, httpClient, scheduler)
-    val timer = TimerController(app)
+    val timer = TimerController(repository, appScope)
+    val workout = WorkoutActions(repository, timer, scheduler)
     val updater = AppUpdater(app, httpClient)
 
     init {
         Telemetry.install(repository, appScope)
+        // Bring back a running timer after process death.
+        appScope.launch { runCatching { timer.restore() } }
     }
 }

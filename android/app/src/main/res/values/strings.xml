@@ -95,4 +95,35 @@
     <string name="timer_notification_set">GymApp · Satz</string>
     <string name="timer_notification_rest">GymApp · Pause</string>
     <string name="timer_notification_setup">GymApp · Maschine einrichten</string>
+
+    <!-- Gym handling -->
+    <string name="gym_other_name">Anderes Studio</string>
+    <string name="gym_unknown">Unbekanntes Studio</string>
+    <string name="start_gym_title">Studio bestätigen</string>
+    <string name="start_gym_message">In welchem Studio trainierst du jetzt? Gewichte und Fortschritt gelten pro Studio.</string>
+    <string name="start_gym_confirm">Hier trainieren: %1$s</string>
+    <string name="start_gym_choose">Studio wählen</string>
+    <string name="home_history">Verlauf</string>
+    <string name="history_title">Verlauf</string>
+    <string name="history_empty">Noch keine abgeschlossenen Trainings.</string>
+    <string name="history_badge_review">zu prüfen</string>
+    <string name="history_details">Details</string>
+    <string name="history_change_gym">Studio ändern</string>
+    <string name="history_change_gym_confirm">Studio übernehmen: %1$s</string>
+    <string name="history_recalc_hint">Die Arbeitsgewichte des alten und des neuen Studios werden neu berechnet.</string>
+    <string name="history_mark_reviewed">Als geprüft markieren</string>
+
+    <!-- Ongoing workout notification -->
+    <string name="notif_session_running">Training läuft</string>
+    <string name="notif_title">%1$s · Satz %2$d/%3$d</string>
+    <string name="notif_prefill">%1$s kg × %2$s</string>
+    <string name="notif_prefill_nokg">%1$s</string>
+    <string name="notif_action_log">Satz geschafft</string>
+    <string name="notif_action_skip">Pause überspringen</string>
+    <string name="notif_perm_title">Benachrichtigungen erlauben</string>
+    <string name="notif_perm_message">GymApp zeigt während des Trainings den aktuellen Satz und die Pausenzeit dauerhaft in der Statusleiste und lässt dich Sätze direkt dort abhaken. Dafür braucht Android deine Erlaubnis.</string>
+    <string name="notif_perm_allow">Erlauben</string>
+    <string name="notif_perm_later">Später</string>
+    <string name="notif_perm_settings_message">Ohne Benachrichtigungen funktioniert der Timer nur in der App. Du kannst sie in den Android-Einstellungen aktivieren.</string>
+    <string name="notif_perm_open_settings">Einstellungen</string>
 </resources>

@@ -23,8 +23,14 @@ import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.model.WorkoutMode
 import de.baschek.gymapp.core.model.effectiveWeights
 import de.baschek.gymapp.core.progression.finishSession as coreFinishSession
-import de.baschek.gymapp.core.progression.historicalWorkingWeight
-import de.baschek.gymapp.core.progression.nearestAvailableWeight
+import de.baschek.gymapp.core.model.OTHER_GYM_ID
+import de.baschek.gymapp.core.model.ReviewFlag
+import de.baschek.gymapp.core.progression.ExerciseInfo
+import de.baschek.gymapp.core.progression.GymExerciseKey
+import de.baschek.gymapp.core.progression.StartSuggestion
+import de.baschek.gymapp.core.progression.WorkingWeight
+import de.baschek.gymapp.core.progression.reassignSessionGym as coreReassignSessionGym
+import de.baschek.gymapp.core.progression.suggestStartWeight
 import de.baschek.gymapp.core.sync.SyncStore
 import de.baschek.gymapp.core.sync.TelemetryStore
 import de.baschek.gymapp.data.db.DocumentEntity
@@ -83,6 +89,9 @@ class GymRepository(
 
     val syncNotices: Flow<List<String>> =
         dao.observeSetting(SettingKeys.SYNC_NOTICES).map { it?.lines()?.filter(String::isNotBlank).orEmpty() }
+
+    val keepScreenOn: Flow<Boolean> =
+        dao.observeSetting(SettingKeys.KEEP_SCREEN_ON).map { it != "0" }.distinctUntilChanged()
 
     val authError: Flow<Boolean> = dao.observeSetting(SettingKeys.AUTH_ERROR).map { it != null }
 
@@ -191,23 +200,54 @@ class GymRepository(
 
     // ---- sessions -----------------------------------------------------------
 
-    /** Starts a session from a plan; returns the id of the (new or already running) active session. */
-    suspend fun startSession(planId: String, mode: String = WorkoutMode.NORMAL, gymId: String?): String? =
+    suspend fun getSession(id: String): Session? =
+        dao.getDoc(currentProfile(), Entity.SESSION, id)?.takeIf { !it.deleted }?.toStored(Session.serializer())?.value
+
+    suspend fun getActiveSession(): Stored<Session>? =
+        dao.getActiveSession(currentProfile())?.toStored(Session.serializer())
+
+    suspend fun getMachineWeights(gymId: String?): Map<String, List<Double>> {
+        if (gymId == null) return emptyMap()
+        return dao.getDocsByGym(currentProfile(), Entity.MACHINE_PROFILE, gymId)
+            .mapNotNull { it.toStored(MachineProfile.serializer()) }
+            .associate { it.value.exerciseId to it.value.effectiveWeights() }
+    }
+
+    fun observeCompletedSessions(): Flow<List<Stored<Session>>> =
+        observeAll(Entity.SESSION, Session.serializer())
+            .map { list -> list.filter { it.value.status == SessionStatus.COMPLETED }.sortedByDescending { it.value.effectiveTime } }
+
+    private suspend fun allSessions(profile: String): List<Pair<String, Session>> =
+        dao.getDocs(profile, Entity.SESSION).mapNotNull { it.toStored(Session.serializer()) }.map { it.id to it.value }
+
+    /**
+     * Starts a session from a plan in the given gym (the gym is mandatory; [OTHER_GYM_ID] is allowed).
+     * Returns the id of the new or already running active session.
+     */
+    suspend fun startSession(planId: String, mode: String = WorkoutMode.NORMAL, gymId: String): String? =
         db.withTransaction {
             val p = currentProfile()
             dao.getActiveSession(p)?.let { return@withTransaction it.id }
             val plan = dao.getDoc(p, Entity.PLAN, planId)?.takeIf { !it.deleted }?.toStored(Plan.serializer())?.value
                 ?: return@withTransaction null
             val exercises = dao.getDocs(p, Entity.EXERCISE).mapNotNull { it.toStored(Exercise.serializer()) }.associate { it.id to it.value }
-            val machines = gymId?.let { g ->
-                dao.getDocsByGym(p, Entity.MACHINE_PROFILE, g).mapNotNull { it.toStored(MachineProfile.serializer()) }
-                    .associate { it.value.exerciseId to it.value.effectiveWeights() }
-            }.orEmpty()
-            val history = dao.getDocs(p, Entity.SESSION).mapNotNull { it.toStored(Session.serializer())?.value }
+            val infos = exercises.map { (id, e) ->
+                ExerciseInfo(id, e.name, e.measurementType, e.loadDirection, e.loadBasis, e.movementFamily, e.equipment)
+            }
+            val machines = dao.getDocsByGym(p, Entity.MACHINE_PROFILE, gymId)
+                .mapNotNull { it.toStored(MachineProfile.serializer()) }.associate { it.value.exerciseId to it.value }
+            val history = allSessions(p)
 
             val sessionExercises = plan.exercises.sortedBy { it.order }
                 .filter { it.modeSets.forMode(mode) > 0 }
-                .mapIndexed { index, pe -> buildSessionExercise(pe, index + 1, mode, exercises[pe.exerciseId], machines[pe.exerciseId], history, gymId) }
+                .mapIndexed { index, pe ->
+                    val machine = machines[pe.exerciseId]
+                    val suggestion = suggestStartWeight(
+                        pe.exerciseId, gymId, history, infos, machine?.effectiveWeights(),
+                        machine?.workingWeightKg, pe.currentWeightKg ?: pe.startingWeightKg,
+                    )
+                    buildSessionExercise(pe, index + 1, mode, exercises[pe.exerciseId], suggestion)
+                }
 
             val id = newId()
             val session = Session(
@@ -223,15 +263,9 @@ class GymRepository(
         order: Int,
         mode: String,
         exercise: Exercise?,
-        weights: List<Double>?,
-        history: List<Session>,
-        gymId: String?,
+        suggestion: StartSuggestion?,
     ): SessionExercise {
         val count = pe.modeSets.forMode(mode)
-        val planWeight = pe.currentWeightKg ?: pe.startingWeightKg
-        val historic = if (planWeight == null && gymId != null) historicalWorkingWeight(pe.exerciseId, history, gymId) else null
-        val base = planWeight ?: historic?.weightKg
-        val suggested = base?.let { if (weights.isNullOrEmpty()) it else nearestAvailableWeight(it, weights) }
         return SessionExercise(
             id = newId(),
             sourcePlanExerciseId = pe.id,
@@ -245,8 +279,9 @@ class GymRepository(
             restSeconds = pe.restSeconds,
             supersetGroup = pe.supersetGroup,
             plannedSets = count,
-            suggestedWeightKg = suggested,
-            suggestionReason = if (planWeight != null) "plan_weight" else historic?.let { "history" },
+            suggestedWeightKg = suggestion?.weightKg,
+            suggestionReason = suggestion?.reason,
+            suggestionSourceGymId = suggestion?.sourceGymId,
             sets = (1..count).map { SetLog(id = newId(), order = it, setType = SetType.WORKING, status = SetStatus.PENDING) },
         )
     }
@@ -257,23 +292,63 @@ class GymRepository(
         put(p, Entity.SESSION, id, transform(current.value), Session.serializer())
     }
 
-    /** Completes the session; pending sets get [pendingReason]; plan weights/milestones follow the progression rules. */
+    /** Completes the session; pending sets get [pendingReason]; the gym's working weights follow the progression rules. */
     suspend fun finishSession(sessionId: String, pendingReason: String = SetStatus.SKIPPED_OTHER) = db.withTransaction {
         val p = currentProfile()
         val session = dao.getDoc(p, Entity.SESSION, sessionId)?.takeIf { !it.deleted }?.toStored(Session.serializer())?.value
             ?: return@withTransaction
         if (session.status == SessionStatus.COMPLETED) return@withTransaction
-        val plan = session.planId?.let { dao.getDoc(p, Entity.PLAN, it) }?.takeIf { !it.deleted }?.toStored(Plan.serializer())
         val now = clock()
         val started = runCatching { Instant.parse(session.startedAt) }.getOrDefault(now)
         val result = coreFinishSession(
-            sessionId, session, plan?.value, pendingReason, now.truncatedTo(ChronoUnit.MILLIS).toString(),
-            Duration.between(started, now).seconds.toInt(), newId,
+            sessionId, session, pendingReason, now.truncatedTo(ChronoUnit.MILLIS).toString(),
+            Duration.between(started, now).seconds.toInt(), newId, allSessions(p).filter { it.first != sessionId },
         )
         put(p, Entity.SESSION, sessionId, result.session, Session.serializer())
-        val updatedPlan = result.plan
-        if (plan != null && updatedPlan != null && updatedPlan != plan.value) put(p, Entity.PLAN, plan.id, updatedPlan, Plan.serializer())
+        result.workingWeights.forEach { (key, w) -> setWorkingWeight(p, key, w) }
         result.milestones.forEach { put(p, Entity.MILESTONE, it.id, it.milestone, de.baschek.gymapp.core.model.Milestone.serializer()) }
+    }
+
+    /**
+     * Changes the gym of a completed session and recalculates the working weights of the
+     * old and new gym. The user confirmed the gym, so review flags about it are cleared.
+     */
+    suspend fun reassignSessionGym(sessionId: String, newGymId: String) = db.withTransaction {
+        val p = currentProfile()
+        val all = allSessions(p)
+        val session = all.firstOrNull { it.first == sessionId }?.second ?: return@withTransaction
+        if (session.status != SessionStatus.COMPLETED || session.gymId == newGymId) return@withTransaction
+        val weights = coreReassignSessionGym(all, sessionId, newGymId)
+        val flags = session.reviewFlags.orEmpty().filter { it != ReviewFlag.GYM_SUSPECT && it != ReviewFlag.GYM_MISSING }
+        put(p, Entity.SESSION, sessionId, session.copy(gymId = newGymId, reviewFlags = flags.ifEmpty { null }), Session.serializer())
+        weights.forEach { (key, w) -> setWorkingWeight(p, key, w) }
+    }
+
+    /** Removes all review flags ("geprüft"). */
+    suspend fun clearReviewFlags(sessionId: String) = updateSession(sessionId) { it.copy(reviewFlags = null) }
+
+    /** Stores (or clears, with null) the working weight on the machine profile of a gym x exercise. */
+    private suspend fun setWorkingWeight(profile: String, key: GymExerciseKey, weight: WorkingWeight?) {
+        val existing = dao.getDocsByGym(profile, Entity.MACHINE_PROFILE, key.gymId)
+            .mapNotNull { it.toStored(MachineProfile.serializer()) }.firstOrNull { it.value.exerciseId == key.exerciseId }
+        if (existing == null) {
+            if (weight == null) return
+            put(
+                profile, Entity.MACHINE_PROFILE, newId(),
+                MachineProfile(
+                    gymId = key.gymId, exerciseId = key.exerciseId, workingWeightKg = weight.weightKg,
+                    workingWeightUpdatedAt = weight.updatedAt, workingWeightSourceSessionId = weight.sourceSessionId,
+                ),
+                MachineProfile.serializer(),
+            )
+            return
+        }
+        val updated = existing.value.copy(
+            workingWeightKg = weight?.weightKg,
+            workingWeightUpdatedAt = weight?.updatedAt,
+            workingWeightSourceSessionId = weight?.sourceSessionId,
+        )
+        if (updated != existing.value) put(profile, Entity.MACHINE_PROFILE, existing.id, updated, MachineProfile.serializer())
     }
 
     // ---- demo data (test profile only) ---------------------------------------

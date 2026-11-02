@@ -3,7 +3,9 @@
 package de.baschek.gymapp.ui.workout
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +55,9 @@ import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.telemetry.Telemetry
+import de.baschek.gymapp.core.progression.prefillSet
+import de.baschek.gymapp.ui.GymBanner
+import de.baschek.gymapp.workout.SetInput
 import de.baschek.gymapp.timer.TimerPhase
 import de.baschek.gymapp.timer.TimerState
 import de.baschek.gymapp.ui.appViewModelFactory
@@ -70,18 +76,11 @@ fun WorkoutScreen(sessionId: String, onClose: () -> Unit) {
     val weights by vm.weights.collectAsStateWithLifecycle()
     val timer by vm.timer.collectAsStateWithLifecycle()
     val keepOn by vm.keepScreenOn.collectAsStateWithLifecycle()
+    val gyms by vm.gyms.collectAsStateWithLifecycle()
     var confirmFinish by remember { mutableStateOf(false) }
 
-    val context = LocalContext.current
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    LaunchedEffect(Unit) {
-        Telemetry.track("workout", "view")
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    NotificationPermissionPrompt()
+    LaunchedEffect(Unit) { Telemetry.track("workout", "view") }
 
     val view = LocalView.current
     DisposableEffect(keepOn) {
@@ -99,6 +98,8 @@ fun WorkoutScreen(sessionId: String, onClose: () -> Unit) {
             val session = l.session
             val readOnly = session.status != "active"
             val current = session.exercises.firstOrNull { ex -> ex.sets.any { it.status == SetStatus.PENDING } }
+            Column {
+            GymBanner(session.gymId, gyms)
             LazyColumn(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -136,6 +137,7 @@ fun WorkoutScreen(sessionId: String, onClose: () -> Unit) {
                 } else {
                     item { TextButton(onClick = onClose) { Text(stringResource(R.string.common_back)) } }
                 }
+            }
             }
             if (confirmFinish) {
                 AlertDialog(
@@ -229,11 +231,10 @@ private fun doneText(ex: SessionExercise, set: SetLog): String {
 
 @Composable
 private fun SetEntry(ex: SessionExercise, set: SetLog, weights: List<Double>, onLog: (String, SetInput) -> Unit) {
+    val pre = remember(set.id) { prefillSet(ex, weights) }
     val weighted = ex.measurementType in WEIGHTED
-    val lastWeight = ex.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.weightKg != null }?.weightKg
-    val startWeight = lastWeight ?: ex.suggestedWeightKg ?: weights.firstOrNull()
-    var weight by remember(set.id) { mutableStateOf(startWeight?.let(::fmt).orEmpty()) }
-    var value by remember(set.id) { mutableStateOf(fmt(ex.target.max)) }
+    var weight by remember(set.id) { mutableStateOf(pre.weightKg?.let(::fmt).orEmpty()) }
+    var value by remember(set.id) { mutableStateOf(fmt(pre.value)) }
     var effort by remember(set.id) { mutableStateOf<String?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -302,4 +303,40 @@ private fun stepWeight(current: Double?, weights: List<Double>, direction: Int):
     val sorted = weights.sorted()
     return if (direction > 0) sorted.firstOrNull { it > base + 1e-9 } ?: sorted.last()
     else sorted.lastOrNull { it < base - 1e-9 } ?: sorted.first()
+}
+
+/**
+ * Android 13+: explains why notifications are needed before asking, and points to the system
+ * settings if the user declined. The ongoing workout notification works without it only as a hidden service.
+ */
+@Composable
+private fun NotificationPermissionPrompt() {
+    if (Build.VERSION.SDK_INT < 33) return
+    val context = LocalContext.current
+    fun granted() = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    var step by rememberSaveable { mutableStateOf(if (granted()) 0 else 1) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> step = if (ok) 0 else 2 }
+    when (step) {
+        1 -> AlertDialog(
+            onDismissRequest = { step = 0 },
+            title = { Text(stringResource(R.string.notif_perm_title)) },
+            text = { Text(stringResource(R.string.notif_perm_message)) },
+            confirmButton = { TextButton(onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }) { Text(stringResource(R.string.notif_perm_allow)) } },
+            dismissButton = { TextButton(onClick = { step = 0 }) { Text(stringResource(R.string.notif_perm_later)) } },
+        )
+        2 -> AlertDialog(
+            onDismissRequest = { step = 0 },
+            title = { Text(stringResource(R.string.notif_perm_title)) },
+            text = { Text(stringResource(R.string.notif_perm_settings_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    step = 0
+                    context.startActivity(
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                    )
+                }) { Text(stringResource(R.string.notif_perm_open_settings)) }
+            },
+            dismissButton = { TextButton(onClick = { step = 0 }) { Text(stringResource(R.string.common_cancel)) } },
+        )
+    }
 }

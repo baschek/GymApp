@@ -20,6 +20,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -38,7 +41,7 @@ import java.time.format.FormatStyle
 
 /** Placeholder home screen: sync status, plans, update. All logic lives in [HomeViewModel]. */
 @Composable
-fun HomeScreen(onOpenPairing: () -> Unit, onOpenWorkout: (String) -> Unit) {
+fun HomeScreen(onOpenPairing: () -> Unit, onOpenHistory: () -> Unit, onOpenWorkout: (String) -> Unit) {
     val vm: HomeViewModel = viewModel(factory = appViewModelFactory { HomeViewModel(it) })
     val profile by vm.profile.collectAsStateWithLifecycle()
     val paired by vm.paired.collectAsStateWithLifecycle()
@@ -52,6 +55,7 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenWorkout: (String) -> Unit) {
     val active by vm.activeSession.collectAsStateWithLifecycle()
     val update by vm.update.collectAsStateWithLifecycle()
     val isTest = profile == Profile.TEST
+    var startPlanId by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) { Telemetry.track("home", "view") }
 
@@ -129,23 +133,7 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenWorkout: (String) -> Unit) {
             }
         }
 
-        if (gyms.size > 1) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(stringResource(R.string.home_gym), style = MaterialTheme.typography.titleSmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val selected = currentGym ?: gyms.first().id
-                        gyms.forEach { g ->
-                            FilterChip(
-                                selected = g.id == selected, onClick = { vm.selectGym(g.id) },
-                                label = { Text(g.value.shortName ?: g.value.name) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
+        item { OutlinedButton(onClick = onOpenHistory) { Text(stringResource(R.string.home_history)) } }
         item { Text(stringResource(R.string.home_plans), style = MaterialTheme.typography.titleMedium) }
         if (plans.isEmpty()) {
             item { Text(stringResource(R.string.home_no_plans)) }
@@ -158,7 +146,7 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenWorkout: (String) -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(plan.value.name, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
-                    Button(onClick = { vm.startSession(plan.id, onOpenWorkout) }) {
+                    Button(onClick = { startPlanId = plan.id }) {
                         Text(stringResource(R.string.home_start_session))
                     }
                 }
@@ -190,6 +178,17 @@ fun HomeScreen(onOpenPairing: () -> Unit, onOpenWorkout: (String) -> Unit) {
                 }
             }
         }
+    }
+    startPlanId?.let { planId ->
+        StartSessionDialog(
+            gyms = gyms,
+            preselected = currentGym,
+            onDismiss = { startPlanId = null },
+            onConfirm = { gymId ->
+                startPlanId = null
+                vm.startSession(planId, gymId, onOpenWorkout)
+            },
+        )
     }
 }
 

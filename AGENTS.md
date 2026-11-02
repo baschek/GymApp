@@ -43,6 +43,8 @@ Android modules:
 - **Progression.** `core/progression` is the single implementation. Behavior is
   pinned by `core/src/test/resources/progression_golden.json`; change the rules only
   together with the golden cases.
+- **Per-gym weights.** Working weights and progression exist per gym x exercise (`machine_profile.working_weight_kg`); plan weights are legacy fallbacks. A session always has a gym, confirmed explicitly at start; changing the gym of a finished session goes through `GymRepository.reassignSessionGym` so both gyms are recalculated.
+- **Workout robustness.** While a session is active, `MainActivity` keeps the screen on (window flag, re-applied on every start) and `WorkoutService` shows one ongoing notification (actions "Satz geschafft", "Pause überspringen"). Timer state is persisted in the settings table and restored at app start; keep it that way when changing timers.
 - **Network.** HTTPS only (`network_security_config`); cleartext only in debug
   builds for `10.0.2.2`/`localhost`. No exported components except the launcher
   activity. Never log tokens or request bodies.

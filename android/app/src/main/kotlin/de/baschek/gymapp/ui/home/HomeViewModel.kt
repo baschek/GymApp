@@ -73,12 +73,12 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
         viewModelScope.launch { repo.seedDemoData() }
     }
 
-    /** Starts (or resumes) a session and reports its id. */
-    fun startSession(planId: String, onStarted: (String) -> Unit) {
+    /** Starts (or resumes) a session in the explicitly confirmed gym and reports its id. */
+    fun startSession(planId: String, gymId: String, onStarted: (String) -> Unit) {
         Telemetry.track("home", "start_session")
         viewModelScope.launch {
-            val gym = currentGym.value ?: gyms.value.firstOrNull()?.id
-            repo.startSession(planId, gymId = gym)?.let(onStarted)
+            repo.setSetting(SettingKeys.CURRENT_GYM, gymId)
+            repo.startSession(planId, gymId = gymId)?.let(onStarted)
         }
     }
 
