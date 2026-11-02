@@ -1,0 +1,1144 @@
+[
+  {
+    "name": "nearest: tie resolves downward",
+    "fn": "nearestAvailableWeight",
+    "input": {
+      "value": 23.75,
+      "weights": [
+        22.5,
+        25
+      ]
+    },
+    "expected": 22.5
+  },
+  {
+    "name": "nearest: closer upper value",
+    "fn": "nearestAvailableWeight",
+    "input": {
+      "value": 23.9,
+      "weights": [
+        22.5,
+        25
+      ]
+    },
+    "expected": 25
+  },
+  {
+    "name": "nearest: no weights rounds to half kg",
+    "fn": "nearestAvailableWeight",
+    "input": {
+      "value": 23.8
+    },
+    "expected": 24
+  },
+  {
+    "name": "1RM: body weight is part of the load",
+    "fn": "estimatedOneRepMax",
+    "input": {
+      "set": {
+        "id": "set-1",
+        "order": 1,
+        "set_type": "working",
+        "status": "completed",
+        "weight_kg": 10,
+        "reps": 10,
+        "effort": "two_three"
+      },
+      "base_load_kg": 80
+    },
+    "expected": 126
+  },
+  {
+    "name": "suggest: heavier trial uses available weight",
+    "fn": "suggestNextWeight",
+    "input": {
+      "set": {
+        "id": "set-2",
+        "order": 2,
+        "set_type": "working",
+        "status": "completed",
+        "weight_kg": 20,
+        "reps": 15,
+        "effort": "four_plus"
+      },
+      "target": {
+        "metric": "reps",
+        "min": 8,
+        "max": 12,
+        "rir_min": 1,
+        "rir_max": 2
+      },
+      "measurement_type": "load_reps",
+      "available_weights_kg": [
+        10,
+        15,
+        20,
+        22.5,
+        25,
+        30,
+        35,
+        40
+      ]
+    },
+    "expected": {
+      "weight_kg": 22.5,
+      "reason": "This set supports a heavier trial",
+      "evidence_contains": "Current working set"
+    }
+  },
+  {
+    "name": "suggest: warmup gives nothing",
+    "fn": "suggestNextWeight",
+    "input": {
+      "set": {
+        "id": "set-3",
+        "order": 3,
+        "set_type": "warmup",
+        "status": "completed",
+        "weight_kg": 20,
+        "reps": 15,
+        "effort": "four_plus"
+      },
+      "target": {
+        "metric": "reps",
+        "min": 8,
+        "max": 12,
+        "rir_min": 1,
+        "rir_max": 2
+      },
+      "measurement_type": "load_reps",
+      "available_weights_kg": [
+        10,
+        15,
+        20,
+        22.5,
+        25,
+        30,
+        35,
+        40
+      ]
+    },
+    "expected": null
+  },
+  {
+    "name": "suggest: assisted machine moves to less assistance",
+    "fn": "suggestNextWeight",
+    "input": {
+      "set": {
+        "id": "set-4",
+        "order": 4,
+        "set_type": "working",
+        "status": "completed",
+        "weight_kg": 40,
+        "reps": 12,
+        "effort": "one_two"
+      },
+      "target": {
+        "metric": "reps",
+        "min": 8,
+        "max": 12,
+        "rir_min": 1,
+        "rir_max": 2
+      },
+      "measurement_type": "assisted_reps",
+      "available_weights_kg": [
+        50,
+        45,
+        40,
+        35
+      ]
+    },
+    "expected": {
+      "weight_kg": 35,
+      "reason": "Try less assistance"
+    }
+  },
+  {
+    "name": "suggest: timed load moves to next load",
+    "fn": "suggestNextWeight",
+    "input": {
+      "set": {
+        "id": "s",
+        "order": 1,
+        "set_type": "working",
+        "status": "completed",
+        "weight_kg": 20,
+        "seconds": 60,
+        "effort": "one_two"
+      },
+      "target": {
+        "metric": "seconds",
+        "min": 45,
+        "max": 60,
+        "rir_min": 1,
+        "rir_max": 2
+      },
+      "measurement_type": "load_duration",
+      "available_weights_kg": [
+        10,
+        20,
+        30
+      ]
+    },
+    "expected": {
+      "weight_kg": 30,
+      "reason": "Try the next available load"
+    }
+  },
+  {
+    "name": "proven: highest load corroborated by two sets",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 3,
+        "sets": [
+          {
+            "id": "set-5",
+            "order": 5,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 20,
+            "reps": 15,
+            "effort": "four_plus"
+          },
+          {
+            "id": "set-6",
+            "order": 6,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-7",
+            "order": 7,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 9,
+            "effort": "one"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": 25
+  },
+  {
+    "name": "proven: one proof is not enough",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 1,
+        "sets": [
+          {
+            "id": "set-8",
+            "order": 8,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": null
+  },
+  {
+    "name": "proven: two new-band sets prove the load",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-9",
+            "order": 9,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          },
+          {
+            "id": "set-10",
+            "order": 10,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": 25
+  },
+  {
+    "name": "proven: skipped set is no proof",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-11",
+            "order": 11,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-12",
+            "order": 12,
+            "set_type": "working",
+            "status": "skipped_time",
+            "weight_kg": 25,
+            "reps": 0
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": null
+  },
+  {
+    "name": "proven: lower assistance is progression",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "assisted_reps",
+        "load_direction": "lower_assistance",
+        "load_basis": "assistance",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-13",
+            "order": 13,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 35,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-14",
+            "order": 14,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 35,
+            "reps": 9,
+            "effort": "one"
+          }
+        ]
+      },
+      "current_weight_kg": 40
+    },
+    "expected": 35
+  },
+  {
+    "name": "proven: failed set is excluded",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-15",
+            "order": 15,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-16",
+            "order": 16,
+            "set_type": "working",
+            "status": "failed",
+            "weight_kg": 25,
+            "reps": 6
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": null
+  },
+  {
+    "name": "proven: same load is no progression",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-17",
+            "order": 17,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 20,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-18",
+            "order": 18,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 20,
+            "reps": 10,
+            "effort": "two_three"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": null
+  },
+  {
+    "name": "proven: no current weight takes second highest",
+    "fn": "provenWorkingWeight",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 3,
+        "sets": [
+          {
+            "id": "set-19",
+            "order": 19,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 20,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-20",
+            "order": 20,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 10,
+            "effort": "two_three"
+          },
+          {
+            "id": "set-21",
+            "order": 21,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 30,
+            "reps": 10,
+            "effort": "two_three"
+          }
+        ]
+      }
+    },
+    "expected": 25
+  },
+  {
+    "name": "evidence: one of two",
+    "fn": "progressionEvidence",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 1,
+        "sets": [
+          {
+            "id": "set-22",
+            "order": 22,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": "1 of 2 qualifying working sets above 20 kg; two are required in this workout for a permanent change."
+  },
+  {
+    "name": "evidence: proven will be saved",
+    "fn": "progressionEvidence",
+    "input": {
+      "exercise": {
+        "id": "session-exercise",
+        "exercise_id": "test",
+        "name": "Test press",
+        "order": 1,
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "target": {
+          "metric": "reps",
+          "min": 8,
+          "max": 12,
+          "rir_min": 1,
+          "rir_max": 2
+        },
+        "rest_seconds": 90,
+        "planned_sets": 2,
+        "sets": [
+          {
+            "id": "set-23",
+            "order": 23,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          },
+          {
+            "id": "set-24",
+            "order": 24,
+            "set_type": "working",
+            "status": "completed",
+            "weight_kg": 25,
+            "reps": 8,
+            "effort": "one_two"
+          }
+        ]
+      },
+      "current_weight_kg": 20
+    },
+    "expected": "25 kg is proven by two qualifying working sets and will be saved when the workout finishes."
+  },
+  {
+    "name": "guided: related exercise, per-hand normalised",
+    "fn": "guidedStartingEstimate",
+    "input": {
+      "target": {
+        "id": "chest-press",
+        "name": "Chest Press",
+        "measurement_type": "load_reps",
+        "load_direction": "higher",
+        "load_basis": "stack",
+        "movement_family": "horizontal-push"
+      },
+      "sessions": [
+        {
+          "plan_name": "Synthetic plan",
+          "mode": "normal",
+          "status": "completed",
+          "started_at": "2026-01-01T10:00:00.000Z",
+          "completed_at": "2026-01-01T11:00:00.000Z",
+          "exercises": [
+            {
+              "id": "session-exercise",
+              "exercise_id": "dumbbell-press",
+              "name": "Dumbbell Bench Press",
+              "order": 1,
+              "measurement_type": "load_reps",
+              "load_direction": "higher",
+              "load_basis": "per_hand",
+              "target": {
+                "metric": "reps",
+                "min": 8,
+                "max": 12,
+                "rir_min": 1,
+                "rir_max": 2
+              },
+              "rest_seconds": 90,
+              "planned_sets": 1,
+              "sets": [
+                {
+                  "id": "set-25",
+                  "order": 25,
+                  "set_type": "working",
+                  "status": "completed",
+                  "weight_kg": 20,
+                  "reps": 10,
+                  "effort": "two_three"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "catalog": [
+        {
+          "id": "dumbbell-press",
+          "name": "Dumbbell Bench Press",
+          "measurement_type": "load_reps",
+          "load_direction": "higher",
+          "load_basis": "per_hand",
+          "movement_family": "horizontal-push"
+        },
+        {
+          "id": "chest-press",
+          "name": "Chest Press",
+          "measurement_type": "load_reps",
+          "load_direction": "higher",
+          "load_basis": "stack",
+          "movement_family": "horizontal-push"
+        }
+      ],
+      "available_weights_kg": [
+        10,
+        15,
+        20,
+        22.5,
+        25,
+        30,
+        35,
+        40
+      ]
+    },
+    "expected": {
+      "weight_kg": 25,
+      "reason_contains": "Dumbbell Bench Press",
+      "evidence_contains": "Latest related working set"
+    }
+  },
+  {
+    "name": "guided: no movement family gives nothing",
+    "fn": "guidedStartingEstimate",
+    "input": {
+      "target": {
+        "id": "x",
+        "measurement_type": "load_reps"
+      },
+      "sessions": [],
+      "catalog": []
+    },
+    "expected": null
+  },
+  {
+    "name": "historical: most frequent weight of latest session at this gym",
+    "fn": "historicalWorkingWeight",
+    "input": {
+      "exercise_id": "row",
+      "sessions": [
+        {
+          "plan_name": "Synthetic plan",
+          "mode": "normal",
+          "status": "completed",
+          "started_at": "2026-02-01T10:00:00.000Z",
+          "completed_at": "2026-02-01T11:00:00.000Z",
+          "exercises": [
+            {
+              "id": "session-exercise",
+              "exercise_id": "row",
+              "name": "Test press",
+              "order": 1,
+              "measurement_type": "load_reps",
+              "load_direction": "higher",
+              "load_basis": "stack",
+              "target": {
+                "metric": "reps",
+                "min": 8,
+                "max": 12,
+                "rir_min": 1,
+                "rir_max": 2
+              },
+              "rest_seconds": 90,
+              "planned_sets": 3,
+              "sets": [
+                {
+                  "id": "set-26",
+                  "order": 26,
+                  "set_type": "working",
+                  "status": "completed",
+                  "weight_kg": 30,
+                  "reps": 10,
+                  "effort": "two_three"
+                },
+                {
+                  "id": "set-27",
+                  "order": 27,
+                  "set_type": "working",
+                  "status": "completed",
+                  "weight_kg": 30,
+                  "reps": 10,
+                  "effort": "two_three"
+                },
+                {
+                  "id": "set-28",
+                  "order": 28,
+                  "set_type": "working",
+                  "status": "completed",
+                  "weight_kg": 35,
+                  "reps": 8,
+                  "effort": "one_two"
+                }
+              ]
+            }
+          ],
+          "gym_id": "gym-a"
+        },
+        {
+          "plan_name": "Synthetic plan",
+          "mode": "normal",
+          "status": "completed",
+          "started_at": "2026-03-01T10:00:00.000Z",
+          "completed_at": "2026-03-01T11:00:00.000Z",
+          "exercises": [
+            {
+              "id": "session-exercise",
+              "exercise_id": "row",
+              "name": "Test press",
+              "order": 1,
+              "measurement_type": "load_reps",
+              "load_direction": "higher",
+              "load_basis": "stack",
+              "target": {
+                "metric": "reps",
+                "min": 8,
+                "max": 12,
+                "rir_min": 1,
+                "rir_max": 2
+              },
+              "rest_seconds": 90,
+              "planned_sets": 1,
+              "sets": [
+                {
+                  "id": "set-29",
+                  "order": 29,
+                  "set_type": "working",
+                  "status": "completed",
+                  "weight_kg": 40,
+                  "reps": 10,
+                  "effort": "two_three"
+                }
+              ]
+            }
+          ],
+          "gym_id": "gym-b"
+        }
+      ],
+      "gym_id": "gym-a"
+    },
+    "expected": {
+      "weight_kg": 30,
+      "evidence_contains": "3 completed weighted working sets"
+    }
+  },
+  {
+    "name": "recalculate: replays sessions oldest first, exercise_id fallback",
+    "fn": "recalculatePlanProgression",
+    "input": {
+      "plan_id": "plan-1",
+      "plan": {
+        "name": "Synthetic plan",
+        "exercises": [
+          {
+            "id": "pe-1",
+            "exercise_id": "press",
+            "order": 1,
+            "mode_sets": {
+              "normal": 3,
+              "fast": 2,
+              "ultra": 1
+            },
+            "target": {
+              "metric": "reps",
+              "min": 8,
+              "max": 12,
+              "rir_min": 1,
+              "rir_max": 2
+            },
+            "starting_weight_kg": 20,
+            "rest_seconds": 90
+          },
+          {
+            "id": "pe-2",
+            "exercise_id": "curl",
+            "order": 2,
+            "mode_sets": {
+              "normal": 3,
+              "fast": 2,
+              "ultra": 1
+            },
+            "target": {
+              "metric": "reps",
+              "min": 8,
+              "max": 12,
+              "rir_min": 1,
+              "rir_max": 2
+            },
+            "rest_seconds": 60
+          }
+        ]
+      },
+      "sessions": [
+        {
+          "id": "s-b",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-04-08T10:00:00.000Z",
+            "completed_at": "2026-04-08T11:00:00.000Z",
+            "exercises": [
+              {
+                "id": "session-exercise",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "set-32",
+                    "order": 32,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 30,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "set-33",
+                    "order": 33,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 30,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ],
+            "plan_id": "plan-1"
+          }
+        },
+        {
+          "id": "s-a",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-04-01T10:00:00.000Z",
+            "completed_at": "2026-04-01T11:00:00.000Z",
+            "exercises": [
+              {
+                "id": "session-exercise",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "set-30",
+                    "order": 30,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 25,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "set-31",
+                    "order": 31,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 25,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ],
+                "source_plan_exercise_id": "pe-1"
+              }
+            ],
+            "plan_id": "plan-1"
+          }
+        },
+        {
+          "id": "s-c",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-04-15T10:00:00.000Z",
+            "completed_at": "2026-04-15T11:00:00.000Z",
+            "exercises": [
+              {
+                "id": "session-exercise",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "set-34",
+                    "order": 34,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 35,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "set-35",
+                    "order": 35,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 35,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ],
+                "source_plan_exercise_id": "pe-1"
+              }
+            ],
+            "plan_id": "other-plan"
+          }
+        },
+        {
+          "id": "s-d",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "active",
+            "started_at": "2026-04-20T10:00:00.000Z",
+            "completed_at": "2026-04-20T11:00:00.000Z",
+            "exercises": [
+              {
+                "id": "session-exercise",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "set-36",
+                    "order": 36,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 99,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "set-37",
+                    "order": 37,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 99,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ],
+                "source_plan_exercise_id": "pe-1"
+              }
+            ],
+            "plan_id": "plan-1"
+          }
+        }
+      ],
+      "seen_session_ids": [
+        "s-a"
+      ]
+    },
+    "expected": {
+      "plan": {
+        "exercises": [
+          {
+            "id": "pe-1",
+            "current_weight_kg": 30
+          },
+          {
+            "id": "pe-2",
+            "current_weight_kg": null
+          }
+        ]
+      },
+      "milestones": [
+        {
+          "session_id": "s-a",
+          "previous_weight_kg": 20,
+          "new_weight_kg": 25,
+          "seen": true
+        },
+        {
+          "session_id": "s-b",
+          "previous_weight_kg": 25,
+          "new_weight_kg": 30,
+          "seen": false
+        }
+      ]
+    }
+  }
+]
