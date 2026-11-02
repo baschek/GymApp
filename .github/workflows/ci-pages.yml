@@ -3,8 +3,16 @@ name: CI and GitHub Pages
 on:
   push:
     branches: [main, dev]
+    paths-ignore:
+      - "android/**"
+      - ".github/workflows/android.yml"
+      - ".github/workflows/secret-scan.yml"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "android/**"
+      - ".github/workflows/android.yml"
+      - ".github/workflows/secret-scan.yml"
   workflow_dispatch:
 
 permissions:
