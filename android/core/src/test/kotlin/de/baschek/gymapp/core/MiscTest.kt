@@ -3,6 +3,7 @@ package de.baschek.gymapp.core
 import de.baschek.gymapp.core.api.BaseUrl
 import de.baschek.gymapp.core.api.InvalidBaseUrlException
 import de.baschek.gymapp.core.model.Plan
+import de.baschek.gymapp.core.model.effectiveWeights
 import de.baschek.gymapp.core.model.PlanExercise
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
@@ -82,5 +83,21 @@ class FinishSessionTest {
         assertEquals(25.0, r.plan!!.exercises[0].currentWeightKg)
         assertEquals(1, r.milestones.size)
         assertFailsWith<IllegalArgumentException> { finishSession("sid", session, null, "completed", "t", 1) { "m" } }
+    }
+}
+
+class MachineWeightsTest {
+    @Test fun explicitListWins() {
+        val mp = de.baschek.gymapp.core.model.MachineProfile(availableWeightsKg = listOf(20.0, 10.0, 10.0))
+        assertEquals(listOf(10.0, 20.0), mp.effectiveWeights())
+    }
+    @Test fun rangesAreExpanded() {
+        val mp = de.baschek.gymapp.core.model.MachineProfile(
+            weightRanges = listOf(
+                de.baschek.gymapp.core.model.WeightRange("a", 5.0, 10.0, 2.5),
+                de.baschek.gymapp.core.model.WeightRange("b", 10.0, 20.0, 5.0),
+            ),
+        )
+        assertEquals(listOf(5.0, 7.5, 10.0, 15.0, 20.0), mp.effectiveWeights())
     }
 }
