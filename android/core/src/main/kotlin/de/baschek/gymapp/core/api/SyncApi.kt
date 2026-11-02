@@ -27,6 +27,15 @@ sealed class SyncApiException(message: String, cause: Throwable? = null) : Excep
     /** 410: the cursor is too old, a full snapshot is required. */
     class ResyncRequired : SyncApiException("resync_required")
 
+    /**
+     * 404 on an authenticated call: the server does not recognise this device any more
+     * (revoked, expired, replaced) or hides itself. Looks identical for every cause by design.
+     */
+    class NotFound : SyncApiException("not_found")
+
+    /** 404 while pairing: no pairing window is open, or another device is still active. */
+    class PairingUnavailable : SyncApiException("pairing_unavailable")
+
     class RateLimited(val retryAfterSeconds: Int?) : SyncApiException("rate_limited")
 
     class Http(val code: Int, val error: String?) : SyncApiException("http_$code${error?.let { ":$it" } ?: ""}")

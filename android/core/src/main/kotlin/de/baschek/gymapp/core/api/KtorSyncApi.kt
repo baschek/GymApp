@@ -23,8 +23,9 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
-import io.ktor.http.content.TextContent
+import io.ktor.http.content.ByteArrayContent
 import kotlinx.coroutines.CancellationException
+import java.net.URI
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -50,6 +51,7 @@ class KtorSyncApi(
     private val client: HttpClient,
     private val baseUrl: () -> String?,
     private val token: () -> String?,
+    private val signer: () -> RequestSigner?,
 ) : SyncApi {
 
     override suspend fun status(): StatusResponse =
@@ -83,13 +85,14 @@ class KtorSyncApi(
     ): T? {
         val base = baseUrl() ?: throw SyncApiException.NotConfigured()
         val bearer = if (authenticated) (token() ?: throw SyncApiException.NotConfigured()) else null
-        return execute(client, base, method, path, body, bearer, serializer)
+        val requestSigner = if (authenticated) (signer() ?: throw SyncApiException.NotConfigured()) else null
+        return execute(client, base, method, path, body, bearer, serializer, requestSigner = requestSigner)
     }
 
     companion object {
         /** Pairing: exchanges a one-time code for a token. No authentication header. */
-        suspend fun pair(client: HttpClient, baseUrl: String, code: String, deviceName: String): PairResponse {
-            val body = GymJson.encodeToString(PairRequest.serializer(), PairRequest(code.trim(), deviceName))
+        suspend fun pair(client: HttpClient, baseUrl: String, code: String, deviceName: String, publicKey: String): PairResponse {
+            val body = GymJson.encodeToString(PairRequest.serializer(), PairRequest(code.trim(), deviceName, publicKey))
             return execute(client, baseUrl, HttpMethod.Post, "pair", body, null, PairResponse.serializer(), pairing = true)!!
         }
 
@@ -102,16 +105,22 @@ class KtorSyncApi(
             bearer: String?,
             serializer: KSerializer<T>?,
             pairing: Boolean = false,
+            requestSigner: RequestSigner? = null,
         ): T? {
             val response: HttpResponse
             val text: String
             try {
+                val bodyBytes = body?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+                val rawPath = path.substringBefore('?')
+                val query = if ('?' in path) path.substringAfter('?') else ""
+                val fullPath = (runCatching { URI(base).rawPath }.getOrNull().orEmpty().trimEnd('/')) + "/gym/v1/" + rawPath
                 response = client.request {
                     this.method = method
-                    url("$base/gym/v1/$path")
+                    url("${base.trimEnd('/')}/gym/v1/$path")
                     header(HttpHeaders.Accept, "application/json")
                     if (bearer != null) header(HttpHeaders.Authorization, "Bearer $bearer")
-                    if (body != null) setBody(TextContent(body, ContentType.Application.Json))
+                    requestSigner?.headers(method.value, fullPath, query, bodyBytes)?.forEach { (k, v) -> header(k, v) }
+                    if (body != null) setBody(ByteArrayContent(bodyBytes, ContentType.Application.Json))
                 }
                 text = response.bodyAsText()
             } catch (e: CancellationException) {
@@ -131,6 +140,7 @@ class KtorSyncApi(
             }
             val error = errorCode(text)
             throw when (code) {
+                404 -> if (pairing) SyncApiException.PairingUnavailable() else SyncApiException.NotFound()
                 401 -> if (pairing) SyncApiException.InvalidCode() else SyncApiException.Unauthorized()
                 410 -> SyncApiException.ResyncRequired()
                 429 -> SyncApiException.RateLimited(response.headers[HttpHeaders.RetryAfter]?.toIntOrNull())

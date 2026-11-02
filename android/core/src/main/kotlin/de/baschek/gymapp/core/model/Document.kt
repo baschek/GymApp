@@ -60,7 +60,11 @@ data class StatusResponse(
 )
 
 @Serializable
-data class PairRequest(val code: String, @SerialName("device_name") val deviceName: String)
+data class PairRequest(
+    val code: String,
+    @SerialName("device_name") val deviceName: String,
+    @SerialName("public_key") val publicKey: String,
+)
 
 /** The token is a credential: never include it in toString/logs. */
 @Serializable
