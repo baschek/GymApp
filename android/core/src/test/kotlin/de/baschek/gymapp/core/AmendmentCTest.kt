@@ -40,6 +40,8 @@ import de.baschek.gymapp.core.stats.radarRadius
 import de.baschek.gymapp.core.stats.recommendPlans
 import de.baschek.gymapp.core.stats.sessionsByDay
 import de.baschek.gymapp.core.stats.start
+import de.baschek.gymapp.core.stats.TrendStatus
+import de.baschek.gymapp.core.stats.buildTrend
 import de.baschek.gymapp.core.stats.summarizeMuscles
 import de.baschek.gymapp.core.training.SkipReason
 import de.baschek.gymapp.core.training.addExercise
@@ -276,6 +278,35 @@ class AmendmentCTest {
         assertEquals(1, nearestLevelIndex(listOf(5.0, 10.0, 15.0), 9.0))
         assertEquals(-1, nearestLevelIndex(emptyList(), 9.0))
         assertEquals(25.0, splitTotal(27.5, listOf(20.0, 25.0), listOf(2.5))!!.levelKg)
+    }
+
+    // ---- trend -------------------------------------------------------------
+
+    private fun trendSession(day: Int, weight: Double, gym: String = "g") = Session(
+        gymId = gym, planName = "P", status = SessionStatus.COMPLETED, startedAt = "2026-10-%02dT10:00:00Z".format(day),
+        completedAt = "2026-10-%02dT11:00:00Z".format(day),
+        exercises = listOf(ex("e", "x", set("s1", w = weight), set("s2", w = weight - 5))),
+    )
+
+    @Test
+    fun trendNeedsThreeSessionsAndSeparatesGyms() {
+        val two = listOf(trendSession(1, 40.0), trendSession(2, 45.0))
+        assertEquals(TrendStatus.NOT_ENOUGH_DATA, buildTrend(two, "x").status)
+        val three = two + trendSession(3, 50.0) + trendSession(4, 100.0, gym = "other")
+        val t = buildTrend(three, "x", "g")
+        assertEquals(listOf(40.0, 45.0, 50.0), t.weights)
+        assertEquals(TrendStatus.RISING, t.status)
+        assertEquals(50.0, t.best)
+        assertEquals(4, buildTrend(three, "x").weights.size)
+        assertTrue(t.oneRepMax.all { it > 0 })
+    }
+
+    @Test
+    fun noGainInTheLastThreeSessionsIsStagnation() {
+        val s = listOf(trendSession(1, 40.0), trendSession(2, 50.0), trendSession(3, 50.0), trendSession(4, 47.5), trendSession(5, 50.0))
+        assertEquals(TrendStatus.STAGNATING, buildTrend(s, "x").status)
+        val rising = s.dropLast(1) + trendSession(5, 52.5)
+        assertEquals(TrendStatus.RISING, buildTrend(rising, "x").status)
     }
 
     // ---- session edits -----------------------------------------------------
