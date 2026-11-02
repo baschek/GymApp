@@ -7,6 +7,11 @@ import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.progression.ExerciseInfo
+import de.baschek.gymapp.core.progression.GymExerciseKey
+import de.baschek.gymapp.core.progression.WorkingWeight
+import de.baschek.gymapp.core.progression.estimateStartWeight
+import de.baschek.gymapp.core.progression.recalculateWorkingWeights
+import de.baschek.gymapp.core.progression.reassignSessionGym
 import de.baschek.gymapp.core.progression.WeightSuggestion
 import de.baschek.gymapp.core.progression.estimatedOneRepMax
 import de.baschek.gymapp.core.progression.guidedStartingEstimate
@@ -108,8 +113,42 @@ class ProgressionGoldenTest {
                 put("milestones", JsonArray(r.milestones.map { GymJson.encodeToJsonElement(de.baschek.gymapp.core.model.Milestone.serializer(), it.milestone) }))
             }
         }
+        "recalculateWorkingWeights" -> weightList(
+            recalculateWorkingWeights(
+                sessionPairs(i["sessions"]!!),
+                (i["only"] as? JsonArray)?.map { GymExerciseKey(it.jsonObject["gym_id"]!!.jsonPrimitive.content, it.jsonObject["exercise_id"]!!.jsonPrimitive.content) }?.toSet(),
+            ),
+        )
+        "reassignSessionGym" -> weightList(
+            reassignSessionGym(sessionPairs(i["sessions"]!!), i["session_id"]!!.jsonPrimitive.content, i["new_gym_id"]!!.jsonPrimitive.content),
+        )
+        "estimateStartWeight" -> estimateStartWeight(
+            i["exercise_id"]!!.jsonPrimitive.content, i["target_gym_id"]!!.jsonPrimitive.content,
+            sessionPairs(i["sessions"]!!), i["exercises"]!!.jsonArray.map { info(it.jsonObject) }, i.weights("target_levels"),
+        ).let { s ->
+            if (s == null) JsonNull else buildJsonObject {
+                put("weight_kg", s.weightKg)
+                put("reason", s.reason)
+                put("source_gym_id", s.sourceGymId)
+            }
+        }
         else -> fail("unknown fn $fn")
     }
+
+    private fun sessionPairs(e: JsonElement): List<Pair<String, Session>> = e.jsonArray.map {
+        it.jsonObject["id"]!!.jsonPrimitive.content to GymJson.decodeFromJsonElement<Session>(it.jsonObject["data"]!!)
+    }
+
+    private fun weightList(m: Map<GymExerciseKey, WorkingWeight?>): JsonElement = JsonArray(
+        m.entries.sortedWith(compareBy({ it.key.gymId }, { it.key.exerciseId })).map { (k, w) ->
+            buildJsonObject {
+                put("gym_id", k.gymId)
+                put("exercise_id", k.exerciseId)
+                put("weight_kg", w?.weightKg)
+                put("source_session_id", w?.sourceSessionId)
+            }
+        },
+    )
 
     private fun info(o: JsonObject): ExerciseInfo = ExerciseInfo(
         id = o["id"]!!.jsonPrimitive.content,
@@ -118,6 +157,7 @@ class ProgressionGoldenTest {
         loadDirection = o["load_direction"]?.jsonPrimitive?.content ?: "higher",
         loadBasis = o["load_basis"]?.jsonPrimitive?.content ?: "stack",
         movementFamily = o["movement_family"]?.jsonPrimitive?.contentOrNull,
+        equipment = o["equipment"]?.jsonPrimitive?.contentOrNull,
     )
 
     private fun suggestion(s: WeightSuggestion?): JsonElement =

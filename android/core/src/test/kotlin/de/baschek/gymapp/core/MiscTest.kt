@@ -9,6 +9,7 @@ import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.Target
+import de.baschek.gymapp.core.progression.GymExerciseKey
 import de.baschek.gymapp.core.progression.finishSession
 import de.baschek.gymapp.core.update.AppVersion
 import de.baschek.gymapp.core.update.ReleaseParser
@@ -71,18 +72,55 @@ class FinishSessionTest {
     private fun set(i: Int, status: String = "completed") =
         SetLog(id = "s$i", order = i, status = status, weightKg = 25.0, reps = 10, effort = if (status == "completed") "two_three" else null)
 
-    @Test fun pendingSetsGetReasonAndPlanProgresses() {
-        val plan = Plan(name = "p", exercises = listOf(PlanExercise(id = "pe", exerciseId = "x", startingWeightKg = 20.0, target = target)))
-        val session = Session(
-            planId = "plan", planName = "p", startedAt = "2026-01-01T10:00:00Z",
-            exercises = listOf(SessionExercise(id = "se", sourcePlanExerciseId = "pe", exerciseId = "x", name = "n", target = target, sets = listOf(set(1), set(2), set(3, "pending")))),
-        )
-        val r = finishSession("sid", session, plan, "skipped_time", "2026-01-01T11:00:00Z", 3600) { "m" }
+    private fun session(gym: String?) = Session(
+        gymId = gym, planId = "plan", planName = "p", startedAt = "2026-01-01T10:00:00Z",
+        exercises = listOf(SessionExercise(id = "se", sourcePlanExerciseId = "pe", exerciseId = "x", name = "n", target = target, sets = listOf(set(1), set(2), set(3, "pending")))),
+    )
+
+    @Test fun pendingSetsGetReasonAndGymWeightProgresses() {
+        val r = finishSession("sid", session("gym-a"), "skipped_time", "2026-01-01T11:00:00Z", 3600, { "m" })
         assertEquals("completed", r.session.status)
         assertEquals("skipped_time", r.session.exercises[0].sets[2].status)
-        assertEquals(25.0, r.plan!!.exercises[0].currentWeightKg)
+        assertEquals(25.0, r.workingWeights[GymExerciseKey("gym-a", "x")]!!.weightKg)
         assertEquals(1, r.milestones.size)
-        assertFailsWith<IllegalArgumentException> { finishSession("sid", session, null, "completed", "t", 1) { "m" } }
+        assertEquals(null, r.milestones.single().milestone.previousWeightKg)
+        assertFailsWith<IllegalArgumentException> { finishSession("sid", session("gym-a"), "completed", "t", 1, { "m" }) }
+    }
+
+    @Test fun sessionWithoutGymNeverChangesWeights() {
+        val r = finishSession("sid", session(null), "skipped_other", "2026-01-01T11:00:00Z", 10, { "m" })
+        assertEquals(emptyMap(), r.workingWeights)
+        assertEquals(emptyList(), r.milestones)
+    }
+
+    @Test fun otherGymHistoryDoesNotCount() {
+        val past = session("gym-b").copy(status = "completed", completedAt = "2025-12-01T11:00:00Z")
+        val r = finishSession("sid", session("gym-a"), "skipped_other", "2026-01-01T11:00:00Z", 10, { "m" }, listOf("old" to past))
+        assertEquals(null, r.milestones.single().milestone.previousWeightKg)
+    }
+}
+
+class PrefillTest {
+    private val ex = SessionExercise(
+        id = "e", exerciseId = "x", name = "n", target = Target("reps", 8.0, 12.0, 1.0, 2.0), suggestedWeightKg = 40.0,
+        sets = listOf(SetLog("a", 1, status = "completed", weightKg = 45.0, reps = 10), SetLog("b", 2)),
+    )
+    @Test fun lastCompletedWeightWins() {
+        val p = de.baschek.gymapp.core.progression.prefillSet(ex, listOf(10.0, 20.0))
+        assertEquals(45.0, p.weightKg)
+        assertEquals(12.0, p.value)
+        assertEquals("one_two", p.effort)
+    }
+    @Test fun suggestionThenFirstLevel() {
+        val fresh = ex.copy(sets = listOf(SetLog("b", 1)))
+        assertEquals(40.0, de.baschek.gymapp.core.progression.prefillSet(fresh, listOf(10.0)).weightKg)
+        assertEquals(10.0, de.baschek.gymapp.core.progression.prefillSet(fresh.copy(suggestedWeightKg = null), listOf(10.0, 20.0)).weightKg)
+        assertEquals(null, de.baschek.gymapp.core.progression.prefillSet(fresh.copy(measurementType = "reps_only"), listOf(10.0)).weightKg)
+    }
+    @Test fun roundDownKeepsLevelOrSmallest() {
+        assertEquals(60.0, de.baschek.gymapp.core.progression.roundDownToLevel(65.0, listOf(50.0, 60.0, 70.0)))
+        assertEquals(50.0, de.baschek.gymapp.core.progression.roundDownToLevel(40.0, listOf(50.0, 60.0)))
+        assertEquals(42.5, de.baschek.gymapp.core.progression.roundDownToLevel(42.9, null))
     }
 }
 

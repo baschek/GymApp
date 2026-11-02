@@ -40,6 +40,7 @@ data class ExerciseInfo(
     val loadDirection: String = LoadDirection.HIGHER,
     val loadBasis: String = LoadBasis.STACK,
     val movementFamily: String? = null,
+    val equipment: String? = null,
 )
 
 /** JS-like number to string (25.0 -> "25", 22.5 -> "22.5"). */

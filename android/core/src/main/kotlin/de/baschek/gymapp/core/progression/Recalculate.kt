@@ -70,22 +70,25 @@ fun recalculatePlanProgression(
 
 data class FinishResult(
     val session: Session,
-    val plan: Plan?,
+    /** Working weights this session changed, per gym x exercise. */
+    val workingWeights: Map<GymExerciseKey, WorkingWeight>,
     val milestones: List<MilestoneDraft>,
 )
 
 /**
- * Completes an active session: pending sets get [pendingReason], and a
- * permanent plan weight change is applied when two qualifying sets prove it.
+ * Completes an active session: pending sets get [pendingReason], and the
+ * per-gym working weight changes when two qualifying sets prove it (amendment A).
+ * [history] are the other sessions (any status; only completed ones count).
+ * Sessions without a gym never change a working weight.
  */
 fun finishSession(
     sessionId: String,
     session: Session,
-    plan: Plan?,
     pendingReason: String,
     nowIso: String,
     durationSeconds: Int,
     newId: () -> String,
+    history: List<Pair<String, Session>> = emptyList(),
 ): FinishResult {
     require(pendingReason != SetStatus.PENDING && pendingReason != SetStatus.COMPLETED && pendingReason != SetStatus.FAILED)
     val finalized = session.copy(
@@ -96,28 +99,31 @@ fun finishSession(
             ex.copy(sets = ex.sets.map { if (it.status == SetStatus.PENDING) it.copy(status = pendingReason) else it })
         },
     )
-    if (plan == null) return FinishResult(finalized, null, emptyList())
-    val drafts = mutableListOf<MilestoneDraft>()
-    val entries = plan.exercises.map { entry ->
-        val performed = findPerformed(finalized, entry) ?: return@map entry
-        val previous = entry.currentWeightKg ?: entry.startingWeightKg
-        val next = provenWorkingWeight(performed, previous) ?: return@map entry
-        drafts += MilestoneDraft(
+    val gym = finalized.gymId ?: return FinishResult(finalized, emptyMap(), emptyList())
+    val others = history.filter { it.first != sessionId }
+    val keys = finalized.exercises.map { GymExerciseKey(gym, it.exerciseId) }.toSet()
+    val before = recalculateWorkingWeights(others, keys)
+    val after = recalculateWorkingWeights(others + (sessionId to finalized), keys)
+
+    val changed = after.filter { (_, w) -> w != null && w.sourceSessionId == sessionId }
+        .mapValues { it.value!! }
+    val drafts = changed.map { (key, w) ->
+        val performed = finalized.exercises.last { it.exerciseId == key.exerciseId }
+        MilestoneDraft(
             newId(),
             Milestone(
                 planId = finalized.planId,
-                planExerciseId = entry.id,
-                exerciseId = performed.exerciseId,
+                planExerciseId = performed.sourcePlanExerciseId,
+                exerciseId = key.exerciseId,
                 exerciseName = performed.name,
                 sessionId = sessionId,
                 occurredAt = nowIso,
-                previousWeightKg = previous,
-                newWeightKg = next,
+                previousWeightKg = before[key]?.weightKg,
+                newWeightKg = w.weightKg,
                 direction = performed.loadDirection,
                 seen = false,
             ),
         )
-        entry.copy(currentWeightKg = next)
     }
-    return FinishResult(finalized, plan.copy(exercises = entries), drafts)
+    return FinishResult(finalized, changed, drafts)
 }

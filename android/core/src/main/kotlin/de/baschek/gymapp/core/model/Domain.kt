@@ -55,6 +55,22 @@ object SessionStatus {
     const val COMPLETED = "completed"
 }
 
+object ReviewFlag {
+    const val GYM_SUSPECT = "gym_suspect"
+    const val GYM_MISSING = "gym_missing"
+}
+
+object SuggestionReason {
+    const val GYM_WORKING_WEIGHT = "gym_working_weight"
+    const val GYM_HISTORY = "gym_history"
+    const val CROSS_GYM_ESTIMATE = "cross_gym_estimate"
+    const val GUIDED_ESTIMATE = "guided_estimate"
+    const val PLAN_WEIGHT = "plan_weight"
+}
+
+/** Gym id used when a session was done somewhere that is not a configured gym. */
+const val OTHER_GYM_ID = "other"
+
 object WorkoutMode {
     const val NORMAL = "normal"
     const val FAST = "fast"
@@ -178,6 +194,10 @@ data class MachineProfile(
     @SerialName("machine_brand") val machineBrand: String? = null,
     @SerialName("machine_model") val machineModel: String? = null,
     val notes: String? = null,
+    /** Proven working weight for this gym x exercise (contract v1 amendment A). */
+    @SerialName("working_weight_kg") val workingWeightKg: Double? = null,
+    @SerialName("working_weight_updated_at") val workingWeightUpdatedAt: String? = null,
+    @SerialName("working_weight_source_session_id") val workingWeightSourceSessionId: String? = null,
 )
 
 @Serializable
@@ -214,6 +234,7 @@ data class SessionExercise(
     @SerialName("planned_sets") val plannedSets: Int = 0,
     @SerialName("suggested_weight_kg") val suggestedWeightKg: Double? = null,
     @SerialName("suggestion_reason") val suggestionReason: String? = null,
+    @SerialName("suggestion_source_gym_id") val suggestionSourceGymId: String? = null,
     val sets: List<SetLog> = emptyList(),
 )
 
@@ -229,6 +250,7 @@ data class Session(
     @SerialName("duration_seconds") val durationSeconds: Int? = null,
     val notes: String? = null,
     @SerialName("import_key") val importKey: String? = null,
+    @SerialName("review_flags") val reviewFlags: List<String>? = null,
     val exercises: List<SessionExercise> = emptyList(),
 ) {
     /** Sort key used for "newest first" (completed time, else start). */
