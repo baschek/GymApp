@@ -14,7 +14,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import de.baschek.gymapp.timer.WorkoutService
 import de.baschek.gymapp.ui.AppRoot
-import de.baschek.gymapp.ui.theme.GymTheme
+import de.baschek.gymapp.ui.theme.GymAppTheme
+import androidx.activity.SystemBarStyle
+import androidx.compose.runtime.collectAsState
+import de.baschek.gymapp.data.Accent
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
@@ -24,10 +27,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
+        val prefs = (application as GymApplication).container.prefs
         requestedSession = intent?.getStringExtra(EXTRA_SESSION_ID)
         setContent {
-            GymTheme {
+            val accent by prefs.accent.collectAsState(initial = Accent.PAPIER)
+            GymAppTheme(accent) {
                 AppRoot(requestedSession = requestedSession, onRequestHandled = { requestedSession = null })
             }
         }

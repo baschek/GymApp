@@ -65,6 +65,16 @@ class TimerController(
         persist()
     }
 
+    /** Adds [seconds] to a running rest ("+15 s"); a count-up rest becomes a countdown from its elapsed time. */
+    @Synchronized
+    fun extendRest(seconds: Int) {
+        val s = _state.value ?: return
+        if (s.phase != TimerPhase.REST) return
+        val base = if (s.suggestedRestSeconds > 0) s.suggestedRestSeconds else s.elapsedSeconds(clock())
+        _state.value = s.copy(suggestedRestSeconds = base + seconds)
+        persist()
+    }
+
     /** Stops the running timer and returns the elapsed seconds (null if none was running). */
     @Synchronized
     fun stop(): Int? {

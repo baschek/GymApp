@@ -1,37 +1,38 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
-
 package de.baschek.gymapp.ui.workout
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.provider.Settings
 import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,46 +42,70 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import de.baschek.gymapp.R
-import de.baschek.gymapp.core.model.MeasurementType
 import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SelectableEffortBands
+import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
+import de.baschek.gymapp.core.model.SessionStatus
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
+import de.baschek.gymapp.core.model.SetType
+import de.baschek.gymapp.core.progression.WEIGHTED_TYPES
+import de.baschek.gymapp.core.progression.freeWeights
+import de.baschek.gymapp.core.progression.nearestLevelIndex
+import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.core.training.currentExerciseIndex
+import de.baschek.gymapp.core.training.warmupProposal
+import de.baschek.gymapp.data.MachineInfo
 import de.baschek.gymapp.telemetry.Telemetry
-import de.baschek.gymapp.core.progression.prefillSet
-import de.baschek.gymapp.ui.GymBanner
-import de.baschek.gymapp.workout.SetInput
 import de.baschek.gymapp.timer.TimerPhase
-import de.baschek.gymapp.timer.TimerState
+import de.baschek.gymapp.ui.Navigator
+import de.baschek.gymapp.ui.Routes
 import de.baschek.gymapp.ui.appViewModelFactory
+import de.baschek.gymapp.ui.components.AddonOption
+import de.baschek.gymapp.ui.components.EffortPicker
+import de.baschek.gymapp.ui.components.ExercisePickerSheet
+import de.baschek.gymapp.ui.components.GhostIconButton
+import de.baschek.gymapp.ui.components.GymIcons
+import de.baschek.gymapp.ui.components.GymField
+import de.baschek.gymapp.ui.components.GymSheet
+import de.baschek.gymapp.ui.components.LinkButton
+import de.baschek.gymapp.ui.components.PinnedBottom
+import de.baschek.gymapp.ui.components.PrimaryButton
+import de.baschek.gymapp.ui.components.RepsCard
+import de.baschek.gymapp.ui.components.SetMeter
+import de.baschek.gymapp.ui.components.SoftButton
+import de.baschek.gymapp.ui.components.Tag
+import de.baschek.gymapp.ui.components.WeightCard
+import de.baschek.gymapp.ui.components.formatClock
+import de.baschek.gymapp.ui.components.topInset
+import de.baschek.gymapp.ui.fmtNum
+import de.baschek.gymapp.ui.gymColorOf
+import de.baschek.gymapp.ui.gymLabel
+import de.baschek.gymapp.ui.parseInstant
+import de.baschek.gymapp.ui.theme.GymTextStyles
+import de.baschek.gymapp.ui.theme.Spacing
+import de.baschek.gymapp.ui.tracked
+import de.baschek.gymapp.workout.SetInput
 import kotlinx.coroutines.delay
 
-private val WEIGHTED = setOf(
-    MeasurementType.LOAD_REPS, MeasurementType.ADDED_WEIGHT_REPS, MeasurementType.ASSISTED_REPS,
-    MeasurementType.LOAD_DURATION, MeasurementType.LOAD_DISTANCE_DURATION,
-)
+private const val SCREEN = "training"
 
-/** Placeholder workout screen. Logic (timers, saving, progression) is in [WorkoutViewModel]/the repository. */
+/** The running (or just finished) workout: training, rest and summary. Logic lives in [WorkoutViewModel]. */
 @Composable
-fun WorkoutScreen(sessionId: String, onClose: () -> Unit) {
+fun WorkoutScreen(sessionId: String, nav: Navigator) {
     val vm: WorkoutViewModel = viewModel(key = "workout-$sessionId", factory = appViewModelFactory { WorkoutViewModel(it, sessionId) })
     val load by vm.load.collectAsStateWithLifecycle()
-    val weights by vm.weights.collectAsStateWithLifecycle()
-    val timer by vm.timer.collectAsStateWithLifecycle()
     val keepOn by vm.keepScreenOn.collectAsStateWithLifecycle()
-    val gyms by vm.gyms.collectAsStateWithLifecycle()
-    var confirmFinish by remember { mutableStateOf(false) }
 
     NotificationPermissionPrompt()
-    LaunchedEffect(Unit) { Telemetry.track("workout", "view") }
+    LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
 
     val view = LocalView.current
     DisposableEffect(keepOn) {
@@ -89,220 +114,374 @@ fun WorkoutScreen(sessionId: String, onClose: () -> Unit) {
     }
 
     when (val l = load) {
-        SessionLoad.Loading -> Unit
-        SessionLoad.Missing -> Column(Modifier.padding(16.dp)) {
-            Text(stringResource(R.string.workout_missing))
-            TextButton(onClick = onClose) { Text(stringResource(R.string.common_back)) }
+        SessionLoad.Loading -> Box(Modifier.fillMaxSize())
+        SessionLoad.Missing -> Column(Modifier.padding(Spacing.s4).padding(top = topInset())) {
+            Text("Dieses Training wurde nicht gefunden.", style = MaterialTheme.typography.bodyLarge)
+            LinkButton("Zurück", tracked(SCREEN, "missing_back") { nav.resetTo(Routes.TODAY) })
         }
         is SessionLoad.Ready -> {
             val session = l.session
-            val readOnly = session.status != "active"
-            val current = session.exercises.firstOrNull { ex -> ex.sets.any { it.status == SetStatus.PENDING } }
-            Column {
-            GymBanner(session.gymId, gyms)
-            LazyColumn(
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item { Text(stringResource(R.string.workout_title, session.planName), style = MaterialTheme.typography.headlineSmall) }
-                if (!readOnly) {
-                    item {
-                        TimerBar(
-                            timer = timer,
-                            onStart = { vm.startTimer(it, current) },
-                            onStop = vm::stopTimer,
-                        )
-                    }
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Switch(checked = keepOn, onCheckedChange = vm::setKeepScreenOn)
-                            Text(stringResource(R.string.workout_keep_screen_on))
-                        }
-                    }
-                }
-                items(session.exercises, key = { it.id }) { ex ->
-                    ExerciseCard(
-                        ex = ex,
-                        weights = weights[ex.exerciseId].orEmpty(),
-                        editable = !readOnly,
-                        onLog = { setId, input -> vm.logSet(ex.id, setId, input) },
-                    )
-                }
-                if (!readOnly) {
-                    item {
-                        Button(onClick = { confirmFinish = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(stringResource(R.string.workout_finish))
-                        }
-                    }
-                } else {
-                    item { TextButton(onClick = onClose) { Text(stringResource(R.string.common_back)) } }
-                }
-            }
-            }
-            if (confirmFinish) {
-                AlertDialog(
-                    onDismissRequest = { confirmFinish = false },
-                    title = { Text(stringResource(R.string.workout_finish)) },
-                    text = { Text(stringResource(R.string.workout_finish_confirm)) },
-                    confirmButton = {
-                        TextButton(onClick = { confirmFinish = false; vm.finish(onClose) }) { Text(stringResource(R.string.common_ok)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { confirmFinish = false }) { Text(stringResource(R.string.common_cancel)) }
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TimerBar(timer: TimerState?, onStart: (TimerPhase) -> Unit, onStop: () -> Unit) {
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(timer?.startedAtMillis) {
-        while (timer != null) {
-            now = System.currentTimeMillis()
-            delay(500)
-        }
-    }
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (timer == null) {
-                Text(stringResource(R.string.workout_timer_idle))
+            LaunchedEffect(session) { vm.finishIfDone(session) }
+            if (session.status == SessionStatus.COMPLETED) {
+                SummaryScreen(l.id, session, vm, onDone = { nav.resetTo(Routes.TODAY) })
             } else {
-                val seconds = timer.elapsedSeconds(now)
-                val name = when (timer.phase) {
-                    TimerPhase.SET -> R.string.workout_timer_set
-                    TimerPhase.REST -> R.string.workout_timer_rest
-                    TimerPhase.MACHINE_SETUP -> R.string.workout_timer_setup
+                val timer by vm.timer.collectAsStateWithLifecycle()
+                val hasPending = currentExerciseIndex(session.exercises) >= 0
+                if (hasPending && timer?.phase == TimerPhase.REST) {
+                    RestScreen(session, timer!!, vm)
+                } else {
+                    TrainingScreen(l.id, session, vm, nav)
                 }
-                Text("${stringResource(name)}  %d:%02d".format(seconds / 60, seconds % 60), style = MaterialTheme.typography.titleLarge)
-                if (timer.phase == TimerPhase.REST && timer.suggestedRestSeconds > 0) {
-                    Text(stringResource(R.string.workout_suggested_rest, "%d:%02d".format(timer.suggestedRestSeconds / 60, timer.suggestedRestSeconds % 60)))
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onStart(TimerPhase.SET) }) { Text(stringResource(R.string.workout_timer_start_set)) }
-                OutlinedButton(onClick = { onStart(TimerPhase.REST) }) { Text(stringResource(R.string.workout_timer_start_rest)) }
-                OutlinedButton(onClick = { onStart(TimerPhase.MACHINE_SETUP) }) { Text(stringResource(R.string.workout_timer_start_setup)) }
-                if (timer != null) TextButton(onClick = onStop) { Text(stringResource(R.string.workout_timer_stop)) }
             }
         }
     }
 }
 
-@Composable
-private fun ExerciseCard(ex: SessionExercise, weights: List<Double>, editable: Boolean, onLog: (String, SetInput) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(ex.name, style = MaterialTheme.typography.titleMedium)
-            Text(targetText(ex), style = MaterialTheme.typography.bodySmall)
-            ex.sets.filter { it.status != SetStatus.PENDING }.forEach { set -> Text(doneText(ex, set)) }
-            val next = ex.sets.firstOrNull { it.status == SetStatus.PENDING }
-            if (editable && next != null) SetEntry(ex, next, weights, onLog)
-        }
-    }
+// ---- helpers shared by the training and rest screens ---------------------------------------
+
+internal fun bandIndex(effort: String?): Int = when (effort) {
+    "limit" -> 0
+    "one", "one_two" -> 1
+    "two_three", "three_four" -> 2
+    "four_plus", "five_plus" -> 3
+    else -> -1
+}
+
+internal fun prefillBand(ex: SessionExercise): Int = when {
+    ex.target.rirMin >= 5 -> 3
+    ex.target.rirMin >= 3 -> 2
+    ex.target.rirMin >= 1 -> 1
+    else -> 0
+}
+
+private fun lastWorking(ex: SessionExercise): SetLog? =
+    ex.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
+
+/** Total weight a set starts with: the last working weight of the exercise, else the suggestion. */
+internal fun prefillTotal(ex: SessionExercise, set: SetLog, levels: List<Double>): Double {
+    val base = lastWorking(ex)?.weightKg ?: ex.suggestedWeightKg ?: levels.minOrNull() ?: 20.0
+    return if (set.setType == SetType.WARMUP) warmupProposal(base, levels).weightKg else base
+}
+
+internal fun machineSetting(info: MachineInfo?): String? =
+    info?.setup?.filter { it.name.isNotBlank() }?.joinToString(", ") { "${it.name} ${it.value}".trim() }?.takeIf { it.isNotBlank() }
+
+internal fun valueStep(metric: String): Double = when (metric) {
+    Metric.SECONDS -> 5.0
+    Metric.METERS -> 10.0
+    else -> 1.0
+}
+
+internal fun valueUnit(metric: String): String = when (metric) {
+    Metric.SECONDS -> "Sek."
+    Metric.METERS -> "m"
+    else -> "Wdh."
 }
 
 @Composable
-private fun targetText(ex: SessionExercise): String {
+internal fun rememberNow(intervalMs: Long = 500): Long {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(intervalMs)
+        }
+    }
+    return now
+}
+
+private fun formatElapsed(seconds: Long): String {
+    val s = seconds.coerceAtLeast(0)
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60) else "%02d:%02d".format(s / 60, s % 60)
+}
+
+internal fun vibrateOnce(context: Context) {
+    val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+        context.getSystemService(VibratorManager::class.java)?.defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    }
+    vibrator?.vibrate(VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE))
+}
+
+// ---- training ---------------------------------------------------------------------------
+
+/** Editable values of the current set. Lives as long as the set is on screen. */
+private class SetDraft(val initialTotal: Double, level: Double, addons: Set<Double>, value: Double, effort: Int) {
+    var level by mutableDoubleStateOf(level)
+    var addons by mutableStateOf(addons)
+    var value by mutableDoubleStateOf(value)
+    var effort by mutableIntStateOf(effort)
+
+    val total: Double get() = Math.round((level + addons.sum()) * 1000.0) / 1000.0
+}
+
+private fun buildDraft(ex: SessionExercise?, set: SetLog?, levels: List<Double>, addons: List<Double>, wheel: List<Double>): SetDraft {
+    if (ex == null || set == null) return SetDraft(0.0, wheel.first(), emptySet(), 10.0, 1)
+    val total = prefillTotal(ex, set, levels)
+    val warm = set.setType == SetType.WARMUP
+    val split = if (levels.isNotEmpty() && !warm) splitTotal(total, levels, addons) else null
+    val level = split?.levelKg ?: wheel[nearestLevelIndex(wheel, total)]
+    val last = lastWorking(ex)
+    val lastValue = last?.let {
+        when (ex.target.metric) {
+            Metric.SECONDS -> it.seconds?.toDouble()
+            Metric.METERS -> it.meters
+            else -> it.reps?.toDouble()
+        }
+    }
+    val value = if (warm) 12.0 else lastValue ?: ex.target.max
+    val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
+    return SetDraft(total, level, split?.addonsKg?.toSet() ?: emptySet(), value.coerceAtLeast(valueStep(ex.target.metric)), effort)
+}
+
+private fun reasonText(ex: SessionExercise, total: Double): String? {
+    val suggested = ex.suggestedWeightKg ?: return null
+    if (Math.abs(total - suggested) > 1e-6) return "Eigene Wahl. Vorschlag war ${fmtNum(suggested)} kg."
+    return when (ex.suggestionReason) {
+        "gym_working_weight" -> "Dein Arbeitsgewicht in diesem Studio."
+        "gym_history" -> "Wie beim letzten Training hier."
+        "cross_gym_estimate" -> "Schätzung aus einem anderen Studio. Vorsichtig testen."
+        "guided_estimate" -> "Vorsichtiger Startwert aus einer verwandten Übung."
+        "plan_weight" -> "Startgewicht aus dem Plan."
+        else -> null
+    }
+}
+
+private fun targetCaption(ex: SessionExercise): String {
     val min = ex.target.min.toInt()
     val max = ex.target.max.toInt()
-    return when (ex.target.metric) {
-        Metric.SECONDS -> stringResource(R.string.workout_target_seconds, min, max)
-        Metric.METERS -> stringResource(R.string.workout_target_meters, min, max)
-        else -> stringResource(R.string.workout_target_reps, min, max)
+    val what = when (ex.target.metric) {
+        Metric.SECONDS -> "Sekunden"
+        Metric.METERS -> "Meter"
+        else -> "Wiederholungen"
     }
+    return if (max > 0) "$what · Ziel $min–$max" else what
 }
 
 @Composable
-private fun doneText(ex: SessionExercise, set: SetLog): String {
-    val label = stringResource(R.string.workout_set_label, set.order)
-    if (set.status != SetStatus.COMPLETED) return "$label: ${stringResource(R.string.workout_set_skipped)}"
-    val value = when (ex.target.metric) {
-        Metric.SECONDS -> set.seconds?.toString()
-        Metric.METERS -> set.meters?.let(::fmt)
-        else -> set.reps?.toString()
-    } ?: "-"
-    val detail = if (set.weightKg != null) stringResource(R.string.workout_set_done, fmt(set.weightKg!!), value)
-    else stringResource(R.string.workout_set_done_nokg, value)
-    return "$label: $detail"
-}
+private fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutViewModel, nav: Navigator) {
+    val machines by vm.machines.collectAsStateWithLifecycle()
+    val gyms by vm.gyms.collectAsStateWithLifecycle()
+    val previous by vm.previousWeights.collectAsStateWithLifecycle()
+    val catalog by vm.catalog.collectAsStateWithLifecycle()
+    val now = rememberNow(1000)
 
-@Composable
-private fun SetEntry(ex: SessionExercise, set: SetLog, weights: List<Double>, onLog: (String, SetInput) -> Unit) {
-    val pre = remember(set.id) { prefillSet(ex, weights) }
-    val weighted = ex.measurementType in WEIGHTED
-    var weight by remember(set.id) { mutableStateOf(pre.weightKg?.let(::fmt).orEmpty()) }
-    var value by remember(set.id) { mutableStateOf(fmt(pre.value)) }
-    var effort by remember(set.id) { mutableStateOf<String?>(null) }
+    var sheet by rememberSaveable { mutableStateOf<String?>(null) }
+    var confirmFinish by rememberSaveable { mutableStateOf(false) }
+    var pickExercise by rememberSaveable { mutableStateOf(false) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.workout_set_label, set.order), style = MaterialTheme.typography.titleSmall)
-        if (weighted) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { weight = fmt(stepWeight(parse(weight), weights, -1)) }) { Text("−") }
-                OutlinedTextField(
-                    value = weight, onValueChange = { weight = it }, singleLine = true,
-                    label = { Text(stringResource(R.string.workout_weight)) },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedButton(onClick = { weight = fmt(stepWeight(parse(weight), weights, 1)) }) { Text("+") }
-            }
+    val exIndex = currentExerciseIndex(session.exercises)
+    val ex = session.exercises.getOrNull(exIndex)
+    val set = ex?.sets?.firstOrNull { it.status == SetStatus.PENDING }
+    val warm = set?.setType == SetType.WARMUP
+
+    val info = ex?.let { machines[it.exerciseId] }
+    val levels = info?.levels.orEmpty()
+    val addonList = info?.addons.orEmpty()
+    val hasProfile = levels.isNotEmpty()
+    val wheel = if (hasProfile) levels else remember { freeWeights() }
+    val weighted = ex != null && ex.measurementType in WEIGHTED_TYPES
+    val draft = remember(set?.id, hasProfile) { buildDraft(ex, set, levels, addonList, wheel) }
+
+    val workingTotal = ex?.sets?.count { it.setType == SetType.WORKING } ?: 0
+    val workingDone = ex?.sets?.count { it.setType == SetType.WORKING && it.status != SetStatus.PENDING } ?: 0
+    val newWeight = remember(set?.id) {
+        val prev = ex?.let { previous[it.exerciseId] }
+        ex != null && !warm && workingDone == 0 && prev != null && draft.initialTotal > prev + 1e-6
+    }
+    val logSet = tracked(SCREEN, "log_set") {
+        if (ex != null && set != null) {
+            vm.logSet(
+                ex.id, set.id,
+                SetInput(
+                    weightKg = if (weighted) draft.total else null,
+                    value = draft.value,
+                    effort = if (warm) null else SelectableEffortBands[draft.effort],
+                    addonWeightsKg = draft.addons.sorted().takeIf { it.isNotEmpty() && weighted },
+                ),
+            )
         }
-        OutlinedTextField(
-            value = value, onValueChange = { value = it }, singleLine = true,
-            label = {
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .padding(top = topInset() + 4.dp, start = Spacing.Gutter, end = Spacing.Gutter, bottom = 196.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            val started = parseInstant(session.startedAt)?.toEpochMilli() ?: now
+            val position = when {
+                ex == null -> "Alle Sätze erledigt"
+                warm -> "Übung ${exIndex + 1}/${session.exercises.size} · Aufwärmsatz"
+                else -> "Übung ${exIndex + 1}/${session.exercises.size} · Satz ${workingDone + 1}/$workingTotal"
+            }
+            TrainingHeader(
+                planName = session.planName, position = position, gymName = gymLabel(session.gymId, gyms),
+                gymColor = gymColorOf(session.gymId, gyms), elapsed = formatElapsed((now - started) / 1000),
+                onList = tracked(SCREEN, "open_list") { sheet = "list" },
+            )
+            SetMeter(workingTotal, workingDone)
+
+            if (ex == null || set == null) {
                 Text(
-                    stringResource(
-                        when (ex.target.metric) {
-                            Metric.SECONDS -> R.string.workout_seconds
-                            Metric.METERS -> R.string.workout_meters
-                            else -> R.string.workout_reps
-                        },
-                    ),
+                    "In diesem Training gibt es keine offenen Sätze.", style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(stringResource(R.string.workout_effort), style = MaterialTheme.typography.labelMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SelectableEffortBands.forEach { band ->
-                FilterChip(selected = effort == band, onClick = { effort = band }, label = { Text(effortLabel(band)) })
+            } else {
+                Column {
+                    Text(ex.name, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+                    Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
+                        machineSetting(info)?.let {
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, fill = false))
+                        }
+                        ex.supersetGroup?.takeIf { it.isNotBlank() }?.let { Tag("Superset $it") }
+                        if (warm) Tag("Aufwärmsatz")
+                    }
+                    ex.notes?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, Modifier.padding(top = 2.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                if (weighted) {
+                    val i = nearestLevelIndex(wheel, draft.level)
+                    WeightCard(
+                        totalText = fmtNum(draft.total),
+                        previousLevel = wheel.getOrNull(i - 1)?.let(::fmtNum),
+                        currentLevel = fmtNum(wheel[i]),
+                        nextLevel = wheel.getOrNull(i + 1)?.let(::fmtNum),
+                        onStep = { d ->
+                            Telemetry.track(SCREEN, "weight_step")
+                            draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
+                        },
+                        addons = if (warm) emptyList() else addonList.map { AddonOption("+ ${fmtNum(it)} kg", it in draft.addons) },
+                        onToggleAddon = { idx ->
+                            Telemetry.track(SCREEN, "toggle_addon")
+                            val a = addonList[idx]
+                            draft.addons = if (a in draft.addons) draft.addons - a else draft.addons + a
+                        },
+                        reason = if (warm) null else reasonText(ex, draft.total),
+                        hasProfile = hasProfile,
+                        onCreateProfile = tracked(SCREEN, "create_profile") { session.gymId?.let { nav.push(Routes.machine(it, ex.exerciseId)) } },
+                        newWeight = newWeight,
+                        minusEnabled = i > 0, plusEnabled = i < wheel.lastIndex,
+                    )
+                }
+
+                val metric = ex.target.metric
+                val step = valueStep(metric)
+                RepsCard(
+                    caption = targetCaption(ex),
+                    previous = (draft.value - step).takeIf { it >= step }?.let(::fmtNum),
+                    current = fmtNum(draft.value),
+                    next = fmtNum(draft.value + step),
+                    unit = valueUnit(metric),
+                    onStep = { d ->
+                        Telemetry.track(SCREEN, "reps_step")
+                        draft.value = (draft.value + d * step).coerceIn(step, 999.0)
+                    },
+                    label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> "Wiederholungen" },
+                    minusEnabled = draft.value > step,
+                )
+                if (!warm) {
+                    EffortPicker(draft.effort, { Telemetry.track(SCREEN, "effort"); draft.effort = it })
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                LinkButton("Training beenden", tracked(SCREEN, "finish_open") { confirmFinish = true }, height = Spacing.TouchMin)
             }
         }
-        Button(
-            onClick = { onLog(set.id, SetInput(if (weighted) parse(weight) else null, parse(value), effort)) },
-            enabled = effort != null && parse(value) != null && (!weighted || parse(weight) != null),
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text(stringResource(R.string.workout_save_set)) }
+
+        PinnedBottom(Modifier.align(Alignment.BottomCenter)) {
+            PrimaryButton("Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = Spacing.TouchPrimary, enabled = ex != null && set != null)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                LinkButton("Überspringen", tracked(SCREEN, "skip_open") { sheet = "skip" }, height = Spacing.TouchMin, enabled = set != null)
+                LinkButton("Aufwärmsatz", tracked(SCREEN, "warmup_open") { sheet = "warmup" }, height = Spacing.TouchMin, enabled = set != null && !warm)
+                LinkButton("Notiz", tracked(SCREEN, "note_open") { sheet = "note" }, height = Spacing.TouchMin, enabled = ex != null)
+            }
+        }
+    }
+
+    when (sheet) {
+        "skip" -> if (ex != null && set != null) SkipSheet(
+            onPick = { reason ->
+                Telemetry.track(SCREEN, "skip_${reason.name.lowercase()}")
+                vm.skipSet(ex.id, set.id, reason)
+                sheet = if (reason == SkipReason.PAIN) "pain-note" else null
+            },
+            onDismiss = { sheet = null },
+        )
+        "pain-note", "note" -> if (ex != null) NoteSheet(
+            title = if (sheet == "pain-note") "Was ist passiert? (Schmerz)" else "Notiz zu ${ex.name}",
+            initial = ex.notes.orEmpty(),
+            onSave = { vm.setNote(ex.id, it); sheet = null },
+            onDismiss = { sheet = null },
+        )
+        "warmup" -> if (ex != null && set != null) {
+            val workBase = lastWorking(ex)?.weightKg ?: ex.suggestedWeightKg ?: levels.minOrNull() ?: 20.0
+            val proposal = warmupProposal(workBase, levels)
+            GymSheet({ sheet = null }, title = "Aufwärmsatz") {
+                Text(
+                    "Leichter Satz vor dem ersten Arbeitssatz, zum Beispiel ${fmtNum(proposal.weightKg)} kg × ${proposal.reps}. Er zählt nicht für den Fortschritt.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                PrimaryButton("Aufwärmsatz einfügen", tracked(SCREEN, "warmup_insert") { vm.addWarmup(ex.id); sheet = null }, height = 52.dp)
+            }
+        }
+        "list" -> GymSheet({ sheet = null }, title = "Aktuelles Workout") {
+            ExerciseListCard(session, editable = true, onMove = vm::moveExercise, onToggleSkip = vm::toggleSkipExercise, onAdd = { pickExercise = true }, screen = SCREEN)
+        }
+    }
+    if (pickExercise) {
+        ExercisePickerSheet(catalog, onPick = { vm.addExercise(it.id); pickExercise = false }, onDismiss = { pickExercise = false })
+    }
+    if (confirmFinish) {
+        AlertDialog(
+            onDismissRequest = { confirmFinish = false },
+            title = { Text("Training beenden") },
+            text = { Text("Offene Sätze werden als übersprungen markiert.") },
+            confirmButton = { TextButton(onClick = tracked(SCREEN, "finish_confirm") { confirmFinish = false; vm.finishNow() }) { Text("Beenden") } },
+            dismissButton = { TextButton(onClick = tracked(SCREEN, "finish_cancel") { confirmFinish = false }) { Text("Abbrechen") } },
+        )
+    }
+}
+
+/** Compact top bar: gym stripe + names on the left, elapsed time and the workout list on the right. */
+@Composable
+private fun TrainingHeader(planName: String, position: String, gymName: String, gymColor: androidx.compose.ui.graphics.Color, elapsed: String, onList: () -> Unit) {
+    val cs = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s3)) {
+        Box(Modifier.width(4.dp).height(44.dp).background(gymColor, androidx.compose.foundation.shape.RoundedCornerShape(2.dp)))
+        Column(Modifier.weight(1f)) {
+            Text(planName, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1)
+            Text("$position · $gymName", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1)
+        }
+        SoftButton("$elapsed", onList, height = Spacing.TouchMin, icon = GymIcons.Menu)
     }
 }
 
 @Composable
-private fun effortLabel(band: String): String = stringResource(
-    when (band) {
-        "limit" -> R.string.effort_limit
-        "one_two" -> R.string.effort_one_two
-        "three_four" -> R.string.effort_three_four
-        else -> R.string.effort_five_plus
-    },
-)
+private fun SkipSheet(onPick: (SkipReason) -> Unit, onDismiss: () -> Unit) {
+    GymSheet(onDismiss, title = "Satz überspringen") {
+        listOf(
+            SkipReason.TIME to "Zeit",
+            SkipReason.EQUIPMENT to "Gerät besetzt",
+            SkipReason.PAIN to "Schmerz",
+            SkipReason.OTHER to "Sonstiges",
+        ).forEach { (reason, label) ->
+            SoftButton(label, { onPick(reason) }, Modifier.fillMaxWidth(), height = Spacing.TouchMin)
+        }
+    }
+}
 
-private fun parse(text: String): Double? = text.trim().replace(',', '.').toDoubleOrNull()
-
-private fun fmt(value: Double): String =
-    if (value == Math.floor(value) && Math.abs(value) < 1e9) value.toLong().toString() else value.toString()
-
-/** Moves to the neighbouring available weight, or by 2.5 kg when the machine has no list. */
-private fun stepWeight(current: Double?, weights: List<Double>, direction: Int): Double {
-    val base = current ?: weights.firstOrNull() ?: 0.0
-    if (weights.isEmpty()) return (base + 2.5 * direction).coerceAtLeast(0.0)
-    val sorted = weights.sorted()
-    return if (direction > 0) sorted.firstOrNull { it > base + 1e-9 } ?: sorted.last()
-    else sorted.lastOrNull { it < base - 1e-9 } ?: sorted.first()
+@Composable
+private fun NoteSheet(title: String, initial: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    GymSheet(onDismiss, title = title) {
+        GymField(text, { text = it }, "Notiz", singleLine = false, placeholder = "Zum Beispiel: Sitz eine Stufe höher")
+        PrimaryButton("Speichern", tracked(SCREEN, "note_save") { onSave(text) }, height = 52.dp)
+    }
 }
 
 /**
@@ -314,29 +493,34 @@ private fun NotificationPermissionPrompt() {
     if (Build.VERSION.SDK_INT < 33) return
     val context = LocalContext.current
     fun granted() = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    var step by rememberSaveable { mutableStateOf(if (granted()) 0 else 1) }
+    var step by rememberSaveable { mutableIntStateOf(if (granted()) 0 else 1) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> step = if (ok) 0 else 2 }
     when (step) {
         1 -> AlertDialog(
             onDismissRequest = { step = 0 },
-            title = { Text(stringResource(R.string.notif_perm_title)) },
-            text = { Text(stringResource(R.string.notif_perm_message)) },
-            confirmButton = { TextButton(onClick = { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }) { Text(stringResource(R.string.notif_perm_allow)) } },
-            dismissButton = { TextButton(onClick = { step = 0 }) { Text(stringResource(R.string.notif_perm_later)) } },
+            title = { Text("Benachrichtigungen erlauben") },
+            text = {
+                Text(
+                    "GymApp zeigt während des Trainings den aktuellen Satz und die Pausenzeit dauerhaft in der Statusleiste " +
+                        "und lässt dich Sätze direkt dort abhaken. Dafür braucht Android deine Erlaubnis.",
+                )
+            },
+            confirmButton = { TextButton(onClick = tracked(SCREEN, "notif_allow") { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }) { Text("Erlauben") } },
+            dismissButton = { TextButton(onClick = tracked(SCREEN, "notif_later") { step = 0 }) { Text("Später") } },
         )
         2 -> AlertDialog(
             onDismissRequest = { step = 0 },
-            title = { Text(stringResource(R.string.notif_perm_title)) },
-            text = { Text(stringResource(R.string.notif_perm_settings_message)) },
+            title = { Text("Benachrichtigungen erlauben") },
+            text = { Text("Ohne Benachrichtigungen funktioniert der Timer nur in der App. Du kannst sie in den Android-Einstellungen aktivieren.") },
             confirmButton = {
-                TextButton(onClick = {
-                    step = 0
-                    context.startActivity(
-                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
-                    )
-                }) { Text(stringResource(R.string.notif_perm_open_settings)) }
+                TextButton(
+                    onClick = tracked(SCREEN, "notif_settings") {
+                        step = 0
+                        context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+                    },
+                ) { Text("Einstellungen") }
             },
-            dismissButton = { TextButton(onClick = { step = 0 }) { Text(stringResource(R.string.common_cancel)) } },
+            dismissButton = { TextButton(onClick = tracked(SCREEN, "notif_cancel") { step = 0 }) { Text("Abbrechen") } },
         )
     }
 }

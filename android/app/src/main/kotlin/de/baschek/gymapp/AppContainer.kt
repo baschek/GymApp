@@ -21,6 +21,7 @@ import de.baschek.gymapp.workout.WorkoutActions
 
 /** Hand-wired dependencies (no DI framework needed at this size). */
 class AppContainer(app: Application) {
+    private val appContext = app.applicationContext
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val repository = GymRepository(GymDatabase.build(app))
@@ -32,6 +33,9 @@ class AppContainer(app: Application) {
     val timer = TimerController(repository, appScope)
     val workout = WorkoutActions(repository, timer, scheduler)
     val updater = AppUpdater(app, httpClient)
+
+    /** Local-only exercise photos (the contract does not sync photo bytes). */
+    fun photoDir(): java.io.File = java.io.File(appContext.filesDir, "photos").apply { mkdirs() }
 
     init {
         Telemetry.install(repository, appScope)

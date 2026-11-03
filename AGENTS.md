@@ -54,6 +54,7 @@ Android modules:
   secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
   `ANDROID_KEY_PASSWORD`) and publishes it as a GitHub release; the in-app updater
   installs it. Do not create release tags unless the owner asks.
+- **UI.** Compose screens live in `ui/<screen>`, shared pieces in `ui/components`, tokens in `ui/theme` (dark only, accent from DataStore). Gyms, their names and colours come only from synced gym documents; never hardcode them. Every interaction calls `Telemetry.track(screen, element)` (helper `tracked`). Pure logic belongs in `:core` with tests. The body drawing in `ui/components/BodyArt.kt` is a placeholder (`TODO(artwork)`).
 - **Checks before committing:** `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`.
 
 ---

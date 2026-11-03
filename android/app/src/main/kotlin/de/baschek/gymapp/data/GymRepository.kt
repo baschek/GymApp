@@ -38,6 +38,7 @@ import de.baschek.gymapp.core.progression.GymExerciseKey
 import de.baschek.gymapp.core.progression.StartSuggestion
 import de.baschek.gymapp.core.progression.WorkingWeight
 import de.baschek.gymapp.core.progression.reassignSessionGym as coreReassignSessionGym
+import de.baschek.gymapp.core.progression.recalculateWorkingWeights
 import de.baschek.gymapp.core.progression.suggestStartWeight
 import de.baschek.gymapp.core.sync.ReconnectBackoff
 import de.baschek.gymapp.core.sync.SyncStore
@@ -122,6 +123,13 @@ class GymRepository(
 
     val keepScreenOn: Flow<Boolean> =
         dao.observeSetting(SettingKeys.KEEP_SCREEN_ON).map { it != "0" }.distinctUntilChanged()
+
+    /** Local changes that have not reached the server yet. */
+    val pendingChanges: Flow<Int> = dao.observeOutboxCount().distinctUntilChanged()
+
+    /** Sessions with local changes that were not synced yet (for the "wird synchronisiert" badge). */
+    val pendingSessionIds: Flow<Set<String>> =
+        dao.observeOutboxIds(Entity.SESSION).map { it.toSet() }.distinctUntilChanged()
 
     val authError: Flow<Boolean> = dao.observeSetting(SettingKeys.AUTH_ERROR).map { it != null }
 
@@ -410,6 +418,24 @@ class GymRepository(
         val flags = session.reviewFlags.orEmpty().filter { it != ReviewFlag.GYM_SUSPECT && it != ReviewFlag.GYM_MISSING }
         put(p, Entity.SESSION, sessionId, session.copy(gymId = newGymId, reviewFlags = flags.ifEmpty { null }), Session.serializer())
         weights.forEach { (key, w) -> setWorkingWeight(p, key, w) }
+    }
+
+    /**
+     * Saves an edit of a finished session (weights, reps, notes) and recalculates the working weights of
+     * its gym, because a corrected set can change what has been proven.
+     */
+    suspend fun editCompletedSession(sessionId: String, transform: (Session) -> Session) = db.withTransaction {
+        val p = currentProfile()
+        val all = allSessions(p)
+        val old = all.firstOrNull { it.first == sessionId }?.second ?: return@withTransaction
+        if (old.status != SessionStatus.COMPLETED) return@withTransaction
+        val updated = transform(old)
+        if (updated == old) return@withTransaction
+        put(p, Entity.SESSION, sessionId, updated, Session.serializer())
+        val gym = updated.gymId ?: return@withTransaction
+        val keys = updated.exercises.map { GymExerciseKey(gym, it.exerciseId) }.toSet()
+        recalculateWorkingWeights(all.map { if (it.first == sessionId) sessionId to updated else it }, keys)
+            .forEach { (key, w) -> setWorkingWeight(p, key, w) }
     }
 
     /** Removes all review flags ("geprüft"). */

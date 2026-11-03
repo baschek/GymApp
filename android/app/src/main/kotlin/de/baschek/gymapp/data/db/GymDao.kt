@@ -49,6 +49,12 @@ interface GymDao {
     @Query("SELECT entity, id FROM documents WHERE profile = :profile AND rev IS NOT NULL")
     suspend fun syncedKeys(profile: String): List<DocKeyRow>
 
+    @Query("SELECT COUNT(*) FROM outbox")
+    fun observeOutboxCount(): Flow<Int>
+
+    @Query("SELECT id FROM outbox WHERE entity = :entity")
+    fun observeOutboxIds(entity: String): Flow<List<String>>
+
     @Query("SELECT COUNT(*) FROM documents WHERE profile = :profile")
     suspend fun countDocs(profile: String): Int
 
