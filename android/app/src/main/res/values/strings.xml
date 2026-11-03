@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GymApp</string>
+
+    <string name="common_back">Zurück</string>
+    <string name="common_cancel">Abbrechen</string>
+    <string name="common_ok">OK</string>
+
+    <!-- Home -->
+    <string name="home_title">Training</string>
+    <string name="home_test_profile_banner">Testprofil: Daten bleiben lokal und werden nie synchronisiert.</string>
+    <string name="home_profile_personal">Persönlich</string>
+    <string name="home_profile_test">Test</string>
+    <string name="home_sync_title">Synchronisierung</string>
+    <string name="home_sync_not_paired">Nicht mit einem Sync-Server verbunden.</string>
+    <string name="home_sync_last">Letzte erfolgreiche Synchronisierung: %1$s</string>
+    <string name="home_sync_never">Noch nie synchronisiert.</string>
+    <string name="home_sync_running">Synchronisiere …</string>
+    <string name="home_sync_now">Jetzt synchronisieren</string>
+    <string name="home_sync_pair">Mit Server verbinden</string>
+    <string name="home_sync_unpair">Verbindung trennen</string>
+    <string name="home_sync_error_unauthorized">Zugriff abgelehnt. Bitte neu verbinden.</string>
+    <string name="home_sync_error_network">Server nicht erreichbar. Es wird später erneut versucht.</string>
+    <string name="home_sync_error_server">Der Server hat die Anfrage nicht verarbeitet.</string>
+    <string name="home_sync_notice_conflict">%1$d Änderung(en) wurden durch eine neuere Server-Version ersetzt.</string>
+    <string name="home_sync_notice_rejected">%1$d Änderung(en) wurden vom Server abgelehnt.</string>
+    <string name="home_sync_test_disabled">Im Testprofil wird nichts synchronisiert.</string>
+    <string name="home_active_session">Laufendes Training: %1$s</string>
+    <string name="home_resume">Fortsetzen</string>
+    <string name="home_plans">Pläne</string>
+    <string name="home_no_plans">Keine Pläne vorhanden. Pläne kommen vom Server oder aus den Testdaten.</string>
+    <string name="home_start_session">Training starten</string>
+    <string name="home_gym">Studio</string>
+    <string name="home_seed_demo">Testdaten anlegen</string>
+    <string name="home_update_title">App-Update</string>
+    <string name="home_update_current">Installierte Version: %1$s</string>
+    <string name="home_update_check">Nach Update suchen</string>
+    <string name="home_update_checking">Suche …</string>
+    <string name="home_update_none">Die App ist aktuell.</string>
+    <string name="home_update_available">Version %1$s ist verfügbar.</string>
+    <string name="home_update_download">Herunterladen und installieren</string>
+    <string name="home_update_downloading">Lade herunter …</string>
+    <string name="home_update_error">Update fehlgeschlagen.</string>
+    <string name="home_update_permission">Bitte erlaube die Installation aus dieser Quelle und tippe danach erneut.</string>
+
+    <!-- Pairing -->
+    <string name="pairing_title">Mit Server verbinden</string>
+    <string name="pairing_url">Server-Adresse (https://…)</string>
+    <string name="pairing_code">Kopplungscode</string>
+    <string name="pairing_submit">Verbinden</string>
+    <string name="pairing_busy">Verbinde …</string>
+    <string name="pairing_error_url">Ungültige Adresse. Es ist nur HTTPS erlaubt.</string>
+    <string name="pairing_error_code">Der Code ist falsch oder abgelaufen.</string>
+    <string name="pairing_error_rate">Zu viele Versuche. Bitte später erneut versuchen.</string>
+    <string name="pairing_error_network">Server nicht erreichbar.</string>
+    <string name="pairing_error_other">Verbindung fehlgeschlagen.</string>
+
+    <!-- Workout -->
+    <string name="workout_title">%1$s</string>
+    <string name="workout_missing">Dieses Training wurde nicht gefunden.</string>
+    <string name="workout_keep_screen_on">Bildschirm anlassen</string>
+    <string name="workout_timer_idle">Kein Timer aktiv</string>
+    <string name="workout_timer_set">Satz läuft</string>
+    <string name="workout_timer_rest">Pause</string>
+    <string name="workout_timer_setup">Maschine einstellen</string>
+    <string name="workout_timer_start_set">Satz starten</string>
+    <string name="workout_timer_start_rest">Pause</string>
+    <string name="workout_timer_start_setup">Einrichten</string>
+    <string name="workout_timer_stop">Stopp</string>
+    <string name="workout_suggested_rest">Empfohlen: %1$s</string>
+    <string name="workout_target_reps">Ziel: %1$d–%2$d Wdh.</string>
+    <string name="workout_target_seconds">Ziel: %1$d–%2$d Sek.</string>
+    <string name="workout_target_meters">Ziel: %1$d–%2$d m</string>
+    <string name="workout_set_label">Satz %1$d</string>
+    <string name="workout_weight">Gewicht (kg)</string>
+    <string name="workout_reps">Wiederholungen</string>
+    <string name="workout_seconds">Sekunden</string>
+    <string name="workout_meters">Meter</string>
+    <string name="workout_effort">Anstrengung</string>
+    <string name="workout_save_set">Satz speichern</string>
+    <string name="workout_finish">Training beenden</string>
+    <string name="workout_finish_confirm">Offene Sätze werden als übersprungen markiert.</string>
+    <string name="workout_set_done">%1$s kg × %2$s</string>
+    <string name="workout_set_done_nokg">%1$s</string>
+    <string name="workout_set_skipped">übersprungen</string>
+    <string name="effort_limit">Am Limit</string>
+    <string name="effort_one_two">1–2 übrig</string>
+    <string name="effort_three_four">3–4 übrig</string>
+    <string name="effort_five_plus">5+ übrig</string>
+
+    <!-- Timer notification -->
+    <string name="timer_channel_name">Timer</string>
+    <string name="timer_channel_description">Zeigt den laufenden Satz-, Pausen- oder Einrichtungs-Timer.</string>
+    <string name="timer_notification_stop">Beenden</string>
+    <string name="timer_notification_set">GymApp · Satz</string>
+    <string name="timer_notification_rest">GymApp · Pause</string>
+    <string name="timer_notification_setup">GymApp · Maschine einrichten</string>
+
+    <!-- Gym handling -->
+    <string name="gym_other_name">Anderes Studio</string>
+    <string name="gym_unknown">Unbekanntes Studio</string>
+    <string name="start_gym_title">Studio bestätigen</string>
+    <string name="start_gym_message">In welchem Studio trainierst du jetzt? Gewichte und Fortschritt gelten pro Studio.</string>
+    <string name="start_gym_confirm">Hier trainieren: %1$s</string>
+    <string name="start_gym_choose">Studio wählen</string>
+    <string name="home_history">Verlauf</string>
+    <string name="history_title">Verlauf</string>
+    <string name="history_empty">Noch keine abgeschlossenen Trainings.</string>
+    <string name="history_badge_review">zu prüfen</string>
+    <string name="history_details">Details</string>
+    <string name="history_change_gym">Studio ändern</string>
+    <string name="history_change_gym_confirm">Studio übernehmen: %1$s</string>
+    <string name="history_recalc_hint">Die Arbeitsgewichte des alten und des neuen Studios werden neu berechnet.</string>
+    <string name="history_mark_reviewed">Als geprüft markieren</string>
+
+    <!-- Ongoing workout notification -->
+    <string name="notif_session_running">Training läuft</string>
+    <string name="notif_title">%1$s · Satz %2$d/%3$d</string>
+    <string name="notif_prefill">%1$s kg × %2$s</string>
+    <string name="notif_prefill_nokg">%1$s</string>
+    <string name="notif_action_log">Satz geschafft</string>
+    <string name="notif_action_skip">Pause überspringen</string>
+    <string name="notif_perm_title">Benachrichtigungen erlauben</string>
+    <string name="notif_perm_message">GymApp zeigt während des Trainings den aktuellen Satz und die Pausenzeit dauerhaft in der Statusleiste und lässt dich Sätze direkt dort abhaken. Dafür braucht Android deine Erlaubnis.</string>
+    <string name="notif_perm_allow">Erlauben</string>
+    <string name="notif_perm_later">Später</string>
+    <string name="notif_perm_settings_message">Ohne Benachrichtigungen funktioniert der Timer nur in der App. Du kannst sie in den Android-Einstellungen aktivieren.</string>
+    <string name="notif_perm_open_settings">Einstellungen</string>
+    <string name="home_sync_disconnected">Verbindung getrennt – neu koppeln</string>
+    <string name="home_sync_repair">Neu koppeln</string>
+    <string name="pairing_error_unavailable">Koppeln ist gerade nicht möglich. Erzeuge am Server einen neuen Kopplungscode; ist noch ein altes Gerät aktiv, muss es dort zuerst getrennt werden.</string>
+</resources>

@@ -11,3 +11,15 @@ test-results/
 *.local
 .DS_Store
 .catalog-source/
+
+# Android app (see android/)
+*.jks
+*.keystore
+local.properties
+*.env
+gymapp-backup-*.json
+.gradle/
+android/**/build/
+android/.idea/
+*.apk
+*.aab

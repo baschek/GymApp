@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "groups": ["brust", "ruecken", "unterer_ruecken", "schultern", "bizeps", "trizeps", "unterarme", "bauch", "quadrizeps", "beinbeuger", "gesaess", "waden"],
+  "mapping": {
+    "chest": "brust",
+    "lats": "ruecken",
+    "middle back": "ruecken",
+    "upper back": "ruecken",
+    "traps": "ruecken",
+    "lower back": "unterer_ruecken",
+    "shoulders": "schultern",
+    "neck": "schultern",
+    "biceps": "bizeps",
+    "triceps": "trizeps",
+    "forearms": "unterarme",
+    "abdominals": "bauch",
+    "core": "bauch",
+    "quadriceps": "quadrizeps",
+    "adductors": "quadrizeps",
+    "hamstrings": "beinbeuger",
+    "glutes": "gesaess",
+    "abductors": "gesaess",
+    "calves": "waden"
+  }
+}

@@ -1,5 +1,31 @@
 # GymApp
 
+This repository contains two generations of GymApp:
+
+| | Location | Status |
+|---|---|---|
+| Native Android app (Kotlin, Compose, Room, server sync) | [`android/`](android/) | in development, successor |
+| Progressive Web App (React, Dexie) | repository root | legacy, stays deployed on GitHub Pages |
+
+The sections below describe the **legacy PWA**. The Android app is described in
+[Native Android App](#native-android-app).
+
+## Native Android App
+
+The native app keeps all training data in a local Room (SQLite) database, so it
+cannot be evicted like browser storage, and synchronizes documents with a sync
+server whose address the user enters when pairing the device. The protocol is
+documented in [`android/docs/sync-protocol.md`](android/docs/sync-protocol.md).
+
+- `android/core`: pure Kotlin module (domain model, progression rules, sync engine, API client)
+- `android/app`: Android application (Room, WorkManager sync, timer service, updater, Compose UI)
+- Build: JDK 17 and the Android SDK, then `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`
+- Releases: push a tag `android-v<version>` on `main`; CI builds a signed APK and creates a GitHub release. The app can update itself from these releases.
+- Test profile: a local-only profile that is never synchronized, for experiments and demo data.
+- The repository is public: no secrets, server addresses or personal training data are committed. See [AGENTS.md](AGENTS.md).
+
+## Legacy PWA
+
 GymApp is an offline-first workout planner and training log. It installs as a Progressive Web App on Android, stores all personal data locally, imports professional workout plans from a documented CSV format, and provides transparent weight suggestions from completed sets and effort ratings.
 
 ## Current Features
