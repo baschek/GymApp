@@ -94,12 +94,22 @@ object ReleaseParser {
         return Triple(version, listOfNotNull(info), bool(release, "prerelease"))
     }
 
-    /** Only HTTPS downloads from GitHub hosts are accepted. */
+    /** Only HTTPS downloads from GitHub hosts, without user info, are accepted. */
     fun isTrustedDownloadUrl(url: String?): Boolean {
-        if (url == null || !url.startsWith("https://")) return false
-        val host = url.removePrefix("https://").substringBefore('/').substringBefore(':').lowercase()
-        return host == "github.com" || host.endsWith(".githubusercontent.com")
+        if (url == null) return false
+        val uri = try {
+            java.net.URI(url)
+        } catch (e: java.net.URISyntaxException) {
+            return false
+        }
+        val host = uri.host?.lowercase() ?: return false
+        return uri.scheme == "https" && uri.userInfo == null &&
+            (host == "github.com" || host.endsWith(".githubusercontent.com"))
     }
+
+    /** The published SHA-256 of the APK; an update without one is never installed. */
+    fun requireDigest(info: UpdateInfo): String =
+        info.sha256 ?: throw IllegalStateException("Update blocked: the release publishes no SHA-256 digest for the APK")
 }
 
 /** Looks up the newest `android-v*` release of a GitHub repository. */

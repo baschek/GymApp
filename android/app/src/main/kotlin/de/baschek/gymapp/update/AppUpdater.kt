@@ -27,16 +27,24 @@ class AppUpdater(private val context: Context, httpClient: HttpClient) {
 
     suspend fun checkForUpdate(): UpdateInfo? = checker.check(BuildConfig.VERSION_NAME)
 
-    /** Downloads the APK into the cache (verifying the published digest when there is one). */
+    /** Downloads the APK into the cache (the published digest is required and verified). */
     suspend fun download(info: UpdateInfo): File = withContext(Dispatchers.IO) {
         require(ReleaseParser.isTrustedDownloadUrl(info.apkUrl)) { "untrusted download url" }
+        val expected = ReleaseParser.requireDigest(info)
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val target = File(dir, "gymapp-update.apk")
-        val connection = URL(info.apkUrl).openConnection() as HttpURLConnection
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 60_000
-        connection.instanceFollowRedirects = true
+        var url = info.apkUrl
+        var connection = open(url)
+        var redirects = 0
+        while (connection.responseCode in 301..303 || connection.responseCode in 307..308) {
+            val next = connection.getHeaderField("Location")?.let { URL(URL(url), it).toString() }
+            connection.disconnect()
+            check(redirects++ < MAX_REDIRECTS) { "too many redirects" }
+            require(ReleaseParser.isTrustedDownloadUrl(next)) { "untrusted download url" }
+            url = next!!
+            connection = open(url)
+        }
         try {
             check(connection.responseCode == 200) { "download failed" }
             val digest = MessageDigest.getInstance("SHA-256")
@@ -52,7 +60,7 @@ class AppUpdater(private val context: Context, httpClient: HttpClient) {
                 }
             }
             val actual = digest.digest().joinToString("") { "%02x".format(it) }
-            if (info.sha256 != null && !info.sha256.equals(actual, ignoreCase = true)) {
+            if (!expected.equals(actual, ignoreCase = true)) {
                 target.delete()
                 error("checksum mismatch")
             }
@@ -61,6 +69,13 @@ class AppUpdater(private val context: Context, httpClient: HttpClient) {
         }
         target
     }
+
+    private fun open(url: String): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            instanceFollowRedirects = false
+        }
 
     /** Returns false if the user first has to allow installs from this app (settings screen is opened). */
     fun install(apk: File): Boolean {
@@ -78,5 +93,9 @@ class AppUpdater(private val context: Context, httpClient: HttpClient) {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
         )
         return true
+    }
+
+    private companion object {
+        const val MAX_REDIRECTS = 5
     }
 }
