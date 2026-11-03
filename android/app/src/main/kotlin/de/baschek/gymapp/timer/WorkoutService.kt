@@ -8,7 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Bundle
+import android.graphics.Color
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -145,6 +146,8 @@ class WorkoutService : Service() {
             .setSmallIcon(R.drawable.ic_stat_timer)
             .setContentTitle(title)
             .setContentText(text)
+            .setCategory(CATEGORY_WORKOUT)
+            .setColorized(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setSilent(true)
@@ -163,9 +166,30 @@ class WorkoutService : Service() {
         if (exercise != null) builder.addAction(0, getString(R.string.notif_action_log), actionIntent(ACTION_LOG_SET, 1))
         if (timer?.phase == TimerPhase.REST) builder.addAction(0, getString(R.string.notif_action_skip), actionIntent(ACTION_SKIP_REST, 2))
 
-        // Android 16+: ask for a promoted ongoing ("Live Update") presentation. Older versions ignore the extra.
-        builder.addExtras(Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
+        // Android 16+ "Live Update" (promoted ongoing notification). Requirements: ongoing foreground
+        // service, contentTitle, not colorized, no custom views. Older versions ignore these calls and
+        // show the plain ongoing notification with the chronometer above.
+        if (Build.VERSION.SDK_INT >= 36) {
+            builder.setRequestPromotedOngoing(true)
+            val resting = timer?.phase == TimerPhase.REST && end != null && end > now
+            // A ticking rest countdown is the chronometer (shown live in the status bar chip without
+            // re-posting every second); otherwise the chip shows the current set as short critical text.
+            if (!resting && exercise != null && setNumber != null) {
+                builder.setShortCriticalText(getString(R.string.notif_chip_set, setNumber, exercise.sets.size))
+            }
+            progressStyle(session)?.let { builder.setStyle(it) }
+        }
         return builder.build()
+    }
+
+    /** Segments = exercises (length = sets), progress = sets already handled; null without sets. */
+    private fun progressStyle(session: Session): NotificationCompat.ProgressStyle? {
+        val exercises = session.exercises.filter { it.sets.isNotEmpty() }
+        if (exercises.isEmpty()) return null
+        val accent = Color.rgb(0xA8, 0xC7, 0xFA)
+        val segments = exercises.map { NotificationCompat.ProgressStyle.Segment(it.sets.size).setColor(accent) }
+        val done = exercises.sumOf { ex -> ex.sets.count { it.status != SetStatus.PENDING } }
+        return NotificationCompat.ProgressStyle().setProgressSegments(segments).setProgress(done)
     }
 
     override fun onDestroy() {
@@ -176,7 +200,8 @@ class WorkoutService : Service() {
     companion object {
         const val ACTION_LOG_SET = "de.baschek.gymapp.timer.LOG_SET"
         const val ACTION_SKIP_REST = "de.baschek.gymapp.timer.SKIP_REST"
-        private const val EXTRA_REQUEST_PROMOTED_ONGOING = "android.requestPromotedOngoing"
+        /** Notification.CATEGORY_WORKOUT (API 36); the string is ignored by older versions. */
+        private const val CATEGORY_WORKOUT = "workout"
         private const val CHANNEL = "timer"
         private const val ID = 1001
 

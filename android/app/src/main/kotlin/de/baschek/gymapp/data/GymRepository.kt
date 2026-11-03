@@ -189,6 +189,9 @@ class GymRepository(
     fun observePlans(): Flow<List<Stored<Plan>>> =
         observeAll(Entity.PLAN, Plan.serializer()).map { list -> list.filter { it.value.archived != true } }
 
+    /** All plans including archived ones (the Pläne screen splits them into active and "Archiv"). */
+    fun observeAllPlans(): Flow<List<Stored<Plan>>> = observeAll(Entity.PLAN, Plan.serializer())
+
     fun observeGyms(): Flow<List<Stored<Gym>>> =
         observeAll(Entity.GYM, Gym.serializer()).map { list ->
             list.filter { it.value.archived != true }.sortedBy { it.value.sortOrder ?: Int.MAX_VALUE }
@@ -490,6 +493,8 @@ class GymRepository(
     }
 
     suspend fun archivePlan(id: String) = updatePlan(id) { it.copy(archived = true) }
+
+    suspend fun restorePlan(id: String) = updatePlan(id) { it.copy(archived = false) }
 
     suspend fun updateExercise(id: String, transform: (Exercise) -> Exercise) = db.withTransaction {
         val p = currentProfile()

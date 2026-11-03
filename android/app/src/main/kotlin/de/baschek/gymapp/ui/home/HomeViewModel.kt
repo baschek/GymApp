@@ -7,7 +7,7 @@ import de.baschek.gymapp.core.model.Gym
 import de.baschek.gymapp.core.model.Plan
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.WorkoutMode
-import de.baschek.gymapp.core.stats.PackState
+import de.baschek.gymapp.core.stats.packRows
 import de.baschek.gymapp.core.stats.PlanSuggestion
 import de.baschek.gymapp.core.stats.recommendPlans
 import de.baschek.gymapp.data.Profile
@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -51,6 +52,9 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
             recommendPlans(p.map { it.id to it.value.name }, s.map { it.value }, Instant.now())
         }.state(emptyList())
 
+    /** Completed sessions, the basis of the learned duration estimate. */
+    val sessions: StateFlow<List<Session>> = repo.observeCompletedSessions().map { l -> l.map { it.value } }.state(emptyList())
+
     val selectedGym = MutableStateFlow<String?>(null)
     val selectedPlan = MutableStateFlow<String?>(null)
     val mode = MutableStateFlow(WorkoutMode.NORMAL)
@@ -58,10 +62,8 @@ class HomeViewModel(private val c: AppContainer) : ViewModel() {
     val pack: StateFlow<List<PackRow>> = selectedGym.flatMapLatest { gymId ->
         if (gymId == null) flowOf(emptyList())
         else combine(gyms, repo.observePackChecked(gymId)) { list, raw ->
-            val items = list.firstOrNull { it.id == gymId }?.value?.packlist.orEmpty().sortedBy { it.order }
-            val checked = PackState.decodeOrNull(raw, LocalDate.now().toString())
-                ?: items.filter { it.doneDefault == true }.map { it.id }.toSet()
-            items.map { PackRow(it.id, it.text, it.id in checked) }
+            val items = list.firstOrNull { it.id == gymId }?.value?.packlist.orEmpty()
+            packRows(items, raw, LocalDate.now().toString()).map { PackRow(it.id, it.text, it.checked) }
         }
     }.state(emptyList())
 

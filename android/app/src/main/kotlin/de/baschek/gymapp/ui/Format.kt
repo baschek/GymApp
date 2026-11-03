@@ -53,3 +53,6 @@ fun fmtMinutes(minutes: Int): String = if (minutes >= 60) "${minutes / 60} h ${m
 
 /** Integer with a German thousands separator: 6420 -> "6.420". */
 fun fmtInt(value: Long): String = "%,d".format(Locale.GERMANY, value)
+
+/** "aus 4 Trainings" (learned duration estimate). */
+fun fmtLearnedFrom(count: Int): String = if (count == 1) "aus 1 Training" else "aus $count Trainings"

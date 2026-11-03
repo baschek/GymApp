@@ -26,7 +26,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import de.baschek.gymapp.core.model.Plan
 import de.baschek.gymapp.core.model.WorkoutMode
 import de.baschek.gymapp.core.stats.WORKOUT_MODES
-import de.baschek.gymapp.core.stats.estimateMinutes
+import de.baschek.gymapp.core.stats.estimateDuration
+import de.baschek.gymapp.core.stats.formatEstimate
 import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.ui.ConflictSheet
@@ -38,7 +39,7 @@ import de.baschek.gymapp.ui.SyncKind
 import de.baschek.gymapp.ui.appViewModelFactory
 import de.baschek.gymapp.ui.components.ChevronIcon
 import de.baschek.gymapp.ui.components.CheckRow
-import de.baschek.gymapp.ui.components.GymCard
+import de.baschek.gymapp.ui.components.GymChoiceRow
 import de.baschek.gymapp.ui.components.GymCardSurface
 import de.baschek.gymapp.ui.components.Group
 import de.baschek.gymapp.ui.components.Hairline
@@ -54,7 +55,7 @@ import de.baschek.gymapp.ui.components.SoftButton
 import de.baschek.gymapp.ui.components.TopTitle
 import de.baschek.gymapp.ui.components.GymIcons
 import de.baschek.gymapp.ui.fmtDaysAgo
-import de.baschek.gymapp.ui.fmtMinutes
+import de.baschek.gymapp.ui.fmtLearnedFrom
 import de.baschek.gymapp.ui.gymChoices
 import de.baschek.gymapp.ui.gymById
 import de.baschek.gymapp.ui.gymColorOf
@@ -86,6 +87,7 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
     val selectedPlan by vm.selectedPlan.collectAsStateWithLifecycle()
     val mode by vm.mode.collectAsStateWithLifecycle()
     val pack by vm.pack.collectAsStateWithLifecycle()
+    val sessions by vm.sessions.collectAsStateWithLifecycle()
     var showConflicts by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
@@ -124,16 +126,17 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
             item {
                 Column {
                     Overline("Wo trainierst du?", Modifier.padding(start = 4.dp, bottom = 8.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        choices.forEach { id ->
+                    Group {
+                        choices.forEachIndexed { i, id ->
+                            if (i > 0) Hairline()
                             val gym = gymById(id, gyms)
-                            GymCard(
+                            GymChoiceRow(
                                 name = gymLabel(id, gyms),
                                 subtitle = gym?.subtitle,
                                 stripe = gymColorOf(id, gyms),
                                 selected = selectedGym == id,
                                 onClick = tracked(SCREEN, "select_gym") { vm.selectGym(id) },
-                                hint = if (id == lastGym && selectedGym != id) "Zuletzt hier" else null,
+                                hint = if (id == lastGym) "Zuletzt hier" else null,
                             )
                         }
                     }
@@ -164,11 +167,19 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
                             "${chosenPlan.exercises.size} Übungen · ${fmtDaysAgo(chosen.daysAgo)}",
                             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        val estimates = WORKOUT_MODES.map { estimateDuration(chosen.planId, chosenPlan.exercises, it, sessions) }
                         Segmented(
-                            WORKOUT_MODES.map { SegmentItem(modeLabel(it), fmtMinutes(estimateMinutes(chosenPlan.exercises, it))) },
+                            WORKOUT_MODES.mapIndexed { i, m -> SegmentItem(modeLabel(m), formatEstimate(estimates[i].minutes)) },
                             selected = WORKOUT_MODES.indexOf(mode).coerceAtLeast(0),
                             onSelect = tracked1<Int>(SCREEN, "select_mode") { vm.setMode(WORKOUT_MODES[it]) },
                             modifier = Modifier.padding(top = Spacing.s3), tall = true,
+                        )
+                        // One line of constant height, so switching modes never moves the layout.
+                        val learned = estimates[WORKOUT_MODES.indexOf(mode).coerceAtLeast(0)].learnedFrom
+                        Text(
+                            if (learned > 0) fmtLearnedFrom(learned) else "Schätzung nach Plan",
+                            Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
                     }
                 }
@@ -177,10 +188,10 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
                         Group {
                             alternatives.forEachIndexed { i, alt ->
                                 if (i > 0) Hairline()
-                                val minutes = planById[alt.planId]?.value?.let { estimateMinutes(it.exercises, mode) }
+                                val minutes = planById[alt.planId]?.value?.let { estimateDuration(alt.planId, it.exercises, mode, sessions).minutes }
                                 ListRow(
                                     alt.name, minHeight = 64.dp,
-                                    subtitle = listOfNotNull("Alternative", minutes?.let(::fmtMinutes), fmtDaysAgo(alt.daysAgo)).joinToString(" · "),
+                                    subtitle = listOfNotNull("Alternative", minutes?.let(::formatEstimate), fmtDaysAgo(alt.daysAgo)).joinToString(" · "),
                                     onClick = tracked(SCREEN, "select_alternative") { vm.selectPlan(alt.planId) },
                                     trailing = { ChevronIcon() },
                                 )
