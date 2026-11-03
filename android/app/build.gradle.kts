@@ -14,7 +14,7 @@ val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 
 android {
     namespace = "de.baschek.gymapp"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "de.baschek.gymapp"

@@ -6,6 +6,7 @@ import de.baschek.gymapp.AppContainer
 import de.baschek.gymapp.core.model.Exercise
 import de.baschek.gymapp.core.model.Plan
 import de.baschek.gymapp.core.model.PlanExercise
+import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.training.DefaultModeSets
 import de.baschek.gymapp.data.Stored
@@ -13,6 +14,7 @@ import de.baschek.gymapp.ui.SyncUi
 import de.baschek.gymapp.ui.SyncUiSource
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -24,8 +26,18 @@ class PlansViewModel(private val c: AppContainer) : ViewModel() {
         stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), initial)
 
     val sync: StateFlow<SyncUi> = SyncUiSource(c, viewModelScope).state
-    val plans: StateFlow<List<Stored<Plan>>> = repo.observePlans().state(emptyList())
+    /** Active and archived plans (the screen shows archived ones in a collapsible section). */
+    val allPlans: StateFlow<List<Stored<Plan>>> = repo.observeAllPlans().state(emptyList())
     val seen: StateFlow<Map<String, String>> = repo.plansSeen.state(emptyMap())
+    val sessions: StateFlow<List<Session>> = repo.observeCompletedSessions().map { l -> l.map { it.value } }.state(emptyList())
+
+    fun archive(id: String) {
+        viewModelScope.launch { repo.archivePlan(id) }
+    }
+
+    fun restore(id: String) {
+        viewModelScope.launch { repo.restorePlan(id) }
+    }
 
     fun createPlan(name: String, onCreated: (String) -> Unit) {
         viewModelScope.launch { onCreated(repo.createPlan(name.trim().ifEmpty { "Neuer Plan" })) }
@@ -60,6 +72,10 @@ class PlanEditorViewModel(private val c: AppContainer, private val planId: Strin
 
     fun archive() {
         viewModelScope.launch { repo.archivePlan(planId) }
+    }
+
+    fun restore() {
+        viewModelScope.launch { repo.restorePlan(planId) }
     }
 
     /** Changes one plan exercise. */

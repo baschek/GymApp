@@ -126,7 +126,13 @@ fun PlanEditorScreen(planId: String, nav: Navigator) {
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            item { LinkButton("Plan archivieren", tracked(SCREEN, "archive_open") { confirmArchive = true }, color = MaterialTheme.colorScheme.error) }
+            item {
+                if (plan.archived == true) {
+                    LinkButton("Plan wiederherstellen", tracked(SCREEN, "restore") { vm.restore() })
+                } else {
+                    LinkButton("Plan archivieren", tracked(SCREEN, "archive_open") { confirmArchive = true }, color = MaterialTheme.colorScheme.error)
+                }
+            }
         }
     }
 
@@ -151,7 +157,7 @@ fun PlanEditorScreen(planId: String, nav: Navigator) {
         AlertDialog(
             onDismissRequest = { confirmArchive = false },
             title = { Text("Plan archivieren") },
-            text = { Text("Der Plan verschwindet aus den Listen. Bisherige Trainings bleiben im Verlauf.") },
+            text = { Text("Der Plan wandert in den Bereich Archiv unter Pläne und wird nicht mehr empfohlen. Bisherige Trainings bleiben im Verlauf.") },
             confirmButton = {
                 TextButton(onClick = tracked(SCREEN, "archive_confirm") { confirmArchive = false; vm.archive(); nav.pop() }) { Text("Archivieren") }
             },

@@ -40,15 +40,18 @@ fun recommendPlans(plans: List<Pair<String, String>>, sessions: List<Session>, n
 }
 
 private const val SECONDS_PER_SET = 45
-private const val SETUP_SECONDS_PER_EXERCISE = 60
+private const val SETUP_SECONDS_PER_EXERCISE = 90
 
-/** Rough duration of a plan in a mode: 45 s per set plus the rest, 60 s setup per exercise. */
+/**
+ * Formula fallback for the duration of a plan in a mode: 45 s of work per set plus the plan's rest
+ * after every set, 90 s setup per exercise. Used when there is no real history yet.
+ */
 fun estimateMinutes(exercises: List<PlanExercise>, mode: String): Int {
     var seconds = 0
     for (e in exercises) {
         val sets = e.modeSets.forMode(mode)
         if (sets <= 0) continue
-        seconds += SETUP_SECONDS_PER_EXERCISE + sets * (SECONDS_PER_SET + e.restSeconds) - e.restSeconds
+        seconds += SETUP_SECONDS_PER_EXERCISE + sets * (SECONDS_PER_SET + e.restSeconds)
     }
     return (seconds / 60.0).roundToInt()
 }

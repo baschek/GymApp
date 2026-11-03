@@ -227,7 +227,7 @@ class AmendmentCTest {
         val fast = estimateMinutes(listOf(e), "fast")
         val ultra = estimateMinutes(listOf(e), "ultra")
         assertTrue(normal > fast && fast > ultra && ultra > 0)
-        assertEquals(6, normal) // 60 + 3 * 135 - 90 = 375 s
+        assertEquals(8, normal) // 90 + 3 * 135 = 495 s
         assertEquals(0, estimateMinutes(listOf(e.copy(modeSets = ModeSets(0, 0, 0))), "normal"))
     }
 
