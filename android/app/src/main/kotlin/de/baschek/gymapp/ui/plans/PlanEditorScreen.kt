@@ -157,7 +157,7 @@ fun PlanEditorScreen(planId: String, nav: Navigator) {
         AlertDialog(
             onDismissRequest = { confirmArchive = false },
             title = { Text("Plan archivieren") },
-            text = { Text("Der Plan wandert in den Bereich „Archiv" unter Pläne und wird nicht mehr empfohlen. Bisherige Trainings bleiben im Verlauf.") },
+            text = { Text("Der Plan wandert in den Bereich Archiv unter Pläne und wird nicht mehr empfohlen. Bisherige Trainings bleiben im Verlauf.") },
             confirmButton = {
                 TextButton(onClick = tracked(SCREEN, "archive_confirm") { confirmArchive = false; vm.archive(); nav.pop() }) { Text("Archivieren") }
             },
