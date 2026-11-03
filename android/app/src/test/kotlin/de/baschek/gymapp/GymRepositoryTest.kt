@@ -31,7 +31,7 @@ import org.robolectric.annotation.Config
 
 /** Synthetic data only. */
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], application = TestApplication::class)
 class GymRepositoryTest {
     private lateinit var db: GymDatabase
     private lateinit var repo: GymRepository
