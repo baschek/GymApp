@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
         val repository = (application as GymApplication).container.repository
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                combine(repository.observeActiveSession(), repository.keepScreenOn) { session, keep -> session != null to keep }
+                combine(repository.observeActiveSession(), repository.keepScreenOn) { session, keep -> (session != null) to keep }
                     .collect { (active, keep) ->
                         if (active && keep) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                         else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

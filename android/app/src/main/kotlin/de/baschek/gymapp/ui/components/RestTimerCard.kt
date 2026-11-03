@@ -16,9 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,7 +55,6 @@ fun RestTimerCard(
             Text(
                 formatClock(remainingSeconds),
                 Modifier.padding(top = 6.dp, bottom = 12.dp).semantics {
-                    liveRegion = LiveRegionMode.Off
                     contentDescription = "Pause, noch ${kotlin.math.max(remainingSeconds, 0)} Sekunden"
                 },
                 style = GymTextStyles.displayTimer,
