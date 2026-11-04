@@ -322,15 +322,18 @@ class AmendmentCTest {
     )
 
     @Test
-    fun onlyUpcomingExercisesCanBeMoved() {
+    fun exercisesWithOpenSetsCanBeMovedAlsoInFrontOfTheCurrentOne() {
         val s = running()
-        assertFalse(canMoveExercise(s, "e1", 1))
-        assertFalse(canMoveExercise(s, "e2", -1)) // would swap with the current exercise
-        assertTrue(canMoveExercise(s, "e3", 1))
+        // finished exercises stay where they are; e1 still has an open set, so it can move
+        assertTrue(canMoveExercise(s, "e1", 1))
+        assertFalse(canMoveExercise(s, "e1", -1)) // already first
         val moved = moveExercise(s, "e3", 1)
         assertEquals(listOf("e1", "e2", "e4", "e3"), moved.exercises.map { it.id })
         assertEquals(listOf(1, 2, 3, 4), moved.exercises.map { it.order })
         assertFalse(canMoveExercise(moved, "e3", 1))
+        // in front of the current exercise: it becomes the current one
+        val front = moveExercise(s, "e2", -1)
+        assertEquals(listOf("e2", "e1", "e3", "e4"), front.exercises.map { it.id })
     }
 
     @Test

@@ -208,9 +208,10 @@ fun LinkButton(
     height: Dp = Spacing.Touch,
     color: Color = MaterialTheme.colorScheme.onSurface,
     enabled: Boolean = true,
+    contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
 ) {
     TextButton(
-        onClick = onClick, modifier = modifier.heightIn(min = height), enabled = enabled,
+        onClick = onClick, modifier = modifier.heightIn(min = height), enabled = enabled, contentPadding = contentPadding,
         colors = ButtonDefaults.textButtonColors(contentColor = color, disabledContentColor = color.copy(alpha = 0.4f)),
     ) {
         Text(text, style = MaterialTheme.typography.titleSmall)

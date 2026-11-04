@@ -14,6 +14,8 @@ import de.baschek.gymapp.core.stats.MuscleSummary
 import de.baschek.gymapp.core.stats.StatsPeriod
 import de.baschek.gymapp.core.stats.start
 import de.baschek.gymapp.core.stats.summarizeMuscles
+import de.baschek.gymapp.core.model.SetupParameter
+import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
 import de.baschek.gymapp.data.MachineInfo
 import de.baschek.gymapp.data.SettingKeys
@@ -64,6 +66,22 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
     val gyms: StateFlow<List<Stored<Gym>>> = repo.observeAllGyms().state(emptyList())
     val catalog: StateFlow<List<Stored<Exercise>>> = repo.observeExercises().state(emptyList())
     val timer: StateFlow<TimerState?> = c.timer.state
+
+    /** The exercise the user jumped to (null = first exercise with an open set). */
+    val focus: StateFlow<String?> = c.workout.focus
+
+    /** What "Rückgängig" would take back, or null when there is nothing to undo. */
+    val undoLabel: StateFlow<String?> = c.workout.undo
+        .map { it?.takeIf { p -> p.first == sessionId }?.second?.label }
+        .state(null)
+
+    /** Weight accepted from a suggestion for the next set (exercise id, total kg). */
+    val acceptedWeight: StateFlow<Pair<String, Double>?> = c.workout.acceptedWeight
+
+    /** Latest body weight, needed by the suggestion rule for exercises with added weight. */
+    val bodyWeight: StateFlow<Double?> = repo.observeBodyWeights()
+        .map { list -> list.maxByOrNull { it.value.date }?.value?.weightKg }
+        .state(null)
     val restVibration: StateFlow<Boolean> = c.prefs.restVibration.state(true)
 
     val keepScreenOn: StateFlow<Boolean> = repo.observeSetting(SettingKeys.KEEP_SCREEN_ON).map { it != "0" }.state(true)
@@ -114,6 +132,45 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
 
     fun skipSet(exerciseId: String, setId: String, reason: SkipReason) {
         viewModelScope.launch { c.workout.skipSet(sessionId, exerciseId, setId, reason) }
+    }
+
+    fun focusExercise(exerciseId: String?) {
+        c.workout.setFocus(exerciseId)
+    }
+
+    fun acceptWeight(exerciseId: String, totalKg: Double?) {
+        c.workout.acceptWeight(exerciseId, totalKg)
+    }
+
+    fun undo() {
+        viewModelScope.launch { c.workout.undoLast(sessionId) }
+    }
+
+    fun skipRemaining(exerciseId: String, reason: SkipReason) {
+        viewModelScope.launch { c.workout.skipRemaining(sessionId, exerciseId, reason) }
+    }
+
+    fun correctSet(exerciseId: String, setId: String, correction: SetCorrection) {
+        viewModelScope.launch { c.workout.correctSet(sessionId, exerciseId, setId, correction) }
+    }
+
+    fun reopenSet(exerciseId: String, setId: String) {
+        viewModelScope.launch { c.workout.reopenSet(sessionId, exerciseId, setId) }
+    }
+
+    fun resumeSkipped(exerciseId: String) {
+        viewModelScope.launch { c.workout.resumeSkipped(sessionId, exerciseId) }
+    }
+
+    fun removeExercise(exerciseId: String) {
+        viewModelScope.launch { c.workout.removeExercise(sessionId, exerciseId) }
+    }
+
+    /** Writes the setup values (seat, backrest, ...) into the machine profile of this gym x exercise. */
+    fun saveSetup(gymId: String, exerciseId: String, params: List<SetupParameter>) {
+        viewModelScope.launch {
+            repo.saveMachineProfile(gymId, exerciseId) { it.copy(setupParameters = params.takeIf { p -> p.isNotEmpty() }) }
+        }
     }
 
     fun addWarmup(exerciseId: String) {
