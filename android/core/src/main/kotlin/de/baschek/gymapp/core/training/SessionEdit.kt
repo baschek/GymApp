@@ -52,24 +52,27 @@ fun toggleSkipExercise(session: Session, exerciseId: String): Session =
             if (ex.id != exerciseId) ex
             else when {
                 ex.sets.all { it.status == SetStatus.PENDING } ->
-                    ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.SKIPPED_OTHER) })
+                    ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.SKIPPED_OTHER, weightKg = null, addonWeightsKg = null) })
                 isSkipped(ex) -> ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.PENDING) })
                 else -> ex
             }
         },
     )
 
+/** An exercise that can still be reordered: it has open sets or was skipped as a whole. Finished exercises stay where they are. */
+fun isMovable(ex: SessionExercise): Boolean = ex.sets.any { it.status == SetStatus.PENDING } || isSkipped(ex)
+
 /**
- * Moves an exercise by [delta] places within the part of the workout that has not started
- * (everything after the current exercise). Returns the session unchanged when the move is not allowed.
+ * Moves an exercise by [delta] places, also in front of the current exercise (then it becomes the
+ * current one). Exercises without open sets are fixed. Returns the session unchanged when the move is
+ * not possible.
  */
 fun moveExercise(session: Session, exerciseId: String, delta: Int): Session {
     val list = session.exercises
-    val current = currentExerciseIndex(list)
     val from = list.indexOfFirst { it.id == exerciseId }
-    if (from < 0 || current < 0 || from <= current) return session
+    if (from < 0 || delta == 0 || !isMovable(list[from])) return session
     val to = from + delta
-    if (to <= current || to >= list.size) return session
+    if (to < 0 || to >= list.size) return session
     val m = list.toMutableList()
     val item = m.removeAt(from)
     m.add(to, item)

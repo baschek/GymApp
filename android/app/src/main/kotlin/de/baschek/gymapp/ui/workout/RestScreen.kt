@@ -3,6 +3,8 @@ package de.baschek.gymapp.ui.workout
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -15,16 +17,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
-import de.baschek.gymapp.core.training.currentExerciseIndex
+import de.baschek.gymapp.core.training.upNextExerciseIndex
+import de.baschek.gymapp.core.training.weightHint
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.timer.TimerState
 import de.baschek.gymapp.ui.components.ExercisePickerSheet
+import de.baschek.gymapp.ui.components.LinkButton
 import de.baschek.gymapp.ui.components.Overline
 import de.baschek.gymapp.ui.components.PinnedBottom
 import de.baschek.gymapp.ui.components.PrimaryButton
@@ -46,10 +49,13 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val machines by vm.machines.collectAsStateWithLifecycle()
     val previous by vm.previousWeights.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
-    val vibrate by vm.restVibration.collectAsStateWithLifecycle()
+    val focus by vm.focus.collectAsStateWithLifecycle()
+    val undoLabel by vm.undoLabel.collectAsStateWithLifecycle()
+    val accepted by vm.acceptedWeight.collectAsStateWithLifecycle()
+    val bodyWeight by vm.bodyWeight.collectAsStateWithLifecycle()
     val now = rememberNow(250)
-    val context = LocalContext.current
     var pickExercise by rememberSaveable { mutableStateOf(false) }
+    var setupOpen by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
 
@@ -57,14 +63,10 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val elapsed = timer.elapsedSeconds(now)
     val remaining = if (suggested > 0) ceil(((timer.endsAtMillis ?: now) - now) / 1000.0).toInt() else elapsed
     val progress = if (suggested > 0) elapsed.toFloat() / suggested else 0f
-    val reached = suggested > 0 && remaining <= 0
 
-    // One vibration when the countdown reaches zero (again after +15 s once it is reached again).
-    LaunchedEffect(reached, timer.startedAtMillis) {
-        if (reached && vibrate) vibrateOnce(context)
-    }
+    // Vibration at the end of the rest is done by the Doze-safe alarm (timer/RestAlarmReceiver), not here.
 
-    val exIndex = currentExerciseIndex(session.exercises)
+    val exIndex = upNextExerciseIndex(session.exercises, focus)
     val nextEx = session.exercises.getOrNull(exIndex)
     val nextSet = nextEx?.sets?.firstOrNull { it.status == SetStatus.PENDING }
     val lastLogged = session.exercises.flatMap { ex -> ex.sets.map { ex to it } }
@@ -79,14 +81,22 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
         nextSet.setType == SetType.WARMUP -> "Pause · als Nächstes Aufwärmsatz"
         else -> "Pause · als Nächstes Satz ${working.count { it.status != SetStatus.PENDING } + 1} von ${working.size}"
     }
+    val nextInfo = nextEx?.let { machines[it.exerciseId] }
+    val acceptedForNext = accepted?.takeIf { nextEx != null && it.first == nextEx.id }?.second
+    val hint = if (nextEx == null || nextSet == null || nextSet.setType == SetType.WARMUP) null
+    else weightHint(nextEx, nextInfo?.candidates.orEmpty(), nextInfo?.workingWeightKg, bodyWeight)
     val nextText = when {
         nextEx == null || nextSet == null -> null
-        newExercise -> listOfNotNull(nextEx.name, machineSetting(machines[nextEx.exerciseId])).joinToString(": ")
+        newExercise -> nextEx.name
         else -> {
             val last = nextEx.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
-            val weight = last?.weightKg ?: nextEx.suggestedWeightKg
+            val weight = acceptedForNext ?: nextSet.weightKg?.takeIf { nextSet.setType == SetType.WORKING } ?: last?.weightKg ?: nextEx.suggestedWeightKg
+            val lastWeight = last?.weightKg
+            val arrow = if (acceptedForNext != null && lastWeight != null) {
+                when { acceptedForNext > lastWeight + 1e-6 -> " ▲"; acceptedForNext < lastWeight - 1e-6 -> " ▼"; else -> "" }
+            } else ""
             val reps = last?.reps ?: nextEx.target.max.toInt()
-            if (weight != null) "Dann: ${fmtNum(weight)} kg × $reps" else "Dann: $reps Wdh."
+            if (weight != null) "Dann: ${fmtNum(weight)} kg$arrow × $reps" else "Dann: $reps Wdh."
         }
     }
     val badge = lastLogged?.let { (ex, set) ->
@@ -99,22 +109,46 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(top = topInset() + 8.dp, start = Spacing.Gutter, end = Spacing.Gutter, bottom = 140.dp),
+                .padding(top = topInset() + 8.dp, start = Spacing.Gutter, end = Spacing.Gutter, bottom = 190.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             RestTimerCard(
                 caption = caption, remainingSeconds = remaining, progress = progress, nextText = nextText,
                 onPlus15 = tracked(SCREEN, "plus15", vm::plus15), badge = badge,
             )
-            Overline("Noch im Workout", Modifier.padding(start = 4.dp))
+            if (nextEx != null && nextSet != null) {
+                if (newExercise) SetupLine(nextInfo?.setup, tracked(SCREEN, "setup_open") { setupOpen = true }, Modifier.padding(horizontal = 4.dp))
+                if (hint != null) {
+                    WeightHintBlock(
+                        hint, applied = acceptedForNext != null && kotlin.math.abs(acceptedForNext - hint.weightKg) < 1e-6,
+                        onApply = if (hint.trend == 0) null else ({ vm.acceptWeight(nextEx.id, hint.weightKg) }),
+                        screen = SCREEN, modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
+            }
+            Overline("Noch im Workout · antippen zum Springen", Modifier.padding(start = 4.dp))
             ExerciseListCard(
                 session, editable = true, onMove = vm::moveExercise, onToggleSkip = vm::toggleSkipExercise,
                 onAdd = { pickExercise = true }, screen = SCREEN,
+                onJump = vm::focusExercise, focusedId = nextEx?.id, onRemove = vm::removeExercise,
             )
         }
         PinnedBottom(Modifier.align(Alignment.BottomCenter)) {
             PrimaryButton("Weiter", tracked(SCREEN, "next", vm::skipRest), height = Spacing.TouchPrimary)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                LinkButton(
+                    undoLabel?.let { "Rückgängig: $it" } ?: "Rückgängig", tracked(SCREEN, "undo") { vm.undo() },
+                    height = 48.dp, enabled = undoLabel != null,
+                )
+            }
         }
+    }
+    if (setupOpen && nextEx != null) {
+        SetupSheet(
+            exerciseName = nextEx.name, initial = nextInfo?.setup, screen = SCREEN,
+            onSave = { params -> session.gymId?.let { vm.saveSetup(it, nextEx.exerciseId, params) }; setupOpen = false },
+            onDismiss = { setupOpen = false },
+        )
     }
     if (pickExercise) {
         ExercisePickerSheet(catalog, onPick = { vm.addExercise(it.id); pickExercise = false }, onDismiss = { pickExercise = false })

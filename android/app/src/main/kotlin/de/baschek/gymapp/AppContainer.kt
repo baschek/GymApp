@@ -41,5 +41,7 @@ class AppContainer(app: Application) {
         Telemetry.install(repository, appScope)
         // Bring back a running timer after process death.
         appScope.launch { runCatching { timer.restore() } }
+        // An adjustment changes sets of several exercises: the one-step undo of the last action would undo the wrong thing.
+        syncManager.onAdjustmentsResolved = { workout.clearUndo() }
     }
 }

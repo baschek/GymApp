@@ -93,6 +93,9 @@ interface GymDao {
     @Query("DELETE FROM settings WHERE name = :name")
     suspend fun deleteSetting(name: String)
 
+    @Query("DELETE FROM settings WHERE name LIKE :prefix || '%'")
+    suspend fun deleteSettingsWithPrefix(prefix: String)
+
     // telemetry
     @Query("UPDATE telemetry SET hits = hits + 1 WHERE day = :day AND screen = :screen AND element = :element")
     suspend fun bumpTelemetry(day: String, screen: String, element: String): Int

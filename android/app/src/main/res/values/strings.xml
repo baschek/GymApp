@@ -90,6 +90,11 @@
 
     <!-- Timer notification -->
     <string name="timer_channel_name">Timer</string>
+    <string name="rest_end_channel_name">Pause vorbei</string>
+    <string name="rest_end_channel_description">Kurzer Hinweis, wenn die Pause zu Ende ist.</string>
+    <string name="rest_end_title">Pause vorbei</string>
+    <string name="rest_end_text">Weiter mit dem nächsten Satz.</string>
+    <string name="notif_chip_rest_over">Los!</string>
     <string name="timer_channel_description">Zeigt den laufenden Satz-, Pausen- oder Einrichtungs-Timer.</string>
     <string name="timer_notification_stop">Beenden</string>
     <string name="timer_notification_set">GymApp · Satz</string>

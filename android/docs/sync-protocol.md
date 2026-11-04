@@ -19,6 +19,7 @@ Entity names and `data` fields (all optional unless marked *):
 | `plan` | name*, notes, created_at, archived(bool), changed_by_assistant_at, change_summary, exercises: [{id*, exercise_id*, order*, mode_sets{normal,fast,ultra}*, target{metric,min,max,rir_min,rir_max}*, starting_weight_kg, current_weight_kg, rest_seconds*, superset_group, notes}] |
 | `machine_profile` | gym_id*, exercise_id*, available_weights_kg[], weight_ranges[{id,min_kg,max_kg,step_kg}], setup_parameters[{id,name,value}], machine_brand, machine_model, notes, addon_weights_kg[] |
 | `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, addon_weights_kg[], reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
+| `workout_adjustment` | session_id*, status* (pending/applied/rejected), reason*, created_at*, resolved_at, status_reason, ops[]*, op_results[] (amendment D) |
 | `body_weight` | date* (YYYY-MM-DD), weight_kg*, notes |
 | `milestone` | plan_id, plan_exercise_id, exercise_id*, exercise_name, session_id, occurred_at*, previous_weight_kg, new_weight_kg*, direction, seen(bool) |
 | `goal` | singleton with id `weekly`: training_days_per_week (1–7), target_sets{brust, schultern, arme, beine, bauch, ruecken: 0–60}, updated_by (`app`/`server`) |
@@ -27,7 +28,7 @@ Enum values are exactly those of the old app (measurement_type: load_reps, bodyw
 Unknown extra fields in `data` must be preserved (round-trip), never dropped.
 
 **Test profile is local-only**: the app never syncs test-profile data.
-**Active sessions** (`status=active`) are pushed too (crash safety), but the server never edits an active session.
+**Active sessions** (`status=active`) are pushed too (crash safety, and so that the server can show where the user is), but the server never edits an active session; it can only ask for changes (amendment D).
 
 ## Endpoints (base URL configured by the user at pairing; HTTPS only)
 1. `POST /gym/v1/pair` body `{ "code": "<one-time code>", "device_name": "..." }` → `200 { "token": "<opaque>", "device_id": "..." }`. Wrong/expired code → 401 `{ "error": "invalid_code" }`. Rate-limited (429).
@@ -105,3 +106,40 @@ The server may create a `machine_profile` with its own UUID for a gym x exercise
 3. **Goal.** Entity `goal` with the fixed id `weekly`: `training_days_per_week` (1–7), `target_sets` per radar area (0–60) and `updated_by`. It is editable in the app (Mehr › Ziele) and by the server.
 4. **Muscle groups.** `exercise.data.muscle_groups` is an array from the fixed set `brust, ruecken, unterer_ruecken, schultern, bizeps, trizeps, unterarme, bauch, quadrizeps, beinbeuger, gesaess, waden`; the first entry is the primary group. Radar areas: Brust = brust; Schultern = schultern; Arme = bizeps + trizeps + unterarme; Beine = quadrizeps + beinbeuger + gesaess + waden; Bauch = bauch + unterer_ruecken; Rücken = ruecken. A completed working set counts 1 for the primary group and 0.5 for every further group. Without `muscle_groups` the groups are derived from `primary_muscles` / `secondary_muscles` with a fixed table (`android/core/src/main/resources/muscle_mapping.json`; legacy catalog names to the twelve groups).
 5. **Plans changed by the assistant.** The server sets `plan.data.changed_by_assistant_at` and `plan.data.change_summary` (one sentence). The app shows a notice until the plan is opened once; that seen state is stored on the device only.
+
+## v1 amendment D: adjusting a running workout, manual working weight
+
+Goal: Claude can adjust the workout while Jonathan is training, without the server ever editing a session. Claude leaves a
+request, the app applies it to its own session and reports the result.
+
+1. **Entity `workout_adjustment`** (created by the server, `origin` `server`; the app only changes the status fields).
+   `data`: `session_id`* (the active session it is meant for), `status`* (`pending` | `applied` | `rejected`), `reason`*
+   (one short sentence, max 300 characters, shown to the user), `created_at`*, `ops`* (1 to 10, below), and written back by the app:
+   `resolved_at`, `status_reason` (short code: `no_active_session`, `session_finished`, `nothing_applied`, `undone`),
+   `op_results` `[{index (0-based), status ("applied"|"skipped"), reason (code, on skipped)}]`.
+   Operation object: `action`* plus `session_exercise_id` (the exercise inside the session), `exercise_id`/`exercise_name`
+   (catalog exercise; `exercise_name` is informative), `weight_kg`, `reps_min`, `reps_max`, `sets`, `rest_seconds`, `position`
+   (1-based), `text`, and for `add_exercise` `measurement_type`, `load_direction`, `load_basis` (so the app needs no catalog lookup).
+   Actions: `set_weight` (total kg for every open working set), `set_reps` (target min/max), `set_sets` (total number of working
+   sets), `set_rest` (rest seconds), `add_exercise`, `skip_exercise`, `move_exercise`, `note` (exercise note, or only a hint
+   without `session_exercise_id`). Unknown fields are preserved like everywhere.
+2. **The server never edits a session.** It validates against the synced active session, stores the adjustment as `pending` and
+   leaves the rest to the app. A server-side undo (`tess_undo`) of a still pending adjustment removes it; once the app has
+   written a status the undo is a conflict.
+3. **App rules.** The app applies pending adjustments in document order, only to its active session (`session_id` must match; a
+   missing, finished or other session gives `rejected`/`no_active_session` resp. `session_finished`) and only to unlogged
+   sets: a completed, skipped or failed set is **never** changed, exercises without open sets are skipped (`skipped`, reason
+   `finished`), `set_sets` only adds or removes open working sets (never below the number of handled sets), `skip_exercise`
+   only an exercise without logged sets, `move_exercise` only exercises with open sets (as in the manual editing of the
+   session). `set_weight` sets `suggested_weight_kg` and `suggestion_reason` `"assistant"` on the exercise; the weight is the total.
+   Status `applied` when at least one operation changed something, else `rejected`/`nothing_applied`. The user can undo an applied
+   adjustment; the app then writes `rejected`/`undone` (the changes are reverted except sets logged meanwhile).
+4. **Sync during a workout.** While a session is active the app syncs about every 45 seconds (the cheap `status` check first;
+   after errors the interval grows up to 5 minutes, and the reconnect backoff of amendment B still applies) and when it is opened.
+   This pushes the active session (so the server can show where the user is, read only) and pulls adjustments; applied results are
+   pushed right away. Without a workout the usual triggers apply.
+5. **Manual working weight.** A machine profile whose `working_weight_source_session_id` is `"manual"` (set by the server on
+   request, with `working_weight_updated_at`) is a baseline for the replay of `recalculate_working_weights` for that gym x exercise:
+   sessions up to `working_weight_updated_at` count as before (milestones included), the first later session continues from the
+   manual weight, and without later sessions the manual weight stays. Both implementations (server and app, also gym reassignment
+   and editing finished sessions) use this rule; golden cases `recalculateWorkingWeights` with `baselines` pin it.

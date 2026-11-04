@@ -313,4 +313,75 @@ class GymRepositoryTest {
         repo.markPlanSeen("p1", "2026-11-01T10:00:00Z")
         assertEquals(mapOf("p2" to "2026-10-29T10:00:00Z", "p1" to "2026-11-01T10:00:00Z"), repo.plansSeen.first())
     }
+
+    private fun adjustmentDoc(id: String, sessionId: String, ops: String, status: String = "pending") = doc(
+        "workout_adjustment", id, 9,
+        """{"session_id":"$sessionId","status":"$status","reason":"Letzter Satz war leicht.","created_at":"2026-11-04T09:00:00Z","future":"keep-me","ops":$ops}""",
+    )
+
+    @Test
+    fun assistantAdjustmentIsAppliedToTheRunningSessionAnsweredBackAndCanBeUndone() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("plan", "p1", 5, plan), doc("exercise", "ex1", 6, exercise)))
+        val id = repo.startSession("p1", gymId = "gym-a")!!
+        val exerciseId = repo.getSession(id)!!.exercises.single().id
+        repo.syncStore.applyRemote(
+            listOf(adjustmentDoc("adj1", id, """[{"action":"set_weight","session_exercise_id":"$exerciseId","exercise_name":"Synthetic machine","weight_kg":35}]""")),
+        )
+
+        assertEquals(1, repo.applyPendingAdjustments())
+        assertEquals(0, repo.applyPendingAdjustments()) // resolved ones are not applied twice
+        assertEquals(listOf(35.0, 35.0), repo.getSession(id)!!.exercises.single().sets.map { it.weightKg })
+        val answer = repo.syncStore.pendingOps(100).single { it.entity == "workout_adjustment" }
+        assertEquals("\"applied\"", answer.data["status"].toString())
+        assertEquals("\"keep-me\"", answer.data["future"].toString())
+        assertEquals(9L, answer.baseRev)
+        val banner = repo.observeAdjustmentBanner(id).first()!!
+        assertTrue(banner.text.startsWith("Claude hat angepasst: Synthetic machine: 35 kg (Letzter Satz war leicht.)"))
+
+        assertTrue(repo.undoAdjustment("adj1"))
+        assertEquals(listOf(null, null), repo.getSession(id)!!.exercises.single().sets.map { it.weightKg })
+        val undone = repo.syncStore.pendingOps(100).single { it.entity == "workout_adjustment" }
+        assertEquals("\"rejected\"", undone.data["status"].toString())
+        assertEquals("\"undone\"", undone.data["status_reason"].toString())
+        assertNull(repo.observeAdjustmentBanner(id).first())
+    }
+
+    @Test
+    fun adjustmentsNeverTouchLoggedSetsAndAreRejectedWithoutARunningSession() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("plan", "p1", 5, plan), doc("exercise", "ex1", 6, exercise)))
+        val id = repo.startSession("p1", gymId = "gym-a")!!
+        val ex = repo.getSession(id)!!.exercises.single()
+        repo.updateSession(id) { s -> s.copy(exercises = s.exercises.map { e -> e.copy(sets = e.sets.mapIndexed { i, set -> if (i == 0) set.copy(status = "completed", weightKg = 20.0, reps = 10, effort = "two_three") else set }) }) }
+        repo.syncStore.applyRemote(
+            listOf(
+                adjustmentDoc("adj1", id, """[{"action":"set_weight","session_exercise_id":"${ex.id}","weight_kg":30}]"""),
+                adjustmentDoc("adj2", "no-such-session", """[{"action":"set_rest","session_exercise_id":"x","rest_seconds":60}]"""),
+            ),
+        )
+        assertEquals(2, repo.applyPendingAdjustments())
+        val sets = repo.getSession(id)!!.exercises.single().sets
+        assertEquals(20.0, sets[0].weightKg) // the logged set is untouched
+        assertEquals(30.0, sets[1].weightKg)
+        val ops = repo.syncStore.pendingOps(100).filter { it.entity == "workout_adjustment" }.associateBy { it.id }
+        assertEquals("\"applied\"", ops["adj1"]!!.data["status"].toString())
+        assertEquals("\"no_active_session\"", ops["adj2"]!!.data["status_reason"].toString())
+    }
+
+    @Test
+    fun adjustmentsAreNeverAppliedInTheTestProfile() = runBlocking {
+        repo.setProfile(Profile.TEST)
+        assertEquals(0, repo.applyPendingAdjustments())
+    }
+
+    @Test
+    fun manualWorkingWeightIsTheBaselineOfRecalculationsInsteadOfBeingOverwritten() = runBlocking {
+        val id = seedGymA()
+        repo.saveMachineProfile("gym-a", "ex1") {
+            it.copy(workingWeightKg = 40.0, workingWeightUpdatedAt = "2099-01-01T00:00:00.000Z", workingWeightSourceSessionId = "manual")
+        }
+        repo.reassignSessionGym(id, "gym-b") // without the baseline gym-a would lose its weight here
+        val a = repo.getMachineInfo("gym-a")["ex1"]!!
+        assertEquals(40.0, a.workingWeightKg!!, 1e-9)
+        assertEquals(30.0, repo.getMachineInfo("gym-b")["ex1"]!!.workingWeightKg!!, 1e-9)
+    }
 }

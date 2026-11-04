@@ -1,6 +1,7 @@
 package de.baschek.gymapp.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +29,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.baschek.gymapp.ui.theme.GymAppTheme
@@ -52,6 +54,10 @@ fun Wheel(
     modifier: Modifier = Modifier,
     rowHeight: Dp = 34.dp,
     stepDistance: Dp = 20.dp,
+    neighborHeight: Dp = rowHeight,
+    neighborSize: TextUnit = (rowHeight.value * 0.42f).sp,
+    valueSize: TextUnit = (rowHeight.value * 0.62f).sp,
+    onTapValue: (() -> Unit)? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -59,8 +65,8 @@ fun Wheel(
     val step by rememberUpdatedState(onStep)
     val haptic = LocalHapticFeedback.current
     val hapticState by rememberUpdatedState(haptic)
-    val small = (rowHeight.value * 0.42f).sp
-    val big = (rowHeight.value * 0.62f).sp
+    val small = neighborSize
+    val big = valueSize
 
     Box(
         modifier.fillMaxWidth()
@@ -96,10 +102,15 @@ fun Wheel(
     ) {
         Box(Modifier.fillMaxWidth().height(rowHeight).background(cs.surfaceContainerHigh, RoundedCornerShape(Spacing.RadiusMd)))
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.height(rowHeight), contentAlignment = Alignment.Center) {
+            Box(Modifier.height(neighborHeight), contentAlignment = Alignment.Center) {
                 if (previous != null) Text(previous, style = GymTextStyles.number.copy(fontSize = small), color = cs.onSurfaceVariant.copy(alpha = 0.7f))
             }
-            Box(Modifier.height(rowHeight), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.height(rowHeight).then(
+                    if (onTapValue != null) Modifier.clickable(onClickLabel = "$label eingeben", onClick = onTapValue) else Modifier,
+                ),
+                contentAlignment = Alignment.Center,
+            ) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(current, style = GymTextStyles.number.copy(fontSize = big, fontWeight = FontWeight.Bold), color = cs.onSurface)
                     if (unit != null) {
@@ -107,7 +118,7 @@ fun Wheel(
                     }
                 }
             }
-            Box(Modifier.height(rowHeight), contentAlignment = Alignment.Center) {
+            Box(Modifier.height(neighborHeight), contentAlignment = Alignment.Center) {
                 if (next != null) Text(next, style = GymTextStyles.number.copy(fontSize = small), color = cs.onSurfaceVariant.copy(alpha = 0.7f))
             }
         }
@@ -128,10 +139,17 @@ fun WheelRow(
     stepDistance: Dp = 20.dp,
     minusEnabled: Boolean = true,
     plusEnabled: Boolean = true,
+    neighborHeight: Dp = rowHeight,
+    neighborSize: TextUnit = (rowHeight.value * 0.42f).sp,
+    valueSize: TextUnit = (rowHeight.value * 0.62f).sp,
+    onTapValue: (() -> Unit)? = null,
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
         RoundIconButton(GymIcons.Minus, "$label verringern", { onStep(-1) }, enabled = minusEnabled)
-        Wheel(previous, current, next, unit, onStep, label, Modifier.weight(1f), rowHeight, stepDistance)
+        Wheel(
+            previous, current, next, unit, onStep, label, Modifier.weight(1f), rowHeight, stepDistance,
+            neighborHeight, neighborSize, valueSize, onTapValue,
+        )
         RoundIconButton(GymIcons.Plus, "$label erhöhen", { onStep(1) }, enabled = plusEnabled)
     }
 }

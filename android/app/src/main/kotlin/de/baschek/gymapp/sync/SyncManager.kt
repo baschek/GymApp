@@ -58,6 +58,9 @@ class SyncManager(
     private val telemetry = TelemetrySync(api, repository.telemetryStore)
     private val mutex = Mutex()
 
+    /** Called after assistant adjustments changed the running session (the one-step undo of the training screen is then stale). */
+    @Volatile var onAdjustmentsResolved: (() -> Unit)? = null
+
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
     val state: StateFlow<SyncState> = _state.asStateFlow()
 
@@ -74,7 +77,14 @@ class SyncManager(
         if (!mutex.tryLock()) return SyncOutcome.ALREADY_RUNNING
         _state.value = SyncState.Running
         try {
-            val report = engine.sync()
+            var report = engine.sync()
+            // Adjustments from the assistant (contract amendment D) are applied to the running session and
+            // answered right away, so the server sees applied/rejected within the same run.
+            if (repository.applyPendingAdjustments() > 0) {
+                onAdjustmentsResolved?.invoke()
+                val answer = engine.sync()
+                report = report.copy(notices = report.notices + answer.notices)
+            }
             // Telemetry is best effort and must not fail the sync.
             try {
                 telemetry.upload()

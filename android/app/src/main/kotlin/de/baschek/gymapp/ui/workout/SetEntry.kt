@@ -1,0 +1,248 @@
+package de.baschek.gymapp.ui.workout
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import de.baschek.gymapp.core.model.Metric
+import de.baschek.gymapp.core.model.SessionExercise
+import de.baschek.gymapp.core.model.SetLog
+import de.baschek.gymapp.core.model.SetType
+import de.baschek.gymapp.core.progression.nearestLevelIndex
+import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.progression.weightCandidates
+import de.baschek.gymapp.core.training.describeTarget
+import de.baschek.gymapp.core.training.setValue as resultValue
+import de.baschek.gymapp.core.model.SelectableEffortBands
+import de.baschek.gymapp.telemetry.Telemetry
+import de.baschek.gymapp.ui.components.AddonButton
+import de.baschek.gymapp.ui.components.AddonOption
+import de.baschek.gymapp.ui.components.EffortPicker
+import de.baschek.gymapp.ui.components.GymCardSurface
+import de.baschek.gymapp.ui.components.GymField
+import de.baschek.gymapp.ui.components.LinkButton
+import de.baschek.gymapp.ui.components.WheelRow
+import de.baschek.gymapp.ui.fmtNum
+import de.baschek.gymapp.ui.parseNum
+import de.baschek.gymapp.ui.theme.Spacing
+import de.baschek.gymapp.ui.tracked
+
+/** Editable values of one set (the current set, or a logged set that is being corrected). */
+internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Double>, value: Double, effort: Int) {
+    var level by mutableDoubleStateOf(level)
+    var addons by mutableStateOf(addons)
+    var value by mutableDoubleStateOf(value)
+    var effort by mutableIntStateOf(effort)
+
+    val total: Double get() = Math.round((level + addons.sum()) * 1000.0) / 1000.0
+
+    /**
+     * Sets the total weight. With a machine profile the nearest selectable total is used and split into
+     * level and add-ons; without a profile the value is taken as typed.
+     */
+    fun applyTotal(total: Double, levels: List<Double>, addonList: List<Double>) {
+        if (levels.isEmpty()) {
+            level = total
+            addons = emptySet()
+            return
+        }
+        val candidates = weightCandidates(levels, addonList)
+        val chosen = if (candidates.isEmpty()) total else candidates[nearestLevelIndex(candidates, total)]
+        val split = splitTotal(chosen, levels, addonList)
+        level = split?.levelKg ?: chosen
+        addons = split?.addonsKg?.toSet() ?: emptySet()
+    }
+
+    /** Effort band to log (null for warm-up sets). */
+    fun effortBand(warm: Boolean): String? = if (warm) null else SelectableEffortBands[effort]
+}
+
+/** Draft for the next open set; [accepted] is a weight the user took over from a suggestion. */
+internal fun buildDraft(
+    ex: SessionExercise?, set: SetLog?, levels: List<Double>, addons: List<Double>, wheel: List<Double>, accepted: Double? = null,
+): SetDraft {
+    if (ex == null || set == null) return SetDraft(0.0, wheel.first(), emptySet(), 10.0, 1)
+    val warm = set.setType == SetType.WARMUP
+    val total = accepted?.takeIf { !warm } ?: prefillTotal(ex, set, levels)
+    val split = if (levels.isNotEmpty() && !warm) splitTotal(total, levels, addons) else null
+    val level = split?.levelKg ?: wheel[nearestLevelIndex(wheel, total)]
+    val last = lastWorking(ex)
+    val lastValue = last?.let { resultValue(ex, it) }
+    val value = if (warm) 12.0 else lastValue ?: ex.target.max
+    val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
+    return SetDraft(total, level, split?.addonsKg?.toSet() ?: emptySet(), value.coerceAtLeast(valueStep(ex.target.metric)), effort)
+}
+
+/** Draft from a logged set, for correcting it. Values are taken exactly as logged. */
+internal fun buildDraftFromSet(ex: SessionExercise, set: SetLog, levels: List<Double>, addons: List<Double>, wheel: List<Double>): SetDraft {
+    val total = set.weightKg ?: 0.0
+    val stored = set.addonWeightsKg?.takeIf { it.isNotEmpty() }
+    val split = if (levels.isNotEmpty() && total > 0.0 && stored == null) splitTotal(total, levels, addons) else null
+    val level = when {
+        stored != null -> Math.round((total - stored.sum()) * 1000.0) / 1000.0
+        split != null -> split.levelKg
+        levels.isEmpty() -> total
+        else -> wheel[nearestLevelIndex(wheel, total)]
+    }
+    val chosenAddons = stored?.toSet() ?: split?.addonsKg?.toSet() ?: emptySet()
+    val value = (resultValue(ex, set) ?: ex.target.max).coerceAtLeast(valueStep(ex.target.metric))
+    val effort = bandIndex(set.effort).takeIf { it >= 0 } ?: 1
+    return SetDraft(total, level, chosenAddons, value, effort)
+}
+
+private enum class EntryDialog { WEIGHT, VALUE }
+
+/**
+ * The input block of a set: weight wheel (tap the number to type it), add-on buttons, [afterWeight]
+ * (suggestion chip), reps/seconds/meters wheel and the effort bands. The wheels keep their mechanics
+ * (drag, − and +) but are lower than before so the whole set screen fits one display.
+ */
+@Composable
+internal fun SetEntryCard(
+    ex: SessionExercise,
+    draft: SetDraft,
+    weighted: Boolean,
+    warm: Boolean,
+    levels: List<Double>,
+    addonList: List<Double>,
+    wheel: List<Double>,
+    screen: String,
+    modifier: Modifier = Modifier,
+    onCreateProfile: (() -> Unit)? = null,
+    afterWeight: @Composable ColumnScope.() -> Unit = {},
+) {
+    var dialog by remember { mutableStateOf<EntryDialog?>(null) }
+    val hasProfile = levels.isNotEmpty()
+    GymCardSurface(modifier.fillMaxWidth(), padding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)) {
+        if (weighted) {
+            val i = nearestLevelIndex(wheel, draft.level)
+            val addonSum = if (warm) 0.0 else draft.addons.sum()
+            WheelRow(
+                previous = wheel.getOrNull(i - 1)?.let { fmtNum(it + addonSum) },
+                current = fmtNum(draft.total),
+                next = wheel.getOrNull(i + 1)?.let { fmtNum(it + addonSum) },
+                unit = "kg",
+                onStep = { d ->
+                    Telemetry.track(screen, "weight_step")
+                    draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
+                },
+                label = "Gewicht",
+                rowHeight = 40.dp, stepDistance = 20.dp,
+                minusEnabled = i > 0, plusEnabled = i < wheel.lastIndex,
+                neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
+                onTapValue = tracked(screen, "weight_type") { dialog = EntryDialog.WEIGHT },
+            )
+            if (!warm && hasProfile && addonList.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().padding(top = Spacing.s2), horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
+                    addonList.forEach { a ->
+                        AddonButton(
+                            AddonOption("+ ${fmtNum(a)} kg", a in draft.addons),
+                            {
+                                Telemetry.track(screen, "toggle_addon")
+                                draft.addons = if (a in draft.addons) draft.addons - a else draft.addons + a
+                            },
+                            Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
+            if (!hasProfile && onCreateProfile != null) {
+                LinkButton("Kein Maschinenprofil, freie 2,5-kg-Schritte. Stufen anlegen", onCreateProfile, height = 40.dp)
+            }
+            afterWeight()
+        }
+
+        val metric = ex.target.metric
+        val step = valueStep(metric)
+        WheelRow(
+            previous = (draft.value - step).takeIf { it >= step }?.let(::fmtNum),
+            current = fmtNum(draft.value),
+            next = fmtNum(draft.value + step),
+            unit = if (warm) valueUnit(metric) else "${valueUnit(metric)} · ${describeTarget(ex)}",
+            onStep = { d ->
+                Telemetry.track(screen, "reps_step")
+                draft.value = (draft.value + d * step).coerceIn(step, 999.0)
+            },
+            label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> "Wiederholungen" },
+            modifier = Modifier.padding(top = if (weighted) Spacing.s2 else 0.dp),
+            rowHeight = 40.dp, stepDistance = 24.dp,
+            minusEnabled = draft.value > step,
+            neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
+            onTapValue = tracked(screen, "value_type") { dialog = EntryDialog.VALUE },
+        )
+        if (!warm) {
+            EffortPicker(draft.effort, { Telemetry.track(screen, "effort"); draft.effort = it }, Modifier.padding(top = Spacing.s2))
+        }
+    }
+
+    when (dialog) {
+        EntryDialog.WEIGHT -> NumberEntryDialog(
+            title = "Gewicht eingeben", unit = "kg", initial = fmtNum(draft.total), decimal = true,
+            note = if (hasProfile) "Es wird die nächste Stufe der Maschine gewählt." else null,
+            onConfirm = { draft.applyTotal(it, levels, addonList); dialog = null },
+            onDismiss = { dialog = null },
+        )
+        EntryDialog.VALUE -> NumberEntryDialog(
+            title = when (ex.target.metric) { Metric.SECONDS -> "Sekunden eingeben"; Metric.METERS -> "Meter eingeben"; else -> "Wiederholungen eingeben" },
+            unit = valueUnit(ex.target.metric), initial = fmtNum(draft.value), decimal = ex.target.metric == Metric.METERS,
+            note = null,
+            onConfirm = { draft.value = if (ex.target.metric == Metric.METERS) it else Math.round(it).toDouble().coerceAtLeast(1.0); dialog = null },
+            onDismiss = { dialog = null },
+        )
+        null -> Unit
+    }
+}
+
+/** Direct entry with the number keyboard. */
+@Composable
+internal fun NumberEntryDialog(
+    title: String,
+    unit: String,
+    initial: String,
+    decimal: Boolean,
+    note: String?,
+    onConfirm: (Double) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    val focus = remember { FocusRequester() }
+    val parsed = parseNum(text)?.takeIf { it > 0.0 && it < 1000.0 }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            androidx.compose.foundation.layout.Column(verticalArrangement = Arrangement.spacedBy(Spacing.s2)) {
+                GymField(
+                    text, { text = it.filter { c -> c.isDigit() || (decimal && (c == ',' || c == '.')) }.take(7) }, unit,
+                    modifier = Modifier.focusRequester(focus),
+                    keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number,
+                )
+                if (note != null) Text(note, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = tracked("training", "number_ok") { parsed?.let(onConfirm) }, enabled = parsed != null) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = tracked("training", "number_cancel", onDismiss)) { Text("Abbrechen") } },
+    )
+}

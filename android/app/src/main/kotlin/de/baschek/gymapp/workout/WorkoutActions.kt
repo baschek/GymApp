@@ -9,14 +9,28 @@ import de.baschek.gymapp.sync.SyncScheduler
 import de.baschek.gymapp.timer.TimerController
 import de.baschek.gymapp.timer.TimerPhase
 import de.baschek.gymapp.core.model.Session
+import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.core.training.UndoEntry
+import de.baschek.gymapp.core.training.applyUndo
+import de.baschek.gymapp.core.training.clearPlannedWeights
+import de.baschek.gymapp.core.training.captureUndo
+import de.baschek.gymapp.core.training.correctSet as coreCorrectSet
+import de.baschek.gymapp.core.training.removeExercise as coreRemoveExercise
+import de.baschek.gymapp.core.training.reopenSet as coreReopenSet
+import de.baschek.gymapp.core.training.resumeSkippedSets as coreResumeSkippedSets
+import de.baschek.gymapp.core.training.skipRemainingSets as coreSkipRemainingSets
 import de.baschek.gymapp.core.training.addExercise as coreAddExercise
 import de.baschek.gymapp.core.training.insertWarmup as coreInsertWarmup
 import de.baschek.gymapp.core.training.moveExercise as coreMoveExercise
 import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
 import de.baschek.gymapp.core.training.skipSet as coreSkipSet
 import de.baschek.gymapp.core.training.templateFor
+import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.core.training.toggleSkipExercise as coreToggleSkipExercise
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -36,7 +50,57 @@ class WorkoutActions(
     private val timer: TimerController,
     private val scheduler: SyncScheduler,
 ) {
-    suspend fun logSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
+    private val _focus = MutableStateFlow<String?>(null)
+
+    /** The exercise the user jumped to (session exercise id); null = the first exercise with an open set. */
+    val focus: StateFlow<String?> = _focus.asStateFlow()
+
+    fun setFocus(exerciseId: String?) {
+        _focus.value = exerciseId
+    }
+
+    private val _undo = MutableStateFlow<Pair<String, UndoEntry>?>(null)
+
+    /** Session id and entry of the last undoable action ("Rückgängig"). */
+    val undo: StateFlow<Pair<String, UndoEntry>?> = _undo.asStateFlow()
+
+    private val _accepted = MutableStateFlow<Pair<String, Double>?>(null)
+
+    /** Weight (exercise id, total kg) the user accepted from a suggestion for the next set. */
+    val acceptedWeight: StateFlow<Pair<String, Double>?> = _accepted.asStateFlow()
+
+    fun acceptWeight(exerciseId: String, totalKg: Double?) {
+        _accepted.value = totalKg?.let { exerciseId to it }
+    }
+
+    /** Runs [block] and remembers the state of [exerciseId] before it, so that "Rückgängig" can restore it. */
+    private suspend fun recorded(sessionId: String, exerciseId: String, label: String, block: suspend () -> Unit) {
+        val before = repository.getSession(sessionId)?.let { captureUndo(it, exerciseId, label) }
+        block()
+        _undo.value = before?.let { sessionId to it }
+    }
+
+    /** Forgets the one-step undo (an assistant adjustment changed the session underneath it). */
+    fun clearUndo() {
+        _undo.value = null
+    }
+
+    /** Takes the last action back. Returns its label, or null if there was nothing to undo. */
+    suspend fun undoLast(sessionId: String): String? {
+        val (id, entry) = _undo.value ?: return null
+        if (id != sessionId) return null
+        _undo.value = null
+        repository.updateSession(sessionId) { applyUndo(it, entry) }
+        if (timer.state.value?.phase == TimerPhase.REST) timer.stop()
+        _accepted.value = null
+        _focus.value = entry.exerciseId
+        return entry.label
+    }
+
+    suspend fun logSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) =
+        recorded(sessionId, exerciseId, "Satz geloggt") { doLogSet(sessionId, exerciseId, setId, input) }
+
+    private suspend fun doLogSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
         val current = repository.getSession(sessionId) ?: return
         val running = timer.state.value
         val setSeconds = if (running?.phase == TimerPhase.SET) running.elapsedSeconds() else null
@@ -48,7 +112,7 @@ class WorkoutActions(
             s.copy(
                 exercises = s.exercises.map { ex ->
                     if (ex.id != exerciseId) ex
-                    else ex.copy(
+                    else clearPlannedWeights(ex.copy(
                         sets = ex.sets.map { set ->
                             if (set.id != setId) set
                             else set.copy(
@@ -65,12 +129,15 @@ class WorkoutActions(
                                 completedAt = now,
                             )
                         },
-                    )
+                    ), setId)
                 },
             )
         }
 
         val exercise = current.exercises.firstOrNull { it.id == exerciseId }
+        if (_accepted.value?.first == exerciseId) _accepted.value = null
+        // last open set of a jumped-to exercise: carry on with the first exercise that still has open sets
+        if (exercise != null && exercise.sets.count { it.status == SetStatus.PENDING && it.id != setId } == 0) _focus.value = null
         val pendingLeft = current.exercises.sumOf { ex ->
             ex.sets.count { it.status == SetStatus.PENDING && !(ex.id == exerciseId && it.id == setId) }
         }
@@ -80,7 +147,8 @@ class WorkoutActions(
     /** Logs the next pending set with the prefilled values (used by the notification action). */
     suspend fun logNextPrefilled(): Boolean {
         val active = repository.getActiveSession() ?: return false
-        val exercise = nextExercise(active.value.exercises) ?: return false
+        val focused = upNextExerciseIndex(active.value.exercises, _focus.value).let { active.value.exercises.getOrNull(it) }
+        val exercise = focused ?: nextExercise(active.value.exercises) ?: return false
         val set = exercise.sets.first { it.status == SetStatus.PENDING }
         val weights = repository.getMachineWeights(active.value.gymId)[exercise.exerciseId].orEmpty()
         val pre = prefillSet(exercise, weights)
@@ -90,19 +158,46 @@ class WorkoutActions(
 
     /** Skips one set with a reason and ends a running rest. */
     suspend fun skipSet(sessionId: String, exerciseId: String, setId: String, reason: SkipReason) {
-        repository.updateSession(sessionId) { coreSkipSet(it, exerciseId, setId, reason) }
+        recorded(sessionId, exerciseId, "Überspringen") { repository.updateSession(sessionId) { coreSkipSet(it, exerciseId, setId, reason) } }
         timer.stop()
     }
 
+    /** Skips all open sets of the exercise. */
+    suspend fun skipRemaining(sessionId: String, exerciseId: String, reason: SkipReason) {
+        recorded(sessionId, exerciseId, "Überspringen") { repository.updateSession(sessionId) { coreSkipRemainingSets(it, exerciseId, reason) } }
+        _focus.value = null
+        timer.stop()
+    }
+
+    /** Changes weight, reps and effort of a logged set while the workout runs. */
+    suspend fun correctSet(sessionId: String, exerciseId: String, setId: String, correction: SetCorrection) =
+        recorded(sessionId, exerciseId, "Korrektur") { repository.updateSession(sessionId) { coreCorrectSet(it, exerciseId, setId, correction) } }
+
+    /** Makes a logged or skipped set open again. */
+    suspend fun reopenSet(sessionId: String, exerciseId: String, setId: String) =
+        recorded(sessionId, exerciseId, "Satz wieder offen") { repository.updateSession(sessionId) { coreReopenSet(it, exerciseId, setId) } }
+
+    /** Takes all skipped sets of the exercise back. */
+    suspend fun resumeSkipped(sessionId: String, exerciseId: String) =
+        recorded(sessionId, exerciseId, "Sätze wieder aufgenommen") { repository.updateSession(sessionId) { coreResumeSkippedSets(it, exerciseId) } }
+
+    /** Removes an exercise that was added during the workout (plan exercises are skipped instead). */
+    suspend fun removeExercise(sessionId: String, exerciseId: String) {
+        recorded(sessionId, exerciseId, "Übung entfernt") { repository.updateSession(sessionId) { coreRemoveExercise(it, exerciseId) } }
+        if (_focus.value == exerciseId) _focus.value = null
+    }
+
     /** Inserts a warm-up set before the first pending working set of the exercise. */
-    suspend fun addWarmup(sessionId: String, exerciseId: String) =
+    suspend fun addWarmup(sessionId: String, exerciseId: String) {
+        _undo.value = null
         repository.updateSession(sessionId) { coreInsertWarmup(it, exerciseId) { UUID.randomUUID().toString() } }
+    }
 
     suspend fun moveExercise(sessionId: String, exerciseId: String, delta: Int) =
         repository.updateSession(sessionId) { coreMoveExercise(it, exerciseId, delta) }
 
     suspend fun toggleSkipExercise(sessionId: String, exerciseId: String) =
-        repository.updateSession(sessionId) { coreToggleSkipExercise(it, exerciseId) }
+        recorded(sessionId, exerciseId, "Übung überspringen") { repository.updateSession(sessionId) { coreToggleSkipExercise(it, exerciseId) } }
 
     suspend fun setNote(sessionId: String, exerciseId: String, note: String) =
         repository.updateSession(sessionId) { coreSetExerciseNote(it, exerciseId, note) }
@@ -120,6 +215,9 @@ class WorkoutActions(
 
     suspend fun finish(sessionId: String) {
         timer.reset()
+        _undo.value = null
+        _focus.value = null
+        _accepted.value = null
         repository.finishSession(sessionId)
         scheduler.requestSync()
     }

@@ -207,7 +207,7 @@ fun historicalWorkingWeight(
     )
 }
 
-private fun setMeetsTarget(set: SetLog, target: Target): Boolean {
+internal fun setMeetsTarget(set: SetLog, target: Target): Boolean {
     if (set.status != SetStatus.COMPLETED || set.setType != SetType.WORKING) return false
     val lb = effortLb(set.effort) ?: return false
     val actual: Double = when (target.metric) {
@@ -219,7 +219,7 @@ private fun setMeetsTarget(set: SetLog, target: Target): Boolean {
     return lb >= target.rirMin
 }
 
-private fun qualifyingWeights(exercise: SessionExercise): List<Double> =
+internal fun qualifyingWeights(exercise: SessionExercise): List<Double> =
     exercise.sets.filter { it.weightKg != null && setMeetsTarget(it, exercise.target) }.map { it.weightKg!! }
 
 fun provenWorkingWeight(exercise: SessionExercise, currentWeightKg: Double?): Double? {
