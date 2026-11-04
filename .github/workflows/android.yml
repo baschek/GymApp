@@ -1,7 +1,9 @@
 name: Android
 
 # Builds and tests the native app in android/. Releases are cut by pushing a tag
-# `android-v<version>` that points at a commit on main.
+# `android-v<version>` that points at a commit on main, or by running this workflow
+# manually on main with `release_version` (e.g. 2.3.0): then the release job creates
+# the tag `android-v<version>` on that commit together with the release.
 # NOTE: third-party actions are referenced by major version tag. Pin them to commit
 # SHAs (e.g. with Dependabot or `pinact`) once the SHAs have been verified.
 
@@ -17,6 +19,11 @@ on:
       - "android/**"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release this commit of main as android-v<version> (e.g. 2.3.0); empty = build only"
+        required: false
+        default: ""
 
 permissions: {}
 
@@ -71,7 +78,9 @@ jobs:
           retention-days: 7
 
   release:
-    if: startsWith(github.ref, 'refs/tags/android-v')
+    if: >-
+      startsWith(github.ref, 'refs/tags/android-v') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.release_version != '')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -81,6 +90,22 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Resolve release version
+        env:
+          INPUT_VERSION: ${{ inputs.release_version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "$INPUT_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+              echo "::error::release_version must look like 2.3.0"; exit 1; }
+            TAG="android-v$INPUT_VERSION"
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+              echo "::error::Tag $TAG already exists."; exit 1
+            fi
+          else
+            TAG="$GITHUB_REF_NAME"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_VERSION=${TAG#android-v}" >> "$GITHUB_ENV"
       - name: Tag must point at a commit on main
         run: |
           git fetch --no-tags origin main
@@ -111,22 +136,27 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          VERSION="${GITHUB_REF_NAME#android-v}"
+          VERSION="$RELEASE_VERSION"
           ./gradlew --no-daemon :app:assembleRelease -PversionName="$VERSION" -PversionCode="$GITHUB_RUN_NUMBER"
       - name: Verify signature and name the asset
         run: |
           APK="$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)"
           APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort | tail -n 1)"
           "$APKSIGNER" verify "$APK"
-          VERSION="${GITHUB_REF_NAME#android-v}"
+          VERSION="$RELEASE_VERSION"
           cp "$APK" "gymapp-$VERSION.apk"
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#android-v}"
-          gh release create "$GITHUB_REF_NAME" "gymapp-$VERSION.apk" \
-            --repo "$GITHUB_REPOSITORY" --verify-tag \
+          VERSION="$RELEASE_VERSION"
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG_FLAG=(--target "$GITHUB_SHA")
+          else
+            TAG_FLAG=(--verify-tag)
+          fi
+          gh release create "$RELEASE_TAG" "gymapp-$VERSION.apk" \
+            --repo "$GITHUB_REPOSITORY" "${TAG_FLAG[@]}" \
             --title "GymApp Android $VERSION" \
             --notes "Android app $VERSION. Install over the existing app; the signature must match."
       - name: Remove signing key
