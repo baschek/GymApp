@@ -126,10 +126,13 @@ fun WorkoutScreen(sessionId: String, nav: Navigator) {
             } else {
                 val timer by vm.timer.collectAsStateWithLifecycle()
                 val hasPending = currentExerciseIndex(session.exercises) >= 0
-                if (hasPending && timer?.phase == TimerPhase.REST) {
-                    RestScreen(session, timer!!, vm)
-                } else {
-                    TrainingScreen(l.id, session, vm, nav)
+                Box(Modifier.fillMaxSize()) {
+                    if (hasPending && timer?.phase == TimerPhase.REST) {
+                        RestScreen(session, timer!!, vm)
+                    } else {
+                        TrainingScreen(l.id, session, vm, nav)
+                    }
+                    AdjustmentBanner(vm, Modifier.align(Alignment.TopCenter))
                 }
             }
         }
@@ -158,7 +161,9 @@ internal fun lastWorking(ex: SessionExercise): SetLog? =
 
 /** Total weight a set starts with: the last working weight of the exercise, else the suggestion. */
 internal fun prefillTotal(ex: SessionExercise, set: SetLog, levels: List<Double>): Double {
-    val base = lastWorking(ex)?.weightKg ?: ex.suggestedWeightKg ?: levels.minOrNull() ?: 20.0
+    // a weight the assistant planned for the open sets wins until the next set is logged (amendment D)
+    val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
+    val base = planned ?: lastWorking(ex)?.weightKg ?: ex.suggestedWeightKg ?: levels.minOrNull() ?: 20.0
     return if (set.setType == SetType.WARMUP) warmupProposal(base, levels).weightKg else base
 }
 

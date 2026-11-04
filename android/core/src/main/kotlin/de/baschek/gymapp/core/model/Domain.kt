@@ -316,3 +316,59 @@ object GoalAuthor {
     const val APP = "app"
     const val SERVER = "server"
 }
+
+/** Status values of a [WorkoutAdjustment] (contract v1 amendment D). */
+object AdjustmentStatus {
+    const val PENDING = "pending"
+    const val APPLIED = "applied"
+    const val REJECTED = "rejected"
+}
+
+object AdjustmentAction {
+    const val SET_WEIGHT = "set_weight"
+    const val SET_REPS = "set_reps"
+    const val SET_SETS = "set_sets"
+    const val SET_REST = "set_rest"
+    const val ADD_EXERCISE = "add_exercise"
+    const val SKIP_EXERCISE = "skip_exercise"
+    const val MOVE_EXERCISE = "move_exercise"
+    const val NOTE = "note"
+}
+
+/** One requested change; which fields matter depends on [action]. */
+@Serializable
+data class AdjustmentOp(
+    val action: String = "",
+    @SerialName("session_exercise_id") val sessionExerciseId: String? = null,
+    @SerialName("exercise_id") val exerciseId: String? = null,
+    @SerialName("exercise_name") val exerciseName: String? = null,
+    @SerialName("weight_kg") val weightKg: Double? = null,
+    @SerialName("reps_min") val repsMin: Int? = null,
+    @SerialName("reps_max") val repsMax: Int? = null,
+    val sets: Int? = null,
+    @SerialName("rest_seconds") val restSeconds: Int? = null,
+    val position: Int? = null,
+    val text: String? = null,
+    @SerialName("measurement_type") val measurementType: String? = null,
+    @SerialName("load_direction") val loadDirection: String? = null,
+    @SerialName("load_basis") val loadBasis: String? = null,
+)
+
+@Serializable
+data class AdjustmentResult(val index: Int = 0, val status: String = "", val reason: String? = null)
+
+/**
+ * A change the assistant asks for in the running workout (amendment D). The server creates it as `pending`; the app
+ * applies it to its own session and writes [status], [opResults] and [resolvedAt] back.
+ */
+@Serializable
+data class WorkoutAdjustment(
+    @SerialName("session_id") val sessionId: String = "",
+    val status: String = AdjustmentStatus.PENDING,
+    val reason: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("resolved_at") val resolvedAt: String? = null,
+    @SerialName("status_reason") val statusReason: String? = null,
+    val ops: List<AdjustmentOp> = emptyList(),
+    @SerialName("op_results") val opResults: List<AdjustmentResult>? = null,
+)

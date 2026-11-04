@@ -90,7 +90,7 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
         newExercise -> nextEx.name
         else -> {
             val last = nextEx.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
-            val weight = acceptedForNext ?: last?.weightKg ?: nextEx.suggestedWeightKg
+            val weight = acceptedForNext ?: nextSet.weightKg?.takeIf { nextSet.setType == SetType.WORKING } ?: last?.weightKg ?: nextEx.suggestedWeightKg
             val lastWeight = last?.weightKg
             val arrow = if (acceptedForNext != null && lastWeight != null) {
                 when { acceptedForNext > lastWeight + 1e-6 -> " ▲"; acceptedForNext < lastWeight - 1e-6 -> " ▼"; else -> "" }

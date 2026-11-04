@@ -52,7 +52,7 @@ fun toggleSkipExercise(session: Session, exerciseId: String): Session =
             if (ex.id != exerciseId) ex
             else when {
                 ex.sets.all { it.status == SetStatus.PENDING } ->
-                    ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.SKIPPED_OTHER) })
+                    ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.SKIPPED_OTHER, weightKg = null, addonWeightsKg = null) })
                 isSkipped(ex) -> ex.copy(sets = ex.sets.map { it.copy(status = SetStatus.PENDING) })
                 else -> ex
             }

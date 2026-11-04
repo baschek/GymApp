@@ -79,7 +79,7 @@ data class FinishResult(
  * Completes an active session: pending sets get [pendingReason], and the
  * per-gym working weight changes when two qualifying sets prove it (amendment A).
  * [history] are the other sessions (any status; only completed ones count).
- * Sessions without a gym never change a working weight.
+ * Sessions without a gym never change a working weight. [baselines] are manually set weights (amendment D).
  */
 fun finishSession(
     sessionId: String,
@@ -89,6 +89,7 @@ fun finishSession(
     durationSeconds: Int,
     newId: () -> String,
     history: List<Pair<String, Session>> = emptyList(),
+    baselines: Map<GymExerciseKey, WorkingWeight> = emptyMap(),
 ): FinishResult {
     require(pendingReason != SetStatus.PENDING && pendingReason != SetStatus.COMPLETED && pendingReason != SetStatus.FAILED)
     val finalized = session.copy(
@@ -96,14 +97,14 @@ fun finishSession(
         completedAt = nowIso,
         durationSeconds = durationSeconds.coerceAtLeast(0),
         exercises = session.exercises.map { ex ->
-            ex.copy(sets = ex.sets.map { if (it.status == SetStatus.PENDING) it.copy(status = pendingReason) else it })
+            ex.copy(sets = ex.sets.map { if (it.status == SetStatus.PENDING) it.copy(status = pendingReason, weightKg = null, addonWeightsKg = null) else it })
         },
     )
     val gym = finalized.gymId ?: return FinishResult(finalized, emptyMap(), emptyList())
     val others = history.filter { it.first != sessionId }
     val keys = finalized.exercises.map { GymExerciseKey(gym, it.exerciseId) }.toSet()
-    val before = recalculateWorkingWeights(others, keys)
-    val after = recalculateWorkingWeights(others + (sessionId to finalized), keys)
+    val before = recalculateWorkingWeights(others, keys, baselines)
+    val after = recalculateWorkingWeights(others + (sessionId to finalized), keys, baselines)
 
     val changed = after.filter { (_, w) -> w != null && w.sourceSessionId == sessionId }
         .mapValues { it.value!! }

@@ -13,6 +13,7 @@ import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
 import de.baschek.gymapp.core.training.UndoEntry
 import de.baschek.gymapp.core.training.applyUndo
+import de.baschek.gymapp.core.training.clearPlannedWeights
 import de.baschek.gymapp.core.training.captureUndo
 import de.baschek.gymapp.core.training.correctSet as coreCorrectSet
 import de.baschek.gymapp.core.training.removeExercise as coreRemoveExercise
@@ -79,6 +80,11 @@ class WorkoutActions(
         _undo.value = before?.let { sessionId to it }
     }
 
+    /** Forgets the one-step undo (an assistant adjustment changed the session underneath it). */
+    fun clearUndo() {
+        _undo.value = null
+    }
+
     /** Takes the last action back. Returns its label, or null if there was nothing to undo. */
     suspend fun undoLast(sessionId: String): String? {
         val (id, entry) = _undo.value ?: return null
@@ -106,7 +112,7 @@ class WorkoutActions(
             s.copy(
                 exercises = s.exercises.map { ex ->
                     if (ex.id != exerciseId) ex
-                    else ex.copy(
+                    else clearPlannedWeights(ex.copy(
                         sets = ex.sets.map { set ->
                             if (set.id != setId) set
                             else set.copy(
@@ -123,7 +129,7 @@ class WorkoutActions(
                                 completedAt = now,
                             )
                         },
-                    )
+                    ), setId)
                 },
             )
         }

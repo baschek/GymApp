@@ -54,9 +54,13 @@ class MainActivity : ComponentActivity() {
      * restarts with every STARTED) and make sure the foreground service is running.
      */
     private fun watchActiveSession() {
-        val repository = (application as GymApplication).container.repository
+        val container = (application as GymApplication).container
+        val repository = container.repository
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // Opening the app during a workout: fetch assistant adjustments and push the running session now
+                // (the service syncs periodically on top of this).
+                launch { if (repository.getActiveSession() != null) container.syncManager.runSync() }
                 combine(repository.observeActiveSession(), repository.keepScreenOn) { session, keep -> (session != null) to keep }
                     .collect { (active, keep) ->
                         if (active && keep) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

@@ -1,7 +1,15 @@
 package de.baschek.gymapp.data
 
 import androidx.room.withTransaction
+import de.baschek.gymapp.core.model.AdjustmentStatus
 import de.baschek.gymapp.core.model.BodyWeight
+import de.baschek.gymapp.core.model.WorkoutAdjustment
+import de.baschek.gymapp.core.training.AdjustmentCode
+import de.baschek.gymapp.core.training.applyAdjustment
+import de.baschek.gymapp.core.training.describeAdjustment
+import de.baschek.gymapp.core.training.revertAdjustment
+import kotlinx.serialization.builtins.ListSerializer
+import de.baschek.gymapp.core.model.GymJson
 import de.baschek.gymapp.core.model.DocumentCodec
 import de.baschek.gymapp.core.model.Entity
 import de.baschek.gymapp.core.model.Exercise
@@ -36,6 +44,7 @@ import de.baschek.gymapp.core.model.ReviewFlag
 import de.baschek.gymapp.core.progression.ExerciseInfo
 import de.baschek.gymapp.core.progression.GymExerciseKey
 import de.baschek.gymapp.core.progression.StartSuggestion
+import de.baschek.gymapp.core.progression.MANUAL_WEIGHT_SOURCE
 import de.baschek.gymapp.core.progression.WorkingWeight
 import de.baschek.gymapp.core.progression.reassignSessionGym as coreReassignSessionGym
 import de.baschek.gymapp.core.progression.recalculateWorkingWeights
@@ -52,6 +61,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.KSerializer
@@ -77,6 +87,9 @@ data class MachineInfo(
 internal fun MachineProfile.toInfo() = MachineInfo(
     effectiveWeights(), effectiveAddons(), setupParameters.orEmpty(), machineBrand, machineModel, workingWeightKg,
 )
+
+/** What the training screen shows: the newest applied assistant adjustment that was not dismissed yet. */
+data class AdjustmentNotice(val id: String, val text: String)
 
 /** The goal document plus its last change time. */
 data class GoalState(val goal: Goal, val updatedAt: String?)
@@ -402,10 +415,13 @@ class GymRepository(
         val result = coreFinishSession(
             sessionId, session, pendingReason, now.truncatedTo(ChronoUnit.MILLIS).toString(),
             Duration.between(started, now).seconds.toInt(), newId, allSessions(p).filter { it.first != sessionId },
+            manualBaselines(p),
         )
         put(p, Entity.SESSION, sessionId, result.session, Session.serializer())
         result.workingWeights.forEach { (key, w) -> setWorkingWeight(p, key, w) }
         result.milestones.forEach { put(p, Entity.MILESTONE, it.id, it.milestone, de.baschek.gymapp.core.model.Milestone.serializer()) }
+        dao.deleteSettingsWithPrefix(SettingKeys.ADJUST_UNDO_PREFIX)
+        dao.deleteSetting(SettingKeys.ADJUST_SEEN)
     }
 
     /**
@@ -417,7 +433,7 @@ class GymRepository(
         val all = allSessions(p)
         val session = all.firstOrNull { it.first == sessionId }?.second ?: return@withTransaction
         if (session.status != SessionStatus.COMPLETED || session.gymId == newGymId) return@withTransaction
-        val weights = coreReassignSessionGym(all, sessionId, newGymId)
+        val weights = coreReassignSessionGym(all, sessionId, newGymId, manualBaselines(p))
         val flags = session.reviewFlags.orEmpty().filter { it != ReviewFlag.GYM_SUSPECT && it != ReviewFlag.GYM_MISSING }
         put(p, Entity.SESSION, sessionId, session.copy(gymId = newGymId, reviewFlags = flags.ifEmpty { null }), Session.serializer())
         weights.forEach { (key, w) -> setWorkingWeight(p, key, w) }
@@ -437,7 +453,7 @@ class GymRepository(
         put(p, Entity.SESSION, sessionId, updated, Session.serializer())
         val gym = updated.gymId ?: return@withTransaction
         val keys = updated.exercises.map { GymExerciseKey(gym, it.exerciseId) }.toSet()
-        recalculateWorkingWeights(all.map { if (it.first == sessionId) sessionId to updated else it }, keys)
+        recalculateWorkingWeights(all.map { if (it.first == sessionId) sessionId to updated else it }, keys, manualBaselines(p))
             .forEach { (key, w) -> setWorkingWeight(p, key, w) }
     }
 
@@ -453,6 +469,23 @@ class GymRepository(
             .mapNotNull { it.toStored(MachineProfile.serializer()) }
             .filter { it.value.exerciseId == exerciseId }
             .minByOrNull { it.id }
+
+    /**
+     * Working weights set by hand (`working_weight_source_session_id` = "manual", e.g. by the assistant): the starting
+     * point of every recalculation for that gym x exercise instead of being overwritten from the sessions
+     * (contract v1 amendment D). With duplicate profiles the lowest id wins, as in [findMachineProfile].
+     */
+    private suspend fun manualBaselines(profile: String): Map<GymExerciseKey, WorkingWeight> =
+        dao.getDocs(profile, Entity.MACHINE_PROFILE).mapNotNull { it.toStored(MachineProfile.serializer()) }
+            .filter {
+                it.value.workingWeightSourceSessionId == MANUAL_WEIGHT_SOURCE &&
+                    it.value.workingWeightKg != null && it.value.workingWeightUpdatedAt != null
+            }
+            .sortedByDescending { it.id }
+            .associate {
+                GymExerciseKey(it.value.gymId, it.value.exerciseId) to
+                    WorkingWeight(it.value.workingWeightKg!!, MANUAL_WEIGHT_SOURCE, it.value.workingWeightUpdatedAt!!)
+            }
 
     /** Stores (or clears, with null) the working weight on the machine profile of a gym x exercise. */
     private suspend fun setWorkingWeight(profile: String, key: GymExerciseKey, weight: WorkingWeight?) {
@@ -518,6 +551,91 @@ class GymRepository(
         val base = dao.getDoc(p, Entity.GOAL, GOAL_ID)?.takeIf { !it.deleted }?.toStored(Goal.serializer())?.value ?: Goal()
         val updated = transform(base).copy(updatedBy = GoalAuthor.APP)
         put(p, Entity.GOAL, GOAL_ID, updated, Goal.serializer())
+    }
+
+    // ---- assistant adjustments of a running workout (contract v1 amendment D) -------------
+
+    /**
+     * Applies the pending `workout_adjustment` documents (oldest first) to the active session and writes the result
+     * (status, per-operation results) back into each adjustment, which syncs to the server. Logged sets are never
+     * changed (see [applyAdjustment]); an adjustment for a missing or finished session is rejected. Returns how many
+     * adjustments were resolved (applied or rejected), so the caller can push the answer right away.
+     */
+    suspend fun applyPendingAdjustments(): Int = db.withTransaction {
+        val p = currentProfile()
+        if (p != Profile.PERSONAL) return@withTransaction 0
+        val pending = dao.getDocs(p, Entity.WORKOUT_ADJUSTMENT).mapNotNull { it.toStored(WorkoutAdjustment.serializer()) }
+            .filter { it.value.status == AdjustmentStatus.PENDING }
+            .sortedWith(compareBy({ it.value.createdAt }, { it.id }))
+        for (adjustment in pending) {
+            val sessionId = adjustment.value.sessionId
+            val session = dao.getDoc(p, Entity.SESSION, sessionId)?.takeIf { !it.deleted }?.toStored(Session.serializer())
+            val resolvedAt = nowIso()
+            val resolved = if (session == null) {
+                adjustment.value.copy(status = AdjustmentStatus.REJECTED, statusReason = AdjustmentCode.NO_ACTIVE_SESSION, resolvedAt = resolvedAt)
+            } else {
+                val outcome = applyAdjustment(session.value, adjustment.value, newId)
+                if (outcome.status == AdjustmentStatus.APPLIED) {
+                    dao.putSetting(
+                        SettingEntity(
+                            SettingKeys.ADJUST_UNDO_PREFIX + adjustment.id,
+                            GymJson.encodeToString(ListSerializer(SessionExercise.serializer()), session.value.exercises),
+                        ),
+                    )
+                    put(p, Entity.SESSION, sessionId, outcome.session, Session.serializer())
+                }
+                adjustment.value.copy(
+                    status = outcome.status, statusReason = outcome.statusReason, resolvedAt = resolvedAt,
+                    opResults = outcome.results,
+                )
+            }
+            put(p, Entity.WORKOUT_ADJUSTMENT, adjustment.id, resolved, WorkoutAdjustment.serializer())
+        }
+        pending.size
+    }
+
+    private val adjustSeen: Flow<Set<String>> =
+        dao.observeSetting(SettingKeys.ADJUST_SEEN).map { it?.lines()?.filter(String::isNotBlank)?.toSet().orEmpty() }
+
+    fun observeAdjustmentBanner(sessionId: String): Flow<AdjustmentNotice?> =
+        combine(observeAll(Entity.WORKOUT_ADJUSTMENT, WorkoutAdjustment.serializer()), adjustSeen, observeSession(sessionId)) { all, seen, session ->
+            val names = session?.value?.exercises?.associate { it.id to it.name }.orEmpty()
+            all.filter { it.value.sessionId == sessionId && it.value.status == AdjustmentStatus.APPLIED && it.id !in seen }
+                .maxWithOrNull(compareBy({ it.value.createdAt }, { it.id }))
+                ?.let { AdjustmentNotice(it.id, describeAdjustment(it.value, names)) }
+        }.distinctUntilChanged()
+
+    private suspend fun markAdjustmentSeen(id: String) {
+        val current = dao.getSetting(SettingKeys.ADJUST_SEEN)?.lines()?.filter { it.isNotBlank() && it != id }.orEmpty()
+        dao.putSetting(SettingEntity(SettingKeys.ADJUST_SEEN, (current + id).takeLast(50).joinToString("\n")))
+        dao.deleteSetting(SettingKeys.ADJUST_UNDO_PREFIX + id)
+    }
+
+    /** "Verstanden": the banner goes away; the adjustment can no longer be undone from the banner. */
+    suspend fun dismissAdjustment(id: String) = db.withTransaction { markAdjustmentSeen(id) }
+
+    /**
+     * "Rückgängig": restores the exercises as they were before the adjustment (sets logged since stay) and reports
+     * `rejected` / `undone` back, so the assistant knows. Returns false when nothing could be undone.
+     */
+    suspend fun undoAdjustment(id: String): Boolean = db.withTransaction {
+        val p = currentProfile()
+        val adjustment = dao.getDoc(p, Entity.WORKOUT_ADJUSTMENT, id)?.takeIf { !it.deleted }?.toStored(WorkoutAdjustment.serializer())
+        val snapshot = dao.getSetting(SettingKeys.ADJUST_UNDO_PREFIX + id)?.let {
+            runCatching { GymJson.decodeFromString(ListSerializer(SessionExercise.serializer()), it) }.getOrNull()
+        }
+        markAdjustmentSeen(id)
+        if (adjustment == null || snapshot == null) return@withTransaction false
+        val session = dao.getDoc(p, Entity.SESSION, adjustment.value.sessionId)?.takeIf { !it.deleted }?.toStored(Session.serializer())
+        if (session != null && session.value.status == SessionStatus.ACTIVE) {
+            put(p, Entity.SESSION, adjustment.value.sessionId, revertAdjustment(session.value, snapshot), Session.serializer())
+        }
+        put(
+            p, Entity.WORKOUT_ADJUSTMENT, id,
+            adjustment.value.copy(status = AdjustmentStatus.REJECTED, statusReason = AdjustmentCode.UNDONE, resolvedAt = nowIso()),
+            WorkoutAdjustment.serializer(),
+        )
+        true
     }
 
     // ---- local-only UI state --------------------------------------------------

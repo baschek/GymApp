@@ -25,25 +25,47 @@ data class StartSuggestion(val weightKg: Double, val reason: String, val sourceG
 private fun completedWithGym(sessions: List<Pair<String, Session>>) =
     sessions.filter { (_, s) -> s.status == SessionStatus.COMPLETED && s.gymId != null }
 
+/** `working_weight_source_session_id` of a weight the user or the assistant set by hand (contract v1 amendment D). */
+const val MANUAL_WEIGHT_SOURCE = "manual"
+
+private fun isLater(timeIso: String, baselineIso: String): Boolean {
+    val a = runCatching { java.time.Instant.parse(timeIso) }.getOrNull()
+    val b = runCatching { java.time.Instant.parse(baselineIso) }.getOrNull()
+    return if (a != null && b != null) a.isAfter(b) else timeIso > baselineIso
+}
+
 /**
  * Replays the completed sessions of each gym (oldest first) and returns the
  * proven working weight per gym x exercise. Only sessions with the same gym
  * feed a key. With [only], just those keys are computed (absent = null).
+ *
+ * [baselines] are weights set by hand (source [MANUAL_WEIGHT_SOURCE], timestamp = `updatedAt`): the replay of that key
+ * counts sessions up to the timestamp as before, continues from the manual weight with the first later session that
+ * contains the exercise, and keeps the manual weight when there is no later session (same rule as the server).
  */
 fun recalculateWorkingWeights(
     sessions: List<Pair<String, Session>>,
     only: Set<GymExerciseKey>? = null,
+    baselines: Map<GymExerciseKey, WorkingWeight> = emptyMap(),
 ): Map<GymExerciseKey, WorkingWeight?> {
     val current = HashMap<GymExerciseKey, WorkingWeight>()
+    val manual = HashMap(baselines)
     val ordered = completedWithGym(sessions).sortedWith(compareBy({ it.second.effectiveTime }, { it.first }))
     for ((id, session) in ordered) {
         for (performed in session.exercises) {
             val key = GymExerciseKey(session.gymId!!, performed.exerciseId)
             if (only != null && key !in only) continue
+            manual[key]?.let { base ->
+                if (isLater(session.effectiveTime, base.updatedAt)) {
+                    current[key] = base
+                    manual.remove(key)
+                }
+            }
             val next = provenWorkingWeight(performed, current[key]?.weightKg) ?: continue
             current[key] = WorkingWeight(next, id, session.effectiveTime)
         }
     }
+    for ((key, base) in manual) if (only == null || key in only) current[key] = base
     return if (only != null) only.associateWith { current[it] } else current
 }
 
@@ -56,12 +78,13 @@ fun reassignSessionGym(
     sessions: List<Pair<String, Session>>,
     sessionId: String,
     newGymId: String,
+    baselines: Map<GymExerciseKey, WorkingWeight> = emptyMap(),
 ): Map<GymExerciseKey, WorkingWeight?> {
     val target = sessions.firstOrNull { it.first == sessionId }?.second ?: return emptyMap()
     val gyms = listOfNotNull(target.gymId, newGymId).toSet()
     val keys = gyms.flatMap { g -> target.exercises.map { GymExerciseKey(g, it.exerciseId) } }.toSet()
     val updated = sessions.map { (id, s) -> if (id == sessionId) id to s.copy(gymId = newGymId) else id to s }
-    return recalculateWorkingWeights(updated, keys)
+    return recalculateWorkingWeights(updated, keys, baselines)
 }
 
 private fun median(values: List<Double>): Double {
@@ -172,7 +195,9 @@ data class SetPrefill(val weightKg: Double?, val value: Double, val effort: Stri
 fun prefillSet(ex: SessionExercise, availableWeights: List<Double>): SetPrefill {
     val weighted = ex.measurementType in WEIGHTED_TYPES
     val last = ex.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.weightKg != null }?.weightKg
-    val weight = if (weighted) last ?: ex.suggestedWeightKg ?: availableWeights.minOrNull() else null
+    // a weight the assistant planned for the next open set wins until the next log (amendment D)
+    val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
+    val weight = if (weighted) planned ?: last ?: ex.suggestedWeightKg ?: availableWeights.minOrNull() else null
     val effort = when {
         ex.target.rirMin >= 5 -> "five_plus"
         ex.target.rirMin >= 3 -> "three_four"

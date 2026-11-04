@@ -17,6 +17,7 @@ import de.baschek.gymapp.core.stats.summarizeMuscles
 import de.baschek.gymapp.core.model.SetupParameter
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.data.AdjustmentNotice
 import de.baschek.gymapp.data.MachineInfo
 import de.baschek.gymapp.data.SettingKeys
 import de.baschek.gymapp.data.Stored
@@ -74,6 +75,22 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
     val undoLabel: StateFlow<String?> = c.workout.undo
         .map { it?.takeIf { p -> p.first == sessionId }?.second?.label }
         .state(null)
+
+    /** The newest applied assistant adjustment that was not dismissed ("Claude hat angepasst: ..."), or null. */
+    val adjustmentBanner: StateFlow<AdjustmentNotice?> = repo.observeAdjustmentBanner(sessionId).state(null)
+
+    fun dismissAdjustment(id: String) {
+        viewModelScope.launch { repo.dismissAdjustment(id) }
+    }
+
+    /** Takes the adjustment back (sets logged since stay); the assistant is told via the synced status. */
+    fun undoAdjustment(id: String) {
+        viewModelScope.launch {
+            repo.undoAdjustment(id)
+            c.workout.clearUndo()
+            c.scheduler.requestSync()
+        }
+    }
 
     /** Weight accepted from a suggestion for the next set (exercise id, total kg). */
     val acceptedWeight: StateFlow<Pair<String, Double>?> = c.workout.acceptedWeight

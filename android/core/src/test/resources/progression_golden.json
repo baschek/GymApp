@@ -3413,5 +3413,514 @@
       "level_kg": 20,
       "addons_kg": []
     }
+  },
+  {
+    "name": "manual baseline: a weight set by hand is kept without later sessions",
+    "fn": "recalculateWorkingWeights",
+    "input": {
+      "sessions": [
+        {
+          "id": "m1",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-03T10:00:00.000Z",
+            "completed_at": "2026-11-03T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m1-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m1-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m1-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "only": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press"
+        }
+      ],
+      "baselines": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press",
+          "weight_kg": 65,
+          "updated_at": "2026-11-04T08:00:00.000Z"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "gym_id": "gym-a",
+        "exercise_id": "press",
+        "weight_kg": 65,
+        "source_session_id": "manual"
+      }
+    ]
+  },
+  {
+    "name": "manual baseline: sessions up to the timestamp are replayed as before without a baseline",
+    "fn": "recalculateWorkingWeights",
+    "input": {
+      "sessions": [
+        {
+          "id": "m1",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-03T10:00:00.000Z",
+            "completed_at": "2026-11-03T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m1-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m1-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m1-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "only": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press"
+        }
+      ],
+      "baselines": []
+    },
+    "expected": [
+      {
+        "gym_id": "gym-a",
+        "exercise_id": "press",
+        "weight_kg": 55,
+        "source_session_id": "m1"
+      }
+    ]
+  },
+  {
+    "name": "manual baseline: a later session that does not exceed it keeps the manual weight",
+    "fn": "recalculateWorkingWeights",
+    "input": {
+      "sessions": [
+        {
+          "id": "m1",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-03T10:00:00.000Z",
+            "completed_at": "2026-11-03T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m1-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m1-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m1-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "m2",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-05T10:00:00.000Z",
+            "completed_at": "2026-11-05T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m2-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m2-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 60,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m2-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 65,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "only": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press"
+        }
+      ],
+      "baselines": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press",
+          "weight_kg": 65,
+          "updated_at": "2026-11-04T08:00:00.000Z"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "gym_id": "gym-a",
+        "exercise_id": "press",
+        "weight_kg": 65,
+        "source_session_id": "manual"
+      }
+    ]
+  },
+  {
+    "name": "manual baseline: a later session that proves more develops it by the normal rule",
+    "fn": "recalculateWorkingWeights",
+    "input": {
+      "sessions": [
+        {
+          "id": "m1",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-03T10:00:00.000Z",
+            "completed_at": "2026-11-03T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m1-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m1-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m1-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": "m2",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-05T10:00:00.000Z",
+            "completed_at": "2026-11-05T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m2-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 3,
+                "sets": [
+                  {
+                    "id": "m2-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 65,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m2-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 70,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m2-set-3",
+                    "order": 3,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 70,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "only": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press"
+        }
+      ],
+      "baselines": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press",
+          "weight_kg": 65,
+          "updated_at": "2026-11-04T08:00:00.000Z"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "gym_id": "gym-a",
+        "exercise_id": "press",
+        "weight_kg": 70,
+        "source_session_id": "m2"
+      }
+    ]
+  },
+  {
+    "name": "manual baseline: only the matching gym x exercise is affected",
+    "fn": "recalculateWorkingWeights",
+    "input": {
+      "sessions": [
+        {
+          "id": "m1",
+          "data": {
+            "plan_name": "Synthetic plan",
+            "mode": "normal",
+            "status": "completed",
+            "started_at": "2026-11-03T10:00:00.000Z",
+            "completed_at": "2026-11-03T11:00:00.000Z",
+            "gym_id": "gym-a",
+            "exercises": [
+              {
+                "id": "m1-ex",
+                "exercise_id": "press",
+                "name": "Test press",
+                "order": 1,
+                "measurement_type": "load_reps",
+                "load_direction": "higher",
+                "load_basis": "stack",
+                "target": {
+                  "metric": "reps",
+                  "min": 8,
+                  "max": 12,
+                  "rir_min": 1,
+                  "rir_max": 2
+                },
+                "rest_seconds": 90,
+                "planned_sets": 2,
+                "sets": [
+                  {
+                    "id": "m1-set-1",
+                    "order": 1,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  },
+                  {
+                    "id": "m1-set-2",
+                    "order": 2,
+                    "set_type": "working",
+                    "status": "completed",
+                    "weight_kg": 55,
+                    "reps": 10,
+                    "effort": "two_three"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "only": [
+        {
+          "gym_id": "gym-a",
+          "exercise_id": "press"
+        }
+      ],
+      "baselines": [
+        {
+          "gym_id": "gym-b",
+          "exercise_id": "press",
+          "weight_kg": 65,
+          "updated_at": "2026-11-04T08:00:00.000Z"
+        }
+      ]
+    },
+    "expected": [
+      {
+        "gym_id": "gym-a",
+        "exercise_id": "press",
+        "weight_kg": 55,
+        "source_session_id": "m1"
+      }
+    ]
   }
 ]

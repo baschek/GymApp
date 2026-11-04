@@ -8,6 +8,7 @@ import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.progression.ExerciseInfo
 import de.baschek.gymapp.core.progression.GymExerciseKey
+import de.baschek.gymapp.core.progression.MANUAL_WEIGHT_SOURCE
 import de.baschek.gymapp.core.progression.WorkingWeight
 import de.baschek.gymapp.core.progression.estimateStartWeight
 import de.baschek.gymapp.core.progression.recalculateWorkingWeights
@@ -120,6 +121,11 @@ class ProgressionGoldenTest {
             recalculateWorkingWeights(
                 sessionPairs(i["sessions"]!!),
                 (i["only"] as? JsonArray)?.map { GymExerciseKey(it.jsonObject["gym_id"]!!.jsonPrimitive.content, it.jsonObject["exercise_id"]!!.jsonPrimitive.content) }?.toSet(),
+                (i["baselines"] as? JsonArray).orEmpty().associate {
+                    val b = it.jsonObject
+                    GymExerciseKey(b["gym_id"]!!.jsonPrimitive.content, b["exercise_id"]!!.jsonPrimitive.content) to
+                        WorkingWeight(b["weight_kg"]!!.jsonPrimitive.double, MANUAL_WEIGHT_SOURCE, b["updated_at"]!!.jsonPrimitive.content)
+                },
             ),
         )
         "reassignSessionGym" -> weightList(

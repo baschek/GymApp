@@ -98,6 +98,7 @@ data class IndexColumns(
                     exerciseId = s("exercise_id"),
                     sortAt = s("occurred_at"),
                 )
+                Entity.WORKOUT_ADJUSTMENT -> IndexColumns(status = s("status"), sortAt = s("created_at"))
                 else -> IndexColumns()
             }
         }

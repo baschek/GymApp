@@ -28,4 +28,8 @@ object SettingKeys {
     const val PLANS_SEEN = "plans_seen"
     const val PACK_PREFIX = "pack_checked:"
     const val CONFLICT_PREFIX = "conflict_local:"
+    /** Ids (one per line) of applied assistant adjustments the user has seen or undone; device only. */
+    const val ADJUST_SEEN = "adjust_seen"
+    /** Exercise list before an applied adjustment, one entry per adjustment id; device only, for "Rückgängig". */
+    const val ADJUST_UNDO_PREFIX = "adjust_undo:"
 }
