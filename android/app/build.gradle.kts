@@ -19,7 +19,7 @@ android {
     defaultConfig {
         applicationId = "de.baschek.gymapp"
         minSdk = 29
-        targetSdk = 35
+        targetSdk = 36
         // CI passes the tag version, e.g. -PversionName=1.2.3 -PversionCode=42
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
