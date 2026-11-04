@@ -61,8 +61,8 @@ class WorkoutService : Service() {
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
-        // Promotion ("Live Update") requires an importance above MIN; DEFAULT is used, kept silent
-        // (no sound, no vibration) here and per notification. The old LOW channel cannot be raised
+        // Promotion ("Live Update") requires an importance above MIN; DEFAULT is used, kept quiet
+        // by the channel (no sound, no vibration), not by marking each notification silent. The old LOW channel cannot be raised
         // after creation, so it is replaced by a new channel id.
         manager.deleteNotificationChannel(LEGACY_CHANNEL)
         val channel = NotificationChannel(CHANNEL, getString(R.string.timer_channel_name), NotificationManager.IMPORTANCE_DEFAULT)
@@ -162,7 +162,7 @@ class WorkoutService : Service() {
             .setSmallIcon(R.drawable.ic_stat_timer)
             .setContentTitle(getString(R.string.notif_session_running))
             .setOngoing(true)
-            .setSilent(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(openIntent(null))
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
@@ -214,7 +214,9 @@ class WorkoutService : Service() {
             .setColorized(false)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setSilent(true)
+            // Not setSilent(): Samsung One UI only offers Live notifications (Now Bar) for alerting
+            // notifications. The channel has no sound and no vibration, and setOnlyAlertOnce keeps
+            // updates quiet, so nothing is audible either way.
             .setShowWhen(true)
             .setUsesChronometer(true)
             .setContentIntent(openIntent(sessionId))
