@@ -1,5 +1,7 @@
 package de.baschek.gymapp.ui.more
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
@@ -9,6 +11,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
+import de.baschek.gymapp.timer.LiveUpdateDiagnostics
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -85,7 +94,10 @@ fun SettingsScreen(nav: Navigator) {
         liveStatus = LiveUpdateSupport.status(context)
         onPauseOrDispose { }
     }
+    // TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved
+    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
+    if (showDiagnostics) LiveUpdateDiagnosticsDialog { showDiagnostics = false }
 
     ScreenList {
         item { BackBar("Einstellungen", tracked(SCREEN, "back") { nav.pop() }) }
@@ -177,6 +189,13 @@ fun SettingsScreen(nav: Navigator) {
                         trailing = { if (liveStatus == LiveUpdateStatus.ALLOWED) TickIcon() else if (liveStatus == LiveUpdateStatus.NOT_ALLOWED) ChevronIcon() },
                     )
                     Hairline()
+                    // TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved
+                    ListRow(
+                        "Diagnose (vorübergehend)", subtitle = "Werte zur Live-Benachrichtigung anzeigen, kopieren und teilen",
+                        onClick = tracked(SCREEN, "live_diagnostics") { showDiagnostics = true },
+                        trailing = { ChevronIcon() },
+                    )
+                    Hairline()
                     ListRow(
                         "Bildschirm im Training anlassen",
                         trailing = { GymSwitch(keepOn, tracked1<Boolean>(SCREEN, "keep_screen_on") { vm.setKeepScreenOn(it) }, "Bildschirm im Training anlassen") },
@@ -234,4 +253,46 @@ fun SettingsScreen(nav: Navigator) {
             onDismiss = { showConflicts = false },
         )
     }
+}
+
+/** TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved. */
+@Composable
+private fun LiveUpdateDiagnosticsDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var reload by remember { mutableStateOf(0) }
+    val text = remember(reload) { LiveUpdateDiagnostics.build(context) }
+    LaunchedEffect(Unit) { Telemetry.track(SCREEN, "live_diagnostics_view") }
+    AlertDialog(
+        onDismissRequest = tracked(SCREEN, "live_diagnostics_close", onDismiss),
+        title = { Text("Diagnose (vorübergehend)") },
+        text = {
+            Column {
+                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                    Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 15.sp)
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    TextButton(
+                        onClick = tracked(SCREEN, "live_diagnostics_copy") {
+                            try {
+                                context.getSystemService(ClipboardManager::class.java)
+                                    ?.setPrimaryClip(ClipData.newPlainText("GymApp Diagnose", text))
+                            } catch (_: Exception) {
+                            }
+                        },
+                    ) { Text("Kopieren") }
+                    TextButton(
+                        onClick = tracked(SCREEN, "live_diagnostics_share") {
+                            try {
+                                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
+                                context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            } catch (_: Exception) {
+                            }
+                        },
+                    ) { Text("Teilen") }
+                    TextButton(onClick = tracked(SCREEN, "live_diagnostics_reload") { reload++ }) { Text("Neu lesen") }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = tracked(SCREEN, "live_diagnostics_close", onDismiss)) { Text("Schließen") } },
+    )
 }
