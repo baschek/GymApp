@@ -56,7 +56,8 @@ Android modules:
   builds for `10.0.2.2`/`localhost`. No exported components except the launcher
   activity. Never log tokens or request bodies.
 - **Releases.** Push a tag `android-v<version>` (for example `android-v0.2.0`) on a
-  commit on `main`. The workflow `android.yml` builds a signed APK (keystore from the
+  commit on `main`, or run the `Android` workflow manually on `main` with
+  `release_version` (for example `2.3.0`), which creates the tag with the release. The workflow `android.yml` builds a signed APK (keystore from the
   secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
   `ANDROID_KEY_PASSWORD`) and publishes it as a GitHub release; the in-app updater
   installs it. Do not create release tags unless the owner asks.
