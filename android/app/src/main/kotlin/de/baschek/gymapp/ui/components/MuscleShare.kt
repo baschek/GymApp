@@ -45,36 +45,31 @@ object MuscleShare {
         c.drawText(subtitle, 100f, 210f, text)
 
         val base = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF242424.toInt() }
+        val neutral = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1C1C1C.toInt() }
+        val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3A3A3A.toInt(); style = Paint.Style.STROKE; strokeWidth = 3f }
         val max = summary.max
-        val scale = 2.2f
+        val scale = 0.575f
         for ((index, side) in listOf(BodySide.FRONT, BodySide.BACK).withIndex()) {
             val left = 100f + index * 450f
             val top = 260f
             c.save()
             c.translate(left, top)
             c.scale(scale, scale)
-            c.drawCircle(BodyArt.HEAD_CX, BodyArt.HEAD_CY, BodyArt.HEAD_R, base)
-            c.drawRoundRect(RectF(102f, 54f, 118f, 64f), 5f, 5f, base)
-            for (mirrored in listOf(false, true)) {
-                c.save()
-                if (mirrored) {
-                    c.translate(BodyArt.WIDTH, 0f)
-                    c.scale(-1f, 1f)
-                }
-                for (shape in BodyArt.shapes(side)) {
-                    val path: Path = PathParser.createPathFromPathData(shape.d)
-                    c.drawPath(path, base)
-                    val v = summary.totals[shape.group] ?: 0.0
-                    if (v > 0.0) {
-                        val heat = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                            color = accent
-                            alpha = (heatAlpha(v, max) * 255).toInt()
-                        }
-                        c.drawPath(path, heat)
+            fun parse(d: String): Path = PathParser.createPathFromPathData(d).apply { offset(-BodyArt.originX(side), 0f) }
+            for (d in BodyArt.neutral(side)) c.drawPath(parse(d), neutral)
+            for (shape in BodyArt.shapes(side)) {
+                val path = parse(shape.d)
+                c.drawPath(path, base)
+                val v = summary.totals[shape.group] ?: 0.0
+                if (v > 0.0) {
+                    val heat = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = accent
+                        alpha = (heatAlpha(v, max) * 255).toInt()
                     }
+                    c.drawPath(path, heat)
                 }
-                c.restore()
             }
+            c.drawPath(parse(BodyArt.outline(side)), outline.apply { strokeWidth = 2f / scale })
             c.restore()
         }
 
