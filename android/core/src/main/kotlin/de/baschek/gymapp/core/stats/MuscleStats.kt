@@ -1,5 +1,6 @@
 package de.baschek.gymapp.core.stats
 
+import de.baschek.gymapp.core.model.MuscleSub
 import de.baschek.gymapp.core.model.RadarArea
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionStatus
@@ -44,11 +45,22 @@ data class MuscleSummary(
     /** Weighted sets per muscle group (groups without sets are absent). */
     val totals: Map<String, Double>,
     val details: Map<String, List<ExerciseContribution>>,
+    /**
+     * Weighted sets per subgroup (amendment G): an exercise that names subgroups of a group splits that group's
+     * weight evenly among them. Together with [unassigned] this adds up to [totals] of the parent group.
+     */
+    val subTotals: Map<String, Double> = emptyMap(),
+    /** Weighted sets per group from exercises that name no subgroup of it: they colour the whole group. */
+    val unassigned: Map<String, Double> = emptyMap(),
 ) {
     val max: Double get() = totals.values.maxOrNull() ?: 0.0
 
     /** Groups sorted by weighted sets, highest first. */
     fun top(n: Int): List<Pair<String, Double>> = totals.entries.sortedByDescending { it.value }.take(n).map { it.key to it.value }
+
+    /** Value for colouring a body region: the group total, or for a subgroup its own sets plus the unassigned ones of its group. */
+    fun regionValue(group: String, sub: String?): Double =
+        if (sub == null) totals[group] ?: 0.0 else (subTotals[sub] ?: 0.0) + (unassigned[group] ?: 0.0)
 
     companion object {
         val EMPTY = MuscleSummary(emptyMap(), emptyMap())
@@ -60,6 +72,8 @@ data class MuscleSummary(
  * its exercise and 0.5 for each further group (contract v1 amendment C). Only completed sessions
  * within [from] (inclusive) and [to] (exclusive, null = open) are considered.
  *
+ * Optional [subgroupsOf] (keys of [MuscleSub]) refines the map only: totals per group stay exactly as without it.
+ *
  * @param groupsOf muscle groups of an exercise id, first = primary
  */
 fun summarizeMuscles(
@@ -67,8 +81,11 @@ fun summarizeMuscles(
     groupsOf: (exerciseId: String) -> List<String>,
     from: Instant,
     to: Instant? = null,
+    subgroupsOf: (exerciseId: String) -> List<String> = { emptyList() },
 ): MuscleSummary {
     val totals = HashMap<String, Double>()
+    val subTotals = HashMap<String, Double>()
+    val unassigned = HashMap<String, Double>()
     val acc = HashMap<String, MutableMap<String, ExerciseContribution>>()
     for (session in sessions) {
         if (session.status != SessionStatus.COMPLETED) continue
@@ -78,9 +95,13 @@ fun summarizeMuscles(
             val sets = ex.sets.count { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
             if (sets == 0) continue
             val groups = groupsOf(ex.exerciseId)
+            val subs = subgroupsOf(ex.exerciseId).distinct()
             groups.forEachIndexed { index, group ->
                 val weight = if (index == 0) 1.0 else 0.5
                 totals.merge(group, sets * weight, Double::plus)
+                val own = subs.filter { MuscleSub.parent(it) == group }
+                if (own.isEmpty()) unassigned.merge(group, sets * weight, Double::plus)
+                else own.forEach { subTotals.merge(it, sets * weight / own.size, Double::plus) }
                 val byExercise = acc.getOrPut(group) { LinkedHashMap() }
                 val old = byExercise[ex.exerciseId]
                 val date = session.effectiveTime.take(10)
@@ -93,7 +114,7 @@ fun summarizeMuscles(
             }
         }
     }
-    return MuscleSummary(totals, acc.mapValues { (_, m) -> m.values.sortedByDescending { it.weightedSets } })
+    return MuscleSummary(totals, acc.mapValues { (_, m) -> m.values.sortedByDescending { it.weightedSets } }, subTotals, unassigned)
 }
 
 data class RadarAxis(val area: RadarArea, val value: Double, val goal: Double)

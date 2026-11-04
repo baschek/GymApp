@@ -15,7 +15,7 @@ Entity names and `data` fields (all optional unless marked *):
 | entity | data |
 |---|---|
 | `gym` | name*, short_name, archived(bool), has_sauna(bool), notes, sort_order(int), packlist: [{id*, text*, order*, done_default(bool)}], color ("#rrggbb"), subtitle |
-| `exercise` | name*, aliases[], equipment, category, primary_muscles[], secondary_muscles[], instructions[], measurement_type*, load_direction*, load_basis*, movement_family, photo_ref (string; photo bytes are NOT synced in v1), notes, muscle_groups[] |
+| `exercise` | name*, aliases[], equipment, category, primary_muscles[], secondary_muscles[], instructions[], measurement_type*, load_direction*, load_basis*, movement_family, photo_ref (string; photo bytes are NOT synced in v1), notes, muscle_groups[], muscle_subgroups[] |
 | `plan` | name*, notes, created_at, archived(bool), changed_by_assistant_at, change_summary, exercises: [{id*, exercise_id*, order*, mode_sets{normal,fast,ultra}*, target{metric,min,max,rir_min,rir_max}*, starting_weight_kg, current_weight_kg, rest_seconds*, superset_group, notes}] |
 | `machine_profile` | gym_id*, exercise_id*, available_weights_kg[], weight_ranges[{id,min_kg,max_kg,step_kg}], setup_parameters[{id,name,value}], machine_brand, machine_model, notes, addon_weights_kg[] |
 | `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, focus_exercise_id (amendment F), exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, addon_weights_kg[], reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
@@ -176,3 +176,20 @@ is not kept as one: the app offers it on "Heute" on that day, starts a normal se
 
 1. **Focus exercise.** The `session` document has an optional field `focus_exercise_id` (string, a `session.exercises[].id`): the exercise the user currently has open on the training screen (after jumping with the exercise strip). Absent or `null` = no focus, i.e. the first exercise with an open set. The app writes it into the active session when the focus changed, right before each run of the workout sync loop (about every 45 s, `WorkoutActions.publishFocus`, pure rule `withSyncedFocus` in `:core`); an id that is not an exercise of the session counts as none. The focus itself stays in memory in the app (a restart means "first open"); the server never writes the field and uses it only for display (`tess_get_gym` shows it as the current exercise). Unknown-field safe: other clients keep it when rewriting the session, and an unknown or stale id must be tolerated. Only meaningful while `status` is `active`.
 2. **Cleanup of `workout_adjustment`.** The server removes old adjustments with ordinary tombstones (`deleted`, via `/changes`): resolved (`applied`/`rejected`) ones 30 days after `resolved_at`, and `pending` ones older than 7 days whose session is no longer active. The app treats them like any other deleted document (drops its local copy); it must not resurrect a deleted adjustment by pushing it again.
+
+## v1 amendment G: muscle subgroups (finer muscle map)
+
+Protocol (identical in the app's `android/docs/sync-protocol.md` and the server's `docs/gym-sync-protocol.md`): the `exercise` document has an optional field `muscle_subgroups` (array of strings, keys from the fixed set below, order irrelevant). It refines the muscle map only: the counting rule, targets, radar and statistics stay on the twelve `muscle_groups`, a subgroup's sets are part of its parent group (parent sets = sum of the subgroups' shares plus the sets of exercises that name none of that group's subgroups).
+
+| subgroup | parent group |
+| --- | --- |
+| `brust_oben`, `brust_unten` | `brust` |
+| `schulter_vorne`, `schulter_seitlich`, `schulter_hinten` | `schultern` |
+| `latissimus`, `rhomboiden`, `trapez_oben`, `trapez_unten` (trapezius middle/lower) | `ruecken` |
+| `bauch_gerade`, `bauch_schraeg` | `bauch` |
+| `abduktoren` | `gesaess` |
+| `adduktoren` | `quadrizeps` |
+
+Rules: a subgroup belongs to its parent, which should be in the exercise's `muscle_groups`; a subgroup whose parent is not among the exercise's groups is ignored by the app. If an exercise names several subgroups of one group, the group's weight (1 primary, 0.5 further) is split evenly among them. An exercise without `muscle_subgroups`, or without one for a group, colours the whole group on the map as before. Unknown-field safe in both directions: older clients ignore the field and keep it when they rewrite the document; clients skip subgroup keys they do not know, so the set may grow later. Absent and `[]` mean the same.
+
+The app reads it in `Exercise.muscleSubgroups` and aggregates in `summarizeMuscles(..., subgroupsOf)`; the key table is `core/model/MuscleSubgroups.kt` and `subgroups` in `core/src/main/resources/muscle_mapping.json` (a test keeps both identical). It never writes the field.

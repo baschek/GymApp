@@ -63,17 +63,26 @@ class ProgressViewModel(private val c: AppContainer) : ViewModel() {
         }
     }
 
+    /** Finer muscle areas of an exercise (amendment G), they only refine the muscle map. */
+    private val subgroups: StateFlow<(String) -> List<String>> = catalog.let { flow ->
+        flow.combineMap { list ->
+            val map = list.associate { it.id to MuscleMapping.subgroupsOf(it.value) }
+            val lookup: (String) -> List<String> = { map[it].orEmpty() }
+            lookup
+        }
+    }
+
     private fun <A, B> StateFlow<A>.combineMap(transform: (A) -> B): StateFlow<B> =
         kotlinx.coroutines.flow.flow { collect { emit(transform(it)) } }.state(transform(value))
 
     /** Weighted sets per muscle group in the selected period. */
-    val muscles: StateFlow<MuscleSummary> = combine(sessions, groups, period) { s, g, p ->
-        summarizeMuscles(s.map { it.value }, g, p.start(Instant.now(), ZoneId.systemDefault()))
+    val muscles: StateFlow<MuscleSummary> = combine(sessions, groups, subgroups, period) { s, g, sub, p ->
+        summarizeMuscles(s.map { it.value }, g, p.start(Instant.now(), ZoneId.systemDefault()), subgroupsOf = sub)
     }.state(MuscleSummary.EMPTY)
 
     /** The last 7 days, independent of the period switch (overview on the first segment). */
-    val week: StateFlow<MuscleSummary> = combine(sessions, groups) { s, g ->
-        summarizeMuscles(s.map { it.value }, g, StatsPeriod.WEEK.start(Instant.now(), ZoneId.systemDefault()))
+    val week: StateFlow<MuscleSummary> = combine(sessions, groups, subgroups) { s, g, sub ->
+        summarizeMuscles(s.map { it.value }, g, StatsPeriod.WEEK.start(Instant.now(), ZoneId.systemDefault()), subgroupsOf = sub)
     }.state(MuscleSummary.EMPTY)
 
     val weekSessions: StateFlow<Int> = sessions.combineMap { list ->
