@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -27,8 +28,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
@@ -57,6 +63,7 @@ import de.baschek.gymapp.ui.components.Segmented
 import de.baschek.gymapp.ui.components.SoftButton
 import de.baschek.gymapp.ui.components.Tag
 import de.baschek.gymapp.ui.components.ExercisePickerSheet
+import de.baschek.gymapp.ui.components.bottomInset
 import de.baschek.gymapp.ui.components.topInset
 import de.baschek.gymapp.ui.fmtNum
 import de.baschek.gymapp.ui.gymColorOf
@@ -137,11 +144,16 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
         }
     }
 
+    // Height of the pinned bar (buttons + navigation bar inset), measured, so the scroll content always ends above it.
+    val density = LocalDensity.current
+    var pinnedPx by remember { mutableIntStateOf(0) }
+    val pinnedDp = if (pinnedPx > 0) with(density) { pinnedPx.toDp() } else 190.dp + bottomInset()
+
     Box(Modifier.fillMaxSize()) {
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                .padding(top = topInset() + 4.dp, start = Spacing.Gutter, end = Spacing.Gutter, bottom = 150.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .padding(top = topInset() + Spacing.s2, start = Spacing.Gutter, end = Spacing.Gutter, bottom = pinnedDp + Spacing.s6),
+            verticalArrangement = Arrangement.spacedBy(Spacing.s5),
         ) {
             val started = parseInstant(session.startedAt)?.toEpochMilli() ?: now
             val position = when {
@@ -187,11 +199,11 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                                 WeightHintBlock(
                                     hint, applied = abs(draft.total - hint.weightKg) < 1e-6,
                                     onApply = { draft.applyTotal(hint.weightKg, levels, addonList) },
-                                    screen = SCREEN, modifier = Modifier.padding(top = Spacing.s2),
+                                    screen = SCREEN, modifier = Modifier.padding(top = Spacing.s4),
                                 )
                             } else if (!warm && workingDone == 0) {
                                 reasonText(ex, draft.total)?.let {
-                                    Text(it, Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(it, Modifier.padding(top = Spacing.s3), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         },
@@ -204,19 +216,20 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+            Row(Modifier.fillMaxWidth().padding(top = Spacing.s2), horizontalArrangement = Arrangement.Center) {
                 LinkButton("Training beenden", tracked(SCREEN, "finish_open") { confirmFinish = true }, height = Spacing.TouchMin)
             }
         }
 
-        PinnedBottom(Modifier.align(Alignment.BottomCenter)) {
+        PinnedBottom(Modifier.align(Alignment.BottomCenter).onSizeChanged { pinnedPx = it.height }) {
             PrimaryButton("Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = ex != null && set != null)
-            val pad = PaddingValues(horizontal = 6.dp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                LinkButton("Überspringen", tracked(SCREEN, "skip_open") { sheet = "skip" }, height = 48.dp, enabled = set != null, contentPadding = pad)
-                LinkButton("Aufwärmsatz", tracked(SCREEN, "warmup_open") { sheet = "warmup" }, height = 48.dp, enabled = set != null && !warm, contentPadding = pad)
-                LinkButton("Notiz", tracked(SCREEN, "note_open") { sheet = "note" }, height = 48.dp, enabled = ex != null, contentPadding = pad)
-                LinkButton("Rückgängig", tracked(SCREEN, "undo") { vm.undo() }, height = 48.dp, enabled = undoLabel != null, contentPadding = pad)
+            val pad = PaddingValues(horizontal = 0.dp)
+            // Four equal columns; labels never wrap. Disabled actions stay readable (60 % instead of 40 %).
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                BarAction("Überspringen", tracked(SCREEN, "skip_open") { sheet = "skip" }, set != null, pad, Modifier.weight(1f))
+                BarAction("Aufwärmsatz", tracked(SCREEN, "warmup_open") { sheet = "warmup" }, set != null && !warm, pad, Modifier.weight(1f))
+                BarAction("Notiz", tracked(SCREEN, "note_open") { sheet = "note" }, ex != null, pad, Modifier.weight(1f))
+                BarAction("Rückgängig", tracked(SCREEN, "undo") { vm.undo() }, undoLabel != null, pad, Modifier.weight(1f))
             }
         }
     }
@@ -305,6 +318,23 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     }
 }
 
+/** One of the four text actions in the pinned bar: single line, no wrapping, equal width. */
+@Composable
+private fun BarAction(text: String, onClick: () -> Unit, enabled: Boolean, pad: PaddingValues, modifier: Modifier) {
+    val cs = MaterialTheme.colorScheme
+    androidx.compose.material3.TextButton(
+        onClick = onClick, modifier = modifier.heightIn(min = 48.dp), enabled = enabled, contentPadding = pad,
+        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+            contentColor = cs.onSurface, disabledContentColor = cs.onSurfaceVariant.copy(alpha = 0.6f),
+        ),
+    ) {
+        Text(
+            text, maxLines = 1, softWrap = false, overflow = TextOverflow.Visible, textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium, fontSize = 13.sp),
+        )
+    }
+}
+
 /** Shown instead of the input block when the exercise has no open set (all done or skipped). */
 @Composable
 private fun FinishedExerciseCard(ex: SessionExercise, onResume: () -> Unit, onNext: () -> Unit) {
@@ -327,7 +357,7 @@ private fun TrainingHeader(planName: String, position: String, gymName: String, 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s3)) {
         Box(Modifier.width(4.dp).height(40.dp).background(gymColor, androidx.compose.foundation.shape.RoundedCornerShape(2.dp)))
         Column(Modifier.weight(1f)) {
-            Text(planName, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1)
+            Text(planName, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), color = cs.onSurface, maxLines = 1)
             Text("$position · $gymName", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1)
         }
         SoftButton(elapsed, onList, height = 48.dp, icon = GymIcons.Menu)

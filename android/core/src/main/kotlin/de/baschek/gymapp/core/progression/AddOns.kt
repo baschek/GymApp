@@ -67,3 +67,11 @@ fun freeWeights(maxKg: Double = 300.0): List<Double> {
     val n = (maxKg / FREE_STEP_KG).toInt()
     return (1..n).map { r3(it * FREE_STEP_KG) }
 }
+
+/** True when [total] is exactly one selectable total of the machine profile (a level, optionally plus add-ons). */
+fun isSelectableWeight(total: Double, levels: List<Double>, addons: List<Double>): Boolean =
+    weightCandidates(levels, addons).any { kotlin.math.abs(it - total) < 1e-6 }
+
+/** The values of the ascending [sorted] list directly below and directly above [value] (strictly, null at the ends). */
+fun neighborWeights(sorted: List<Double>, value: Double): Pair<Double?, Double?> =
+    sorted.lastOrNull { it < value - 1e-6 } to sorted.firstOrNull { it > value + 1e-6 }

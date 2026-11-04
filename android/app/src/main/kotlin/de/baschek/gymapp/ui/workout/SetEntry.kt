@@ -27,7 +27,9 @@ import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetType
+import de.baschek.gymapp.core.progression.isSelectableWeight
 import de.baschek.gymapp.core.progression.nearestLevelIndex
+import de.baschek.gymapp.core.progression.neighborWeights
 import de.baschek.gymapp.core.progression.splitTotal
 import de.baschek.gymapp.core.progression.weightCandidates
 import de.baschek.gymapp.core.training.describeTarget
@@ -44,6 +46,8 @@ import de.baschek.gymapp.ui.components.WheelRow
 import de.baschek.gymapp.ui.fmtNum
 import de.baschek.gymapp.ui.parseNum
 import de.baschek.gymapp.ui.theme.Spacing
+import androidx.compose.material3.MaterialTheme
+import de.baschek.gymapp.ui.theme.gymColors
 import de.baschek.gymapp.ui.tracked
 
 /** Editable values of one set (the current set, or a logged set that is being corrected). */
@@ -53,13 +57,32 @@ internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Dou
     var value by mutableDoubleStateOf(value)
     var effort by mutableIntStateOf(effort)
 
-    val total: Double get() = Math.round((level + addons.sum()) * 1000.0) / 1000.0
+    /** Exact total typed by the user that is not a selectable total; null while level + add-ons define the weight. */
+    var custom by mutableStateOf<Double?>(null)
+
+    val total: Double get() = custom ?: (Math.round((level + addons.sum()) * 1000.0) / 1000.0)
+
+    /**
+     * Takes a typed [total] exactly. A selectable total is split into level and add-ons as usual; any other
+     * value is kept as typed ([custom]) and [level] only follows it so the wheel shows the surrounding levels.
+     */
+    fun applyExact(total: Double, levels: List<Double>, addonList: List<Double>, wheel: List<Double>) {
+        val exact = if (levels.isEmpty()) wheel.any { kotlin.math.abs(it - total) < 1e-6 } else isSelectableWeight(total, levels, addonList)
+        if (exact) {
+            applyTotal(total, levels, addonList)
+        } else {
+            addons = emptySet()
+            level = wheel[nearestLevelIndex(wheel, total)]
+            custom = Math.round(total * 1000.0) / 1000.0
+        }
+    }
 
     /**
      * Sets the total weight. With a machine profile the nearest selectable total is used and split into
      * level and add-ons; without a profile the value is taken as typed.
      */
     fun applyTotal(total: Double, levels: List<Double>, addonList: List<Double>) {
+        custom = null
         if (levels.isEmpty()) {
             level = total
             addons = emptySet()
@@ -136,28 +159,43 @@ internal fun SetEntryCard(
         if (weighted) {
             val i = nearestLevelIndex(wheel, draft.level)
             val addonSum = if (warm) 0.0 else draft.addons.sum()
+            val custom = draft.custom
+            // A typed value that is no level: the wheel shows the levels directly around it.
+            val around = custom?.let { neighborWeights(wheel, it) }
             WheelRow(
-                previous = wheel.getOrNull(i - 1)?.let { fmtNum(it + addonSum) },
+                previous = if (around != null) around.first?.let(::fmtNum) else wheel.getOrNull(i - 1)?.let { fmtNum(it + addonSum) },
                 current = fmtNum(draft.total),
-                next = wheel.getOrNull(i + 1)?.let { fmtNum(it + addonSum) },
+                next = if (around != null) around.second?.let(::fmtNum) else wheel.getOrNull(i + 1)?.let { fmtNum(it + addonSum) },
                 unit = "kg",
                 onStep = { d ->
                     Telemetry.track(screen, "weight_step")
-                    draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
+                    if (around != null) {
+                        (if (d < 0) around.first else around.second)?.let { draft.custom = null; draft.addons = emptySet(); draft.level = it }
+                    } else {
+                        draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
+                    }
                 },
                 label = "Gewicht",
                 rowHeight = 40.dp, stepDistance = 20.dp,
-                minusEnabled = i > 0, plusEnabled = i < wheel.lastIndex,
+                minusEnabled = if (around != null) around.first != null else i > 0,
+                plusEnabled = if (around != null) around.second != null else i < wheel.lastIndex,
                 neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
                 onTapValue = tracked(screen, "weight_type") { dialog = EntryDialog.WEIGHT },
             )
+            if (hasProfile && draft.custom != null && !isSelectableWeight(draft.total, levels, addonList)) {
+                Text(
+                    "Keine Stufe im Profil – trotzdem übernommen.", Modifier.padding(top = Spacing.s2),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.gymColors.skipped,
+                )
+            }
             if (!warm && hasProfile && addonList.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth().padding(top = Spacing.s2), horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
+                Row(Modifier.fillMaxWidth().padding(top = Spacing.s3), horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
                     addonList.forEach { a ->
                         AddonButton(
                             AddonOption("+ ${fmtNum(a)} kg", a in draft.addons),
                             {
                                 Telemetry.track(screen, "toggle_addon")
+                                draft.custom = null
                                 draft.addons = if (a in draft.addons) draft.addons - a else draft.addons + a
                             },
                             Modifier.weight(1f),
@@ -183,22 +221,23 @@ internal fun SetEntryCard(
                 draft.value = (draft.value + d * step).coerceIn(step, 999.0)
             },
             label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> "Wiederholungen" },
-            modifier = Modifier.padding(top = if (weighted) Spacing.s2 else 0.dp),
+            modifier = Modifier.padding(top = if (weighted) Spacing.s5 else 0.dp),
             rowHeight = 40.dp, stepDistance = 24.dp,
             minusEnabled = draft.value > step,
             neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
             onTapValue = tracked(screen, "value_type") { dialog = EntryDialog.VALUE },
         )
         if (!warm) {
-            EffortPicker(draft.effort, { Telemetry.track(screen, "effort"); draft.effort = it }, Modifier.padding(top = Spacing.s2))
+            EffortPicker(draft.effort, { Telemetry.track(screen, "effort"); draft.effort = it }, Modifier.padding(top = Spacing.s5))
         }
     }
 
     when (dialog) {
         EntryDialog.WEIGHT -> NumberEntryDialog(
             title = "Gewicht eingeben", unit = "kg", initial = fmtNum(draft.total), decimal = true,
-            note = if (hasProfile) "Es wird die nächste Stufe der Maschine gewählt." else null,
-            onConfirm = { draft.applyTotal(it, levels, addonList); dialog = null },
+            note = if (hasProfile) "Der Wert wird exakt übernommen." else null,
+            warn = { v -> if (hasProfile && !isSelectableWeight(v, levels, addonList)) "Keine Stufe im Profil – wird trotzdem übernommen." else null },
+            onConfirm = { draft.applyExact(it, levels, addonList, wheel); dialog = null },
             onDismiss = { dialog = null },
         )
         EntryDialog.VALUE -> NumberEntryDialog(
@@ -222,6 +261,7 @@ internal fun NumberEntryDialog(
     note: String?,
     onConfirm: (Double) -> Unit,
     onDismiss: () -> Unit,
+    warn: ((Double) -> String?)? = null,
 ) {
     var text by remember { mutableStateOf(initial) }
     val focus = remember { FocusRequester() }
@@ -237,6 +277,9 @@ internal fun NumberEntryDialog(
                     modifier = Modifier.focusRequester(focus),
                     keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number,
                 )
+                parsed?.let { v -> warn?.invoke(v) }?.let {
+                    Text(it, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = MaterialTheme.gymColors.skipped)
+                }
                 if (note != null) Text(note, style = androidx.compose.material3.MaterialTheme.typography.bodySmall, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },

@@ -92,6 +92,7 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
     val dayLines by vm.dayLines.collectAsStateWithLifecycle()
     val dayPack by vm.dayPack.collectAsStateWithLifecycle()
     var showConflicts by rememberSaveable { mutableStateOf(false) }
+    var showPlans by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.refreshDay()
@@ -103,6 +104,9 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
     val chosenPlan: Plan? = chosen?.let { planById[it.planId]?.value }
     val alternatives = suggestions.filter { it.planId != chosen?.planId }.take(if (selectedPlan == null) 2 else 3)
     val choices = gymChoices(gyms)
+    // With an offered day workout the normal plan choice is folded away behind "Anderen Plan wählen".
+    val dayOffered = active == null && dayWorkout != null
+    val collapsePlans = dayOffered && !showPlans
 
     Box(Modifier.fillMaxSize()) {
         ScreenList(pinnedHeight = 100.dp) {
@@ -197,7 +201,21 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
                 }
             }
 
-            if (chosen == null || chosenPlan == null) {
+            if (dayOffered) {
+                item {
+                    Group {
+                        ListRow(
+                            if (showPlans) "Plan-Auswahl einklappen" else "Anderen Plan wählen", minHeight = 56.dp,
+                            onClick = tracked(SCREEN, if (showPlans) "plans_collapse" else "plans_expand") { showPlans = !showPlans },
+                            trailing = { ChevronIcon() },
+                        )
+                    }
+                }
+            }
+
+            if (collapsePlans) {
+                // Day workout offered: the normal plan card stays hidden until expanded.
+            } else if (chosen == null || chosenPlan == null) {
                 item {
                     GymCardSurface {
                         Text("Noch kein Plan", style = MaterialTheme.typography.headlineSmall)
@@ -280,7 +298,7 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
         }
 
         Box(Modifier.align(Alignment.BottomCenter)) {
-            PinnedBottom(aboveBottomBar = true) {
+            if (!collapsePlans) PinnedBottom(aboveBottomBar = true) {
                 val gymId = selectedGym
                 val planId = chosen?.planId
                 when {
