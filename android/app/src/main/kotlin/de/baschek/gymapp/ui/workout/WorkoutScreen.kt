@@ -5,9 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +45,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.baschek.gymapp.core.model.Metric
+import de.baschek.gymapp.timer.LiveUpdateStatus
+import de.baschek.gymapp.timer.LiveUpdateSupport
 import de.baschek.gymapp.core.model.SelectableEffortBands
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
@@ -193,16 +192,6 @@ internal fun rememberNow(intervalMs: Long = 500): Long {
 private fun formatElapsed(seconds: Long): String {
     val s = seconds.coerceAtLeast(0)
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s % 3600 / 60, s % 60) else "%02d:%02d".format(s / 60, s % 60)
-}
-
-internal fun vibrateOnce(context: Context) {
-    val vibrator = if (Build.VERSION.SDK_INT >= 31) {
-        context.getSystemService(VibratorManager::class.java)?.defaultVibrator
-    } else {
-        @Suppress("DEPRECATION")
-        context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-    }
-    vibrator?.vibrate(VibrationEffect.createOneShot(350, VibrationEffect.DEFAULT_AMPLITUDE))
 }
 
 // ---- training ---------------------------------------------------------------------------
@@ -493,8 +482,18 @@ private fun NotificationPermissionPrompt() {
     if (Build.VERSION.SDK_INT < 33) return
     val context = LocalContext.current
     fun granted() = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    var step by rememberSaveable { mutableIntStateOf(if (granted()) 0 else 1) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> step = if (ok) 0 else 2 }
+    // Step 3: one-time hint for the Android 16+ Live Update (Now Bar) switch.
+    fun liveHintNeeded(): Boolean {
+        if (LiveUpdateSupport.status(context) != LiveUpdateStatus.NOT_ALLOWED) return false
+        return runCatching { !context.getSharedPreferences("hints", Context.MODE_PRIVATE).getBoolean("live_update_hint", false) }.getOrDefault(false)
+    }
+    fun markLiveHintSeen() {
+        runCatching { context.getSharedPreferences("hints", Context.MODE_PRIVATE).edit().putBoolean("live_update_hint", true).apply() }
+    }
+    var step by rememberSaveable { mutableIntStateOf(if (!granted()) 1 else if (liveHintNeeded()) 3 else 0) }
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        step = if (!ok) 2 else if (liveHintNeeded()) 3 else 0
+    }
     when (step) {
         1 -> AlertDialog(
             onDismissRequest = { step = 0 },
@@ -521,6 +520,26 @@ private fun NotificationPermissionPrompt() {
                 ) { Text("Einstellungen") }
             },
             dismissButton = { TextButton(onClick = tracked(SCREEN, "notif_cancel") { step = 0 }) { Text("Abbrechen") } },
+        )
+        3 -> AlertDialog(
+            onDismissRequest = { markLiveHintSeen(); step = 0 },
+            title = { Text("Live-Benachrichtigung (Now Bar)") },
+            text = {
+                Text(
+                    "Damit Satz und Pausenzeit auch auf dem Sperrbildschirm und in der Now Bar erscheinen, muss Android " +
+                        "\"Live-Benachrichtigungen\" für GymApp erlauben. Du findest den Schalter auch unter Mehr > Einstellungen.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = tracked(SCREEN, "live_update_settings") {
+                        markLiveHintSeen()
+                        step = 0
+                        LiveUpdateSupport.open(context)
+                    },
+                ) { Text("Einstellungen") }
+            },
+            dismissButton = { TextButton(onClick = tracked(SCREEN, "live_update_later") { markLiveHintSeen(); step = 0 }) { Text("Später") } },
         )
     }
 }

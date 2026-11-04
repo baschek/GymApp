@@ -15,7 +15,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.Session
@@ -46,9 +45,7 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val machines by vm.machines.collectAsStateWithLifecycle()
     val previous by vm.previousWeights.collectAsStateWithLifecycle()
     val catalog by vm.catalog.collectAsStateWithLifecycle()
-    val vibrate by vm.restVibration.collectAsStateWithLifecycle()
     val now = rememberNow(250)
-    val context = LocalContext.current
     var pickExercise by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
@@ -57,12 +54,8 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val elapsed = timer.elapsedSeconds(now)
     val remaining = if (suggested > 0) ceil(((timer.endsAtMillis ?: now) - now) / 1000.0).toInt() else elapsed
     val progress = if (suggested > 0) elapsed.toFloat() / suggested else 0f
-    val reached = suggested > 0 && remaining <= 0
 
-    // One vibration when the countdown reaches zero (again after +15 s once it is reached again).
-    LaunchedEffect(reached, timer.startedAtMillis) {
-        if (reached && vibrate) vibrateOnce(context)
-    }
+    // Vibration at the end of the rest is done by the Doze-safe alarm (timer/RestAlarmReceiver), not here.
 
     val exIndex = currentExerciseIndex(session.exercises)
     val nextEx = session.exercises.getOrNull(exIndex)
