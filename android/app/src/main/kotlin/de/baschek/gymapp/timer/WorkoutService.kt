@@ -141,6 +141,7 @@ class WorkoutService : Service() {
         while (true) {
             if (container.repository.getActiveSession() == null) return
             val outcome = try {
+                container.workout.publishFocus()
                 container.syncManager.runSync()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

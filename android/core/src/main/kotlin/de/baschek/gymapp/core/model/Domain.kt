@@ -268,6 +268,8 @@ data class Session(
     /** `"day_workout"` when started from a one-off day workout (amendment E); null for plan sessions. */
     val source: String? = null,
     @SerialName("day_workout_id") val dayWorkoutId: String? = null,
+    /** Amendment F: session exercise id the user has open on the training screen (null = the first open one). */
+    @SerialName("focus_exercise_id") val focusExerciseId: String? = null,
     val exercises: List<SessionExercise> = emptyList(),
 ) {
     /** Sort key used for "newest first" (completed time, else start). */

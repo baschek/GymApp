@@ -88,9 +88,15 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
     val mode by vm.mode.collectAsStateWithLifecycle()
     val pack by vm.pack.collectAsStateWithLifecycle()
     val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val dayWorkout by vm.dayWorkout.collectAsStateWithLifecycle()
+    val dayLines by vm.dayLines.collectAsStateWithLifecycle()
+    val dayPack by vm.dayPack.collectAsStateWithLifecycle()
     var showConflicts by rememberSaveable { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
+    LaunchedEffect(Unit) {
+        vm.refreshDay()
+        Telemetry.track(SCREEN, "view")
+    }
 
     val planById = plans.associateBy { it.id }
     val chosen = suggestions.firstOrNull { it.planId == selectedPlan } ?: suggestions.firstOrNull()
@@ -119,6 +125,54 @@ fun HomeScreen(nav: Navigator, onOpenWorkout: (String) -> Unit) {
                             "Fortsetzen", tracked(SCREEN, "resume") { onOpenWorkout(session.id) },
                             Modifier.padding(top = Spacing.s3), icon = GymIcons.Play,
                         )
+                    }
+                }
+            }
+
+            val day = dayWorkout
+            if (active == null && day != null) {
+                item {
+                    val dayGym = selectedGym ?: day.value.gymId
+                    GymCardSurface {
+                        Overline("Workout laden")
+                        Text(day.value.title, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.headlineSmall)
+                        Text(
+                            "${day.value.exercises.size} Übungen · von Claude für heute",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        day.value.note?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Column(Modifier.padding(top = Spacing.s3), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            dayLines.forEach {
+                                Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        PrimaryButton(
+                            "Workout laden", onClick = { vm.startDayWorkout(onOpenWorkout) },
+                            modifier = Modifier.padding(top = Spacing.s3), icon = GymIcons.Play,
+                        )
+                        Text(
+                            "in ${gymLabel(dayGym, gyms)}", Modifier.fillMaxWidth().padding(top = 4.dp), textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        LinkButton(
+                            "Ausblenden", tracked(SCREEN, "dismiss_day_workout") { vm.dismissDayWorkout() },
+                            Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (dayPack.isNotEmpty()) {
+                    item {
+                        Column {
+                            Overline("Für dieses Workout", Modifier.padding(start = 4.dp, bottom = 8.dp))
+                            Group {
+                                dayPack.forEachIndexed { i, row ->
+                                    if (i > 0) Hairline()
+                                    CheckRow(row.text, row.checked, tracked(SCREEN, "toggle_day_pack") { vm.toggleDayPack(row.id) })
+                                }
+                            }
+                        }
                     }
                 }
             }

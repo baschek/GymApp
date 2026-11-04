@@ -2,8 +2,10 @@ package de.baschek.gymapp.core.training
 
 import de.baschek.gymapp.core.model.DayWorkout
 import de.baschek.gymapp.core.model.DayWorkoutStatus
+import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.PackItem
 import de.baschek.gymapp.core.model.Plan
+import de.baschek.gymapp.core.model.PlanExercise
 import de.baschek.gymapp.core.model.WorkoutMode
 
 /*
@@ -38,3 +40,22 @@ fun DayWorkout.markDismissed(nowIso: String): DayWorkout =
 
 fun DayWorkout.markExpired(nowIso: String): DayWorkout =
     copy(status = DayWorkoutStatus.EXPIRED, resolvedAt = nowIso)
+
+private fun num(v: Double): String = if (v == Math.rint(v)) v.toLong().toString() else v.toString()
+
+/** "Bankdrücken · 4 × 6–8" (sets of the normal mode, target range; seconds/meters get their unit). */
+fun describeDayExercise(pe: PlanExercise, name: String?): String {
+    val sets = pe.modeSets.forMode(WorkoutMode.NORMAL)
+    val unit = when (pe.target.metric) {
+        Metric.SECONDS -> " s"
+        Metric.METERS -> " m"
+        else -> ""
+    }
+    val range = when {
+        pe.target.max <= 0.0 -> null
+        pe.target.min <= 0.0 || pe.target.min == pe.target.max -> num(pe.target.max) + unit
+        else -> num(pe.target.min) + "–" + num(pe.target.max) + unit
+    }
+    val volume = listOfNotNull(sets.takeIf { it > 0 }?.toString(), range).joinToString(" × ")
+    return listOfNotNull(name ?: pe.exerciseId, volume.takeIf { it.isNotEmpty() }).joinToString(" · ")
+}

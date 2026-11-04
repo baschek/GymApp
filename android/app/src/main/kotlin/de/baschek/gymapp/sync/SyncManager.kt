@@ -85,6 +85,10 @@ class SyncManager(
                 val answer = engine.sync()
                 report = report.copy(notices = report.notices + answer.notices)
             }
+            // Offered day workouts of an earlier day are marked expired (amendment E) and reported at once.
+            if (repository.expireDayWorkouts(java.time.LocalDate.now().toString()) > 0) {
+                report = report.copy(notices = report.notices + engine.sync().notices)
+            }
             // Telemetry is best effort and must not fail the sync.
             try {
                 telemetry.upload()

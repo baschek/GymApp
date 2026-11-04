@@ -18,8 +18,9 @@ Entity names and `data` fields (all optional unless marked *):
 | `exercise` | name*, aliases[], equipment, category, primary_muscles[], secondary_muscles[], instructions[], measurement_type*, load_direction*, load_basis*, movement_family, photo_ref (string; photo bytes are NOT synced in v1), notes, muscle_groups[] |
 | `plan` | name*, notes, created_at, archived(bool), changed_by_assistant_at, change_summary, exercises: [{id*, exercise_id*, order*, mode_sets{normal,fast,ultra}*, target{metric,min,max,rir_min,rir_max}*, starting_weight_kg, current_weight_kg, rest_seconds*, superset_group, notes}] |
 | `machine_profile` | gym_id*, exercise_id*, available_weights_kg[], weight_ranges[{id,min_kg,max_kg,step_kg}], setup_parameters[{id,name,value}], machine_brand, machine_model, notes, addon_weights_kg[] |
-| `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, addon_weights_kg[], reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
+| `session` | gym_id, plan_id, plan_name*, mode* (normal/fast/ultra), status* (active/completed), started_at*, completed_at, duration_seconds, notes, import_key, focus_exercise_id (amendment F), exercises: [{id*, source_plan_exercise_id, exercise_id*, name*, order*, notes, measurement_type, load_direction, load_basis, target{...}, rest_seconds, superset_group, planned_sets, suggested_weight_kg, suggestion_reason, sets: [{id*, order*, set_type* (working/warmup), status*, weight_kg, addon_weights_kg[], reps, seconds, meters, effort, set_duration_seconds, rest_before_seconds, setup_before_seconds, completed_at}]}] |
 | `workout_adjustment` | session_id*, status* (pending/applied/rejected), reason*, created_at*, resolved_at, status_reason, ops[]*, op_results[] (amendment D) |
+| `day_workout` | id `day-<date>`; date* (YYYY-MM-DD, local day), gym_id*, title*, note, exercises[]* (plan exercise objects), packlist[] (like gym packlist), status* (offered/started/dismissed/expired/withdrawn), created_at*, resolved_at, session_id (amendment E) |
 | `body_weight` | date* (YYYY-MM-DD), weight_kg*, notes |
 | `milestone` | plan_id, plan_exercise_id, exercise_id*, exercise_name, session_id, occurred_at*, previous_weight_kg, new_weight_kg*, direction, seen(bool) |
 | `goal` | singleton with id `weekly`: training_days_per_week (1–7), target_sets{brust, schultern, arme, beine, bauch, ruecken: 0–60}, updated_by (`app`/`server`) |
@@ -143,3 +144,35 @@ request, the app applies it to its own session and reports the result.
    sessions up to `working_weight_updated_at` count as before (milestones included), the first later session continues from the
    manual weight, and without later sessions the manual weight stays. Both implementations (server and app, also gym reassignment
    and editing finished sessions) use this rule; golden cases `recalculateWorkingWeights` with `baselines` pin it.
+
+## v1 amendment E: one-off workout for a day (`day_workout`)
+
+Goal: Claude builds a workout in the chat for one specific day (with gym and what Jonathan needs to bring). It is **not** a plan and
+is not kept as one: the app offers it on "Heute" on that day, starts a normal session from it with one tap and reports back.
+
+1. **Entity `day_workout`**, id `day-<date>` (so at most one per day; a new one for the same day replaces it), created by the server
+   (`origin` `server`); the app only changes the status fields. `data`: `date`* (`YYYY-MM-DD`, Jonathan's local day), `gym_id`*,
+   `title`* (max 200), `exercises`* (1 to 40, **the same objects as plan exercises**: `id`, `exercise_id`, `order`, `mode_sets`, `target`,
+   `starting_weight_kg`, `rest_seconds`, `notes`, ...), `packlist` (extras for this workout, objects like the gym packlist: `id`, `text`,
+   `order`; the gym's own packlist is shown anyway), `note` (message to Jonathan, max 2000), `status`*, `created_at`*, and written back by
+   the app: `resolved_at`, `session_id` (the session that was started). Unknown fields are preserved like everywhere.
+2. **Status.** `offered` (server, initial) -> `started` (app: a session was started from it; `session_id`, `resolved_at`) | `dismissed`
+   (app: the user hid it) | `expired` (app: `date` is over and it was never started) | `withdrawn` (server: Claude took it back).
+   A new server write for the same day sets `offered` again and drops `resolved_at`/`session_id`, except after `started` (then the
+   server refuses). The app offers only `offered` documents whose `date` is today; a document with `date` before today is treated as
+   `expired` even before the app has written that (after each sync the app writes `expired` for such documents).
+3. **App rules.** Starting works like starting a plan with mode `normal` (`mode_sets.normal` sets per exercise) in the gym of the
+   document (shown on the card, which is the explicit confirmation of the gym; another gym can be chosen). The session gets
+   `plan_id` = null, `plan_name` = `title`, and the extra fields `source` = `"day_workout"` and `day_workout_id`. Start weights follow
+   the usual order (gym working weight, history, estimates); `starting_weight_kg` is only the last fallback like the plan weight.
+   Progression, working weights and milestones therefore work per gym x exercise exactly as for plan sessions. With a running
+   session nothing new is started (the card is hidden while a session runs, "Training läuft" is shown instead). The checked state of the
+   extra packing items is local only (settings key `pack:day:<document id>`, valid for the day like the gym packing list).
+4. **Not a plan.** Nothing is written to the `plan` entity; the document is not listed with the plans and has no effect on the plan
+   recommendation. Sessions with `source` `day_workout` have no plan id, so the plan-based statistics skip them (the per gym x exercise
+   statistics include them).
+
+## v1 amendment F: focus exercise, adjustment cleanup
+
+1. **Focus exercise.** The `session` document has an optional field `focus_exercise_id` (string, a `session.exercises[].id`): the exercise the user currently has open on the training screen (after jumping with the exercise strip). Absent or `null` = no focus, i.e. the first exercise with an open set. The app writes it into the active session when the focus changed, right before each run of the workout sync loop (about every 45 s, `WorkoutActions.publishFocus`, pure rule `withSyncedFocus` in `:core`); an id that is not an exercise of the session counts as none. The focus itself stays in memory in the app (a restart means "first open"); the server never writes the field and uses it only for display (`tess_get_gym` shows it as the current exercise). Unknown-field safe: other clients keep it when rewriting the session, and an unknown or stale id must be tolerated. Only meaningful while `status` is `active`.
+2. **Cleanup of `workout_adjustment`.** The server removes old adjustments with ordinary tombstones (`deleted`, via `/changes`): resolved (`applied`/`rejected`) ones 30 days after `resolved_at`, and `pending` ones older than 7 days whose session is no longer active. The app treats them like any other deleted document (drops its local copy); it must not resurrect a deleted adjustment by pushing it again.

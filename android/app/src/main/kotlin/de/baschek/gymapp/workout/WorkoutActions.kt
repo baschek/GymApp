@@ -27,6 +27,7 @@ import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
 import de.baschek.gymapp.core.training.skipSet as coreSkipSet
 import de.baschek.gymapp.core.training.templateFor
 import de.baschek.gymapp.core.training.upNextExerciseIndex
+import de.baschek.gymapp.core.training.withSyncedFocus
 import de.baschek.gymapp.core.training.toggleSkipExercise as coreToggleSkipExercise
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,6 +58,18 @@ class WorkoutActions(
 
     fun setFocus(exerciseId: String?) {
         _focus.value = exerciseId
+    }
+
+    /**
+     * Writes the current focus into the active session (`focus_exercise_id`, amendment F) when it changed, so that the next
+     * sync tells the server which exercise is open. Called by the sync loop before each run; a no-op if unchanged.
+     */
+    suspend fun publishFocus() {
+        val active = repository.getActiveSession() ?: return
+        val focus = _focus.value
+        if (withSyncedFocus(active.value, focus) !== active.value) {
+            repository.updateSession(active.id) { withSyncedFocus(it, focus) }
+        }
     }
 
     private val _undo = MutableStateFlow<Pair<String, UndoEntry>?>(null)
