@@ -120,14 +120,14 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
-## react-native-body-highlighter (Android app, body drawing)
+## MuscleMap (Android app, body drawing)
 
-The front and back view of the muscle map (`android/app/src/main/kotlin/de/baschek/gymapp/ui/components/BodyArtPaths.kt`) uses the SVG path data of the male body illustration from version 3.2.0 of [react-native-body-highlighter](https://github.com/HichamELBSI/react-native-body-highlighter) (npm package of the same name). The path data is unchanged except for a mechanical rewrite of the path syntax (separated arc flags) and the regrouping of regions into the app's muscle groups (`BodyRegions`). It is licensed under the MIT License:
+The front and back view of the muscle map (`android/app/src/main/kotlin/de/baschek/gymapp/ui/components/BodyArtPaths.kt`) uses the SVG path data of the male body illustration (muscle regions and silhouette) from version 1.1.0 of [MuscleMap](https://github.com/Jsplice/MuscleMap) (npm package [`@musclemap/assets`](https://www.npmjs.com/package/@musclemap/assets)). Only the vector path data is used; the body photographs of the package are not part of GymApp. **Modified:** the coordinates are shifted to a tight crop and rounded to one decimal, the left and right muscle of the same kind are joined to one region, and the chest regions are cut into an upper and a lower part ("chest split into upper/lower", one straight cut per side through the flattened chest outline, precomputed once). The regions are assigned to the app's muscle groups and subgroups in `BodyRegions`. It is licensed under the MIT License:
 
 ```
 MIT License
 
-Copyright (c) 2022 ELABBASSI Hicham
+Copyright (c) 2026 Jsplice / MuscleMap contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -147,3 +147,5 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+The earlier muscle map used the path data of react-native-body-highlighter 3.2.0 (MIT, Copyright (c) 2022 ELABBASSI Hicham); it is no longer part of the app.

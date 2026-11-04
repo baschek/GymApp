@@ -136,6 +136,8 @@ data class Exercise(
     val notes: String? = null,
     /** Fixed muscle group keys, first = primary (amendment C); see [MuscleGroup]. */
     @SerialName("muscle_groups") val muscleGroups: List<String>? = null,
+    /** Optional finer muscle areas (amendment G), keys of [MuscleSub]; each belongs to one of [muscleGroups]. */
+    @SerialName("muscle_subgroups") val muscleSubgroups: List<String>? = null,
 )
 
 @Serializable

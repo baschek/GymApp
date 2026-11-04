@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import de.baschek.gymapp.core.model.MuscleGroup
+import de.baschek.gymapp.core.model.MuscleSub
 import de.baschek.gymapp.core.stats.MuscleSummary
 import de.baschek.gymapp.core.stats.formatSets
 import de.baschek.gymapp.ui.components.BodySide
@@ -42,6 +43,13 @@ fun MuscleDetailSheet(group: String, summary: MuscleSummary, periodLabel: String
             else "${formatSets(summary.totals[group] ?: 0.0)} Sätze $periodLabel (Hauptmuskel zählt voll, weitere Muskeln halb).",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        val parts = MuscleSub.childrenOf(group).mapNotNull { sub -> summary.subTotals[sub]?.let { "${MuscleSub.label(sub)} ${formatSets(it)}" } }
+        if (parts.isNotEmpty()) {
+            Text(
+                "Davon genauer: ${parts.joinToString(" · ")}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (details.isNotEmpty()) {
             Group {
                 details.forEachIndexed { i, d ->

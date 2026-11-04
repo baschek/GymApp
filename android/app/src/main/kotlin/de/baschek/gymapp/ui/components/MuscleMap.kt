@@ -64,9 +64,9 @@ fun MuscleBody(
     val accent = cs.primary
     val base = cs.surfaceContainerHigh
     val shapes = BodyArt.shapes(side)
-    val paths: List<Path> = remember(side) { shapes.map { parseBodyPath(it.d, side) } }
-    val neutralPaths: List<Path> = remember(side) { BodyArt.neutral(side).map { parseBodyPath(it, side) } }
-    val outlinePath: Path = remember(side) { parseBodyPath(BodyArt.outline(side), side) }
+    val paths: List<Path> = remember(side) { shapes.map { parseBodyPath(it.d) } }
+    val regions: List<android.graphics.Region> = remember(side) { paths.map { pathRegion(it) } }
+    val outlinePath: Path = remember(side) { parseBodyPath(BodyArt.outline(side)) }
     val neutralColor = base.copy(alpha = 0.45f)
     val outlineColor = cs.outlineVariant
     val max = summary.max
@@ -82,9 +82,7 @@ fun MuscleBody(
                 else Modifier.pointerInput(side, summary) {
                     detectTapGestures { offset ->
                         val s = size.width / BodyArt.WIDTH
-                        val x = offset.x / s
-                        val y = offset.y / s
-                        val hit = shapes.indices.firstOrNull { i -> pathContains(paths[i], x, y) }
+                        val hit = regionAt(regions, offset.x / s, offset.y / s)
                         if (hit != null) onMuscleTap(shapes[hit].group)
                     }
                 },
@@ -92,28 +90,44 @@ fun MuscleBody(
     ) {
         val s = size.width / BodyArt.WIDTH
         withTransform({ scale(s, s, pivot = Offset.Zero) }) {
-            neutralPaths.forEach { drawPath(it, neutralColor) }
+            drawPath(outlinePath, neutralColor)
             shapes.forEachIndexed { i, shape ->
                 drawPath(paths[i], base)
-                val v = summary.totals[shape.group] ?: 0.0
+                val v = summary.regionValue(shape.group, shape.sub)
                 if (v > 0.0) drawPath(paths[i], accent, alpha = heatAlpha(v, max))
             }
+            val hairline = Stroke(width = 0.75.dp.toPx() / s)
+            shapes.forEachIndexed { i, _ -> drawPath(paths[i], outlineColor, alpha = 0.6f, style = hairline) }
             drawPath(outlinePath, outlineColor, style = Stroke(width = 1.dp.toPx() / s))
         }
     }
 }
 
-/** Parses body path data into view coordinates (the back view's data is shifted by [BodyArt.originX]). */
-private fun parseBodyPath(d: String, side: BodySide): Path =
-    PathParser().parsePathString(d).toPath().apply { translate(Offset(-BodyArt.originX(side), 0f)) }
+/** Parses body path data (view coordinates, see [BodyArt]). */
+private fun parseBodyPath(d: String): Path = PathParser().parsePathString(d).toPath()
 
-/** Point-in-path test through an Android Region (the Compose Path has no contains). */
-internal fun pathContains(path: Path, x: Float, y: Float): Boolean {
+/** Hit-test region of a path (the Compose Path has no contains), clipped to the drawing. */
+private fun pathRegion(path: Path): android.graphics.Region {
     val region = android.graphics.Region()
-    val clip = android.graphics.Region(0, 0, BodyArt.WIDTH.toInt(), BodyArt.HEIGHT.toInt())
-    region.setPath(path.asAndroidPath(), clip)
-    return region.contains(x.toInt(), y.toInt())
+    region.setPath(path.asAndroidPath(), android.graphics.Region(0, 0, BodyArt.WIDTH.toInt() + 1, BodyArt.HEIGHT.toInt() + 1))
+    return region
 }
+
+/**
+ * Index of the shape at a point in view coordinates. The muscles are separated by thin gaps, so when the point
+ * hits nothing the ring of points around it ([TAP_SLOP] units away) is tried as well.
+ */
+internal fun regionAt(regions: List<android.graphics.Region>, x: Float, y: Float): Int? {
+    fun at(px: Float, py: Float): Int? = regions.indices.firstOrNull { regions[it].contains(px.toInt(), py.toInt()) }
+    at(x, y)?.let { return it }
+    for (k in 0 until 8) {
+        val angle = k * Math.PI / 4
+        at(x + (TAP_SLOP * Math.cos(angle)).toFloat(), y + (TAP_SLOP * Math.sin(angle)).toFloat())?.let { return it }
+    }
+    return null
+}
+
+private const val TAP_SLOP = 9.0
 
 @Composable
 private fun HeatLegend(maxText: String) {

@@ -48,19 +48,19 @@ object MuscleShare {
         val neutral = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1C1C1C.toInt() }
         val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3A3A3A.toInt(); style = Paint.Style.STROKE; strokeWidth = 3f }
         val max = summary.max
-        val scale = 0.575f
+        val scale = 0.6f
         for ((index, side) in listOf(BodySide.FRONT, BodySide.BACK).withIndex()) {
-            val left = 100f + index * 450f
+            val left = 120f + index * 450f
             val top = 260f
             c.save()
             c.translate(left, top)
             c.scale(scale, scale)
-            fun parse(d: String): Path = PathParser.createPathFromPathData(d).apply { offset(-BodyArt.originX(side), 0f) }
-            for (d in BodyArt.neutral(side)) c.drawPath(parse(d), neutral)
+            fun parse(d: String): Path = PathParser.createPathFromPathData(d)
+            c.drawPath(parse(BodyArt.outline(side)), neutral)
             for (shape in BodyArt.shapes(side)) {
                 val path = parse(shape.d)
                 c.drawPath(path, base)
-                val v = summary.totals[shape.group] ?: 0.0
+                val v = summary.regionValue(shape.group, shape.sub)
                 if (v > 0.0) {
                     val heat = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                         color = accent

@@ -85,6 +85,14 @@ object MuscleMapping {
         parse(text)
     }.getOrDefault(emptyMap())
 
+    /** Subgroup to parent group from `muscle_mapping.json` (amendment G); tests keep it identical to [MuscleSub.PARENT]. */
+    val subgroupTable: Map<String, String> by lazy {
+        runCatching {
+            val text = MuscleMapping::class.java.getResourceAsStream("/muscle_mapping.json")!!.use { it.readBytes().decodeToString() }
+            GymJson.parseToJsonElement(text).jsonObject["subgroups"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
+        }.getOrDefault(emptyMap())
+    }
+
     internal fun parse(text: String): Map<String, String> {
         val root: JsonObject = GymJson.parseToJsonElement(text).jsonObject
         return root["mapping"]!!.jsonObject.mapValues { it.value.jsonPrimitive.content }
@@ -99,4 +107,8 @@ object MuscleMapping {
         val legacy = exercise.primaryMuscles.orEmpty() + exercise.secondaryMuscles.orEmpty()
         return legacy.mapNotNull { mapping[it.trim().lowercase()] }.distinct()
     }
+
+    /** The known subgroups an exercise names (amendment G); unknown keys are skipped, order kept. */
+    fun subgroupsOf(exercise: Exercise): List<String> =
+        exercise.muscleSubgroups.orEmpty().filter { it in MuscleSub.PARENT }.distinct()
 }

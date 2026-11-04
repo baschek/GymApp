@@ -1,6 +1,21 @@
 {
   "version": 1,
   "groups": ["brust", "ruecken", "unterer_ruecken", "schultern", "bizeps", "trizeps", "unterarme", "bauch", "quadrizeps", "beinbeuger", "gesaess", "waden"],
+  "subgroups": {
+    "brust_oben": "brust",
+    "brust_unten": "brust",
+    "schulter_vorne": "schultern",
+    "schulter_seitlich": "schultern",
+    "schulter_hinten": "schultern",
+    "latissimus": "ruecken",
+    "rhomboiden": "ruecken",
+    "trapez_oben": "ruecken",
+    "trapez_unten": "ruecken",
+    "bauch_gerade": "bauch",
+    "bauch_schraeg": "bauch",
+    "abduktoren": "gesaess",
+    "adduktoren": "quadrizeps"
+  },
   "mapping": {
     "chest": "brust",
     "lats": "ruecken",

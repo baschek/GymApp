@@ -124,8 +124,9 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
     /** Muscles trained today, this workout included (summary). */
     val todayMuscles: StateFlow<MuscleSummary> = combine(repo.observeCompletedSessions(), repo.observeExercises()) { done, catalog ->
         val groups = catalog.associate { it.id to MuscleMapping.groupsOf(it.value) }
+        val subs = catalog.associate { it.id to MuscleMapping.subgroupsOf(it.value) }
         val from = StatsPeriod.TODAY.start(Instant.now(), ZoneId.systemDefault())
-        summarizeMuscles(done.map { it.value }, { groups[it].orEmpty() }, from)
+        summarizeMuscles(done.map { it.value }, { groups[it].orEmpty() }, from, subgroupsOf = { subs[it].orEmpty() })
     }.state(MuscleSummary.EMPTY)
 
     private var finishing = false
