@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -24,12 +25,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.baschek.gymapp.BuildConfig
 import de.baschek.gymapp.data.Accent
 import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.telemetry.Telemetry
+import de.baschek.gymapp.timer.LiveUpdateStatus
+import de.baschek.gymapp.timer.LiveUpdateSupport
 import de.baschek.gymapp.ui.ConflictSheet
 import de.baschek.gymapp.ui.Navigator
 import de.baschek.gymapp.ui.Routes
@@ -75,6 +79,12 @@ fun SettingsScreen(nav: Navigator) {
     val update by vm.update.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showConflicts by rememberSaveable { mutableStateOf(false) }
+    // Re-read when coming back from the system switch.
+    var liveStatus by remember { mutableStateOf(LiveUpdateSupport.status(context)) }
+    LifecycleResumeEffect(Unit) {
+        liveStatus = LiveUpdateSupport.status(context)
+        onPauseOrDispose { }
+    }
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
 
     ScreenList {
@@ -152,8 +162,19 @@ fun SettingsScreen(nav: Navigator) {
                 Overline("Benachrichtigungen", Modifier.padding(start = 4.dp, bottom = 8.dp))
                 Group {
                     ListRow(
-                        "Vibration am Pausenende", subtitle = "Einmal, wenn der Countdown null erreicht",
+                        "Vibration am Pausenende", subtitle = "Einmal, wenn der Countdown null erreicht (auch bei gesperrtem Handy)",
                         trailing = { GymSwitch(vibration, tracked1<Boolean>(SCREEN, "vibration") { vm.setRestVibration(it) }, "Vibration am Pausenende") },
+                    )
+                    Hairline()
+                    ListRow(
+                        "Live-Benachrichtigung (Now Bar)",
+                        subtitle = when (liveStatus) {
+                            LiveUpdateStatus.ALLOWED -> "Erlaubt: Satz und Pause erscheinen auch gesperrt in der Statusleiste bzw. Now Bar"
+                            LiveUpdateStatus.NOT_ALLOWED -> "Nicht erlaubt: tippen, um sie in den Android-Einstellungen zu erlauben"
+                            LiveUpdateStatus.UNSUPPORTED -> "Nicht unterstützt (braucht Android 16 oder neuer)"
+                        },
+                        onClick = if (liveStatus == LiveUpdateStatus.UNSUPPORTED) null else tracked(SCREEN, "live_update") { LiveUpdateSupport.open(context) },
+                        trailing = { if (liveStatus == LiveUpdateStatus.ALLOWED) TickIcon() else if (liveStatus == LiveUpdateStatus.NOT_ALLOWED) ChevronIcon() },
                     )
                     Hairline()
                     ListRow(
