@@ -10,6 +10,9 @@ import android.provider.Settings
 enum class LiveUpdateStatus { ALLOWED, NOT_ALLOWED, UNSUPPORTED }
 
 object LiveUpdateSupport {
+    /** Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS; not exposed by the compileSdk 36 stubs, so the value is used directly. */
+    private const val ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS = "android.settings.MANAGE_APP_PROMOTED_NOTIFICATIONS"
+
     fun status(context: Context): LiveUpdateStatus {
         if (Build.VERSION.SDK_INT < 36) return LiveUpdateStatus.UNSUPPORTED
         val manager = context.getSystemService(NotificationManager::class.java) ?: return LiveUpdateStatus.UNSUPPORTED
@@ -19,7 +22,7 @@ object LiveUpdateSupport {
     /** Opens the per-app switch for promoted notifications (Android 16+), else the app notification settings. */
     fun settingsIntent(context: Context): Intent {
         val intent = if (Build.VERSION.SDK_INT >= 36) {
-            Intent(Settings.ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS)
+            Intent(ACTION_MANAGE_APP_PROMOTED_NOTIFICATIONS)
         } else {
             Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
         }
