@@ -99,6 +99,7 @@ data class IndexColumns(
                     sortAt = s("occurred_at"),
                 )
                 Entity.WORKOUT_ADJUSTMENT -> IndexColumns(status = s("status"), sortAt = s("created_at"))
+                Entity.DAY_WORKOUT -> IndexColumns(gymId = s("gym_id"), status = s("status"), sortAt = s("date"))
                 else -> IndexColumns()
             }
         }

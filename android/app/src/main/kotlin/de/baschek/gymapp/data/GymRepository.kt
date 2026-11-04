@@ -3,6 +3,15 @@ package de.baschek.gymapp.data
 import androidx.room.withTransaction
 import de.baschek.gymapp.core.model.AdjustmentStatus
 import de.baschek.gymapp.core.model.BodyWeight
+import de.baschek.gymapp.core.model.DayWorkout
+import de.baschek.gymapp.core.model.DayWorkoutStatus
+import de.baschek.gymapp.core.model.SOURCE_DAY_WORKOUT
+import de.baschek.gymapp.core.training.asPlan
+import de.baschek.gymapp.core.training.isExpired
+import de.baschek.gymapp.core.training.markDismissed
+import de.baschek.gymapp.core.training.markExpired
+import de.baschek.gymapp.core.training.markStarted
+import de.baschek.gymapp.core.training.pickOfferedDayWorkout
 import de.baschek.gymapp.core.model.WorkoutAdjustment
 import de.baschek.gymapp.core.training.AdjustmentCode
 import de.baschek.gymapp.core.training.applyAdjustment
@@ -341,34 +350,40 @@ class GymRepository(
             dao.getActiveSession(p)?.let { return@withTransaction it.id }
             val plan = dao.getDoc(p, Entity.PLAN, planId)?.takeIf { !it.deleted }?.toStored(Plan.serializer())?.value
                 ?: return@withTransaction null
-            val exercises = dao.getDocs(p, Entity.EXERCISE).mapNotNull { it.toStored(Exercise.serializer()) }.associate { it.id to it.value }
-            val infos = exercises.map { (id, e) ->
-                ExerciseInfo(id, e.name, e.measurementType, e.loadDirection, e.loadBasis, e.movementFamily, e.equipment)
-            }
-            val machines = dao.getDocsByGym(p, Entity.MACHINE_PROFILE, gymId)
-                .mapNotNull { it.toStored(MachineProfile.serializer()) }.associate { it.value.exerciseId to it.value }
-            val history = allSessions(p)
-
-            val sessionExercises = plan.exercises.sortedBy { it.order }
-                .filter { it.modeSets.forMode(mode) > 0 }
-                .mapIndexed { index, pe ->
-                    val machine = machines[pe.exerciseId]
-                    val suggestion = suggestStartWeight(
-                        pe.exerciseId, gymId, history, infos,
-                        machine?.let { weightCandidates(it.effectiveWeights(), it.effectiveAddons()) }?.takeIf { it.isNotEmpty() },
-                        machine?.workingWeightKg, pe.currentWeightKg ?: pe.startingWeightKg,
-                    )
-                    buildSessionExercise(pe, index + 1, mode, exercises[pe.exerciseId], suggestion)
-                }
-
-            val id = newId()
-            val session = Session(
-                gymId = gymId, planId = planId, planName = plan.name, mode = mode,
-                status = SessionStatus.ACTIVE, startedAt = nowIso(), exercises = sessionExercises,
-            )
-            put(p, Entity.SESSION, id, session, Session.serializer())
-            id
+            createSession(p, plan, planId, mode, gymId, null)
         }
+
+    /** Builds and stores an active session from [plan] (a stored plan or a day workout viewed as a plan). */
+    private suspend fun createSession(p: String, plan: Plan, planId: String?, mode: String, gymId: String, dayWorkoutId: String?): String {
+        val exercises = dao.getDocs(p, Entity.EXERCISE).mapNotNull { it.toStored(Exercise.serializer()) }.associate { it.id to it.value }
+        val infos = exercises.map { (id, e) ->
+            ExerciseInfo(id, e.name, e.measurementType, e.loadDirection, e.loadBasis, e.movementFamily, e.equipment)
+        }
+        val machines = dao.getDocsByGym(p, Entity.MACHINE_PROFILE, gymId)
+            .mapNotNull { it.toStored(MachineProfile.serializer()) }.associate { it.value.exerciseId to it.value }
+        val history = allSessions(p)
+
+        val sessionExercises = plan.exercises.sortedBy { it.order }
+            .filter { it.modeSets.forMode(mode) > 0 }
+            .mapIndexed { index, pe ->
+                val machine = machines[pe.exerciseId]
+                val suggestion = suggestStartWeight(
+                    pe.exerciseId, gymId, history, infos,
+                    machine?.let { weightCandidates(it.effectiveWeights(), it.effectiveAddons()) }?.takeIf { it.isNotEmpty() },
+                    machine?.workingWeightKg, pe.currentWeightKg ?: pe.startingWeightKg,
+                )
+                buildSessionExercise(pe, index + 1, mode, exercises[pe.exerciseId], suggestion)
+            }
+
+        val id = newId()
+        val session = Session(
+            gymId = gymId, planId = planId, planName = plan.name, mode = mode,
+            status = SessionStatus.ACTIVE, startedAt = nowIso(), exercises = sessionExercises,
+            source = dayWorkoutId?.let { SOURCE_DAY_WORKOUT }, dayWorkoutId = dayWorkoutId,
+        )
+        put(p, Entity.SESSION, id, session, Session.serializer())
+        return id
+    }
 
     private fun buildSessionExercise(
         pe: PlanExercise,
@@ -551,6 +566,50 @@ class GymRepository(
         val base = dao.getDoc(p, Entity.GOAL, GOAL_ID)?.takeIf { !it.deleted }?.toStored(Goal.serializer())?.value ?: Goal()
         val updated = transform(base).copy(updatedBy = GoalAuthor.APP)
         put(p, Entity.GOAL, GOAL_ID, updated, Goal.serializer())
+    }
+
+    // ---- one-off day workout from the assistant (contract v1 amendment E) -------------------
+
+    /** The day workout offered for [today] (`yyyy-MM-dd`), if any. Not a plan: it never appears in the plan list. */
+    fun observeOfferedDayWorkout(today: String): Flow<Stored<DayWorkout>?> =
+        observeAll(Entity.DAY_WORKOUT, DayWorkout.serializer()).map { list ->
+            pickOfferedDayWorkout(list.map { it to it.value }, today)?.first
+        }.distinctUntilChanged()
+
+    /**
+     * Starts a normal-mode session from the day workout in the given gym (the card names the gym, which confirms
+     * it) and writes `started` plus the session id back. With a running session that one is returned and nothing
+     * changes; null when the day workout is gone or no longer offered.
+     */
+    suspend fun startDayWorkout(documentId: String, gymId: String): String? = db.withTransaction {
+        val p = currentProfile()
+        dao.getActiveSession(p)?.let { return@withTransaction it.id }
+        val stored = dao.getDoc(p, Entity.DAY_WORKOUT, documentId)?.takeIf { !it.deleted }?.toStored(DayWorkout.serializer())
+            ?: return@withTransaction null
+        if (stored.value.status != DayWorkoutStatus.OFFERED) return@withTransaction null
+        val sessionId = createSession(p, stored.value.asPlan(), null, WorkoutMode.NORMAL, gymId, documentId)
+        put(p, Entity.DAY_WORKOUT, documentId, stored.value.markStarted(sessionId, nowIso()), DayWorkout.serializer())
+        sessionId
+    }
+
+    /** "Ausblenden": the card goes away and the assistant sees `dismissed`. */
+    suspend fun dismissDayWorkout(documentId: String) = db.withTransaction {
+        val p = currentProfile()
+        val stored = dao.getDoc(p, Entity.DAY_WORKOUT, documentId)?.takeIf { !it.deleted }?.toStored(DayWorkout.serializer())
+            ?: return@withTransaction
+        if (stored.value.status == DayWorkoutStatus.OFFERED) {
+            put(p, Entity.DAY_WORKOUT, documentId, stored.value.markDismissed(nowIso()), DayWorkout.serializer())
+        }
+    }
+
+    /** Writes `expired` into offered day workouts of an earlier day (so the assistant knows). Returns how many. */
+    suspend fun expireDayWorkouts(today: String): Int = db.withTransaction {
+        val p = currentProfile()
+        if (p != Profile.PERSONAL) return@withTransaction 0
+        val old = dao.getDocs(p, Entity.DAY_WORKOUT).mapNotNull { it.toStored(DayWorkout.serializer()) }
+            .filter { it.value.isExpired(today) }
+        old.forEach { put(p, Entity.DAY_WORKOUT, it.id, it.value.markExpired(nowIso()), DayWorkout.serializer()) }
+        old.size
     }
 
     // ---- assistant adjustments of a running workout (contract v1 amendment D) -------------

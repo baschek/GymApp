@@ -265,6 +265,11 @@ data class Session(
     val notes: String? = null,
     @SerialName("import_key") val importKey: String? = null,
     @SerialName("review_flags") val reviewFlags: List<String>? = null,
+    /** `"day_workout"` when started from a one-off day workout (amendment E); null for plan sessions. */
+    val source: String? = null,
+    @SerialName("day_workout_id") val dayWorkoutId: String? = null,
+    /** Amendment F: session exercise id the user has open on the training screen (null = the first open one). */
+    @SerialName("focus_exercise_id") val focusExerciseId: String? = null,
     val exercises: List<SessionExercise> = emptyList(),
 ) {
     /** Sort key used for "newest first" (completed time, else start). */
@@ -371,4 +376,37 @@ data class WorkoutAdjustment(
     @SerialName("status_reason") val statusReason: String? = null,
     val ops: List<AdjustmentOp> = emptyList(),
     @SerialName("op_results") val opResults: List<AdjustmentResult>? = null,
+)
+
+/** Status values of a [DayWorkout] (contract v1 amendment E). */
+object DayWorkoutStatus {
+    const val OFFERED = "offered"
+    const val STARTED = "started"
+    const val DISMISSED = "dismissed"
+    const val EXPIRED = "expired"
+    const val WITHDRAWN = "withdrawn"
+}
+
+/** Value of [Session.source] for a session started from a [DayWorkout]. */
+const val SOURCE_DAY_WORKOUT = "day_workout"
+
+/**
+ * A one-off workout for one day that the assistant leaves in the chat (amendment E). It is not a plan: the app offers it
+ * on "Heute" on [date], starts a normal session from it and reports [status] / [sessionId] back.
+ */
+@Serializable
+data class DayWorkout(
+    /** Local calendar day, `yyyy-MM-dd`. */
+    val date: String = "",
+    @SerialName("gym_id") val gymId: String = "",
+    val title: String = "",
+    val note: String? = null,
+    /** Same objects as plan exercises; the sets for the normal mode are used. */
+    val exercises: List<PlanExercise> = emptyList(),
+    /** Extras needed for this workout only; the gym's own packing list is shown as well. */
+    val packlist: List<PackItem>? = null,
+    val status: String = DayWorkoutStatus.OFFERED,
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("resolved_at") val resolvedAt: String? = null,
+    @SerialName("session_id") val sessionId: String? = null,
 )

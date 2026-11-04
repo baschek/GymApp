@@ -32,6 +32,15 @@ fun upNextExerciseIndex(exercises: List<SessionExercise>, focusedId: String?): I
     return if (focused >= 0 && hasPending(exercises[focused])) focused else currentExerciseIndex(exercises)
 }
 
+/**
+ * The session with its synced focus (amendment F) set to [focusedId], so that the server can show which exercise the user
+ * has open. A focus that is not an exercise of the session counts as none. Returns the same instance if nothing changes.
+ */
+fun withSyncedFocus(session: Session, focusedId: String?): Session {
+    val valid = focusedId?.takeIf { id -> session.exercises.any { it.id == id } }
+    return if (session.focusExerciseId == valid) session else session.copy(focusExerciseId = valid)
+}
+
 // ---- correcting and resuming sets ---------------------------------------------------------
 
 /** New values for a logged set. [value] is reps, seconds or meters depending on the exercise target. */

@@ -384,4 +384,63 @@ class GymRepositoryTest {
         assertEquals(40.0, a.workingWeightKg!!, 1e-9)
         assertEquals(30.0, repo.getMachineInfo("gym-b")["ex1"]!!.workingWeightKg!!, 1e-9)
     }
+
+    private fun dayWorkoutDoc(id: String, date: String, status: String = "offered") = doc(
+        "day_workout", id, 3,
+        """{"date":"$date","gym_id":"gym-a","title":"Synthetic day","status":"$status","created_at":"2026-11-04T09:00:00Z","future":"keep-me",
+        "packlist":[{"id":"k1","text":"Straps","order":1}],
+        "exercises":[{"id":"pe1","exercise_id":"ex1","order":1,"mode_sets":{"normal":2,"fast":1,"ultra":1},
+        "target":{"metric":"reps","min":8,"max":12},"starting_weight_kg":20,"rest_seconds":60}]}""",
+    )
+
+    @Test
+    fun dayWorkoutIsOfferedOnItsDayStartsANormalSessionWithoutAPlanAndReportsBack() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("exercise", "ex1", 6, exercise), dayWorkoutDoc("day-2026-11-05", "2026-11-05")))
+        assertNull(repo.observeOfferedDayWorkout("2026-11-04").first())
+        assertNull(repo.observeOfferedDayWorkout("2026-11-06").first())
+        assertTrue(repo.observePlans().first().isEmpty()) // never listed as a plan
+        val offered = repo.observeOfferedDayWorkout("2026-11-05").first()!!
+        assertEquals("Synthetic day", offered.value.title)
+
+        val sessionId = repo.startDayWorkout(offered.id, "gym-b")!!
+        val session = repo.getSession(sessionId)!!
+        assertEquals("gym-b", session.gymId) // the gym of the tap, not necessarily the suggested one
+        assertEquals("Synthetic day", session.planName)
+        assertNull(session.planId)
+        assertEquals("day_workout", session.source)
+        assertEquals("day-2026-11-05", session.dayWorkoutId)
+        assertEquals(2, session.exercises.single().sets.size)
+        assertEquals(20.0, session.exercises.single().suggestedWeightKg) // plan weight as the last fallback
+        assertNull(repo.observeOfferedDayWorkout("2026-11-05").first()) // started: no longer offered
+        val answer = repo.syncStore.pendingOps(100).single { it.entity == "day_workout" }
+        assertEquals("\"started\"", answer.data["status"].toString())
+        assertEquals("\"$sessionId\"", answer.data["session_id"].toString())
+        assertEquals("\"keep-me\"", answer.data["future"].toString())
+        assertEquals(3L, answer.baseRev)
+        // a second tap resumes the running session instead of starting another one
+        assertEquals(sessionId, repo.startDayWorkout(offered.id, "gym-b"))
+    }
+
+    @Test
+    fun dayWorkoutCanBeDismissedAndOldOnesExpire() = runBlocking {
+        repo.syncStore.applyRemote(
+            listOf(dayWorkoutDoc("day-2026-11-03", "2026-11-03"), dayWorkoutDoc("day-2026-11-05", "2026-11-05"),
+                dayWorkoutDoc("day-2026-11-02", "2026-11-02", status = "started")),
+        )
+        assertEquals(1, repo.expireDayWorkouts("2026-11-05")) // only the offered one of an earlier day
+        assertEquals(0, repo.expireDayWorkouts("2026-11-05"))
+        val expired = repo.syncStore.pendingOps(100).single { it.id == "day-2026-11-03" }
+        assertEquals("\"expired\"", expired.data["status"].toString())
+
+        repo.dismissDayWorkout("day-2026-11-05")
+        assertNull(repo.observeOfferedDayWorkout("2026-11-05").first())
+        assertNull(repo.startDayWorkout("day-2026-11-05", "gym-a")) // dismissed ones cannot be started
+        assertEquals("\"dismissed\"", repo.syncStore.pendingOps(100).single { it.id == "day-2026-11-05" }.data["status"].toString())
+    }
+
+    @Test
+    fun dayWorkoutsAreNeverExpiredInTheTestProfile() = runBlocking {
+        repo.setProfile(Profile.TEST)
+        assertEquals(0, repo.expireDayWorkouts("2030-01-01"))
+    }
 }

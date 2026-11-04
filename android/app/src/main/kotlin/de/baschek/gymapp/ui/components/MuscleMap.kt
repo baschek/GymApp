@@ -24,14 +24,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.PathParser
@@ -48,14 +46,12 @@ import de.baschek.gymapp.ui.theme.GymAppTheme
 import de.baschek.gymapp.ui.theme.GymTextStyles
 import de.baschek.gymapp.ui.theme.Spacing
 
-private const val REGION_SCALE = 10f
-
 /** Heat opacity of a muscle: brighter = more weighted sets in the period. */
 fun heatAlpha(value: Double, max: Double): Float = if (max <= 0.0) 0f else (0.24 + 0.76 * (value / max)).toFloat().coerceIn(0f, 1f)
 
 /**
  * Body drawing with the trained muscles in the accent colour (opacity by weighted sets). Tapping a muscle
- * reports its group via [onMuscleTap]. The figure is a placeholder, see [BodyArt].
+ * reports its group via [onMuscleTap]. The figure is described in [BodyArt].
  */
 @Composable
 fun MuscleBody(
@@ -68,7 +64,11 @@ fun MuscleBody(
     val accent = cs.primary
     val base = cs.surfaceContainerHigh
     val shapes = BodyArt.shapes(side)
-    val paths: List<Path> = remember(side) { shapes.map { PathParser().parsePathString(it.d).toPath() } }
+    val paths: List<Path> = remember(side) { shapes.map { parseBodyPath(it.d, side) } }
+    val neutralPaths: List<Path> = remember(side) { BodyArt.neutral(side).map { parseBodyPath(it, side) } }
+    val outlinePath: Path = remember(side) { parseBodyPath(BodyArt.outline(side), side) }
+    val neutralColor = base.copy(alpha = 0.45f)
+    val outlineColor = cs.outlineVariant
     val max = summary.max
     val description = "Körperkarte ${if (side == BodySide.FRONT) "Vorderseite" else "Rückseite"}" +
         summary.top(3).joinToString(prefix = ", am meisten belastet: ", separator = ", ") { (g, v) -> "${MuscleGroup.label(g)} ${formatSets(v)} Sätze" }
@@ -82,9 +82,8 @@ fun MuscleBody(
                 else Modifier.pointerInput(side, summary) {
                     detectTapGestures { offset ->
                         val s = size.width / BodyArt.WIDTH
-                        var x = offset.x / s
+                        val x = offset.x / s
                         val y = offset.y / s
-                        if (x > BodyArt.WIDTH / 2) x = BodyArt.WIDTH - x
                         val hit = shapes.indices.firstOrNull { i -> pathContains(paths[i], x, y) }
                         if (hit != null) onMuscleTap(shapes[hit].group)
                     }
@@ -93,36 +92,27 @@ fun MuscleBody(
     ) {
         val s = size.width / BodyArt.WIDTH
         withTransform({ scale(s, s, pivot = Offset.Zero) }) {
-            drawCircle(base, BodyArt.HEAD_R, Offset(BodyArt.HEAD_CX, BodyArt.HEAD_CY))
-            drawRoundRect(base, Offset(102f, 54f), Size(16f, 10f), CornerRadius(5f, 5f))
-            for (mirrored in listOf(false, true)) {
-                withTransform({
-                    if (mirrored) {
-                        translate(left = BodyArt.WIDTH, top = 0f)
-                        scale(-1f, 1f, pivot = Offset.Zero)
-                    }
-                }) {
-                    shapes.forEachIndexed { i, shape ->
-                        drawPath(paths[i], base)
-                        val v = summary.totals[shape.group] ?: 0.0
-                        if (v > 0.0) drawPath(paths[i], accent, alpha = heatAlpha(v, max))
-                    }
-                }
+            neutralPaths.forEach { drawPath(it, neutralColor) }
+            shapes.forEachIndexed { i, shape ->
+                drawPath(paths[i], base)
+                val v = summary.totals[shape.group] ?: 0.0
+                if (v > 0.0) drawPath(paths[i], accent, alpha = heatAlpha(v, max))
             }
+            drawPath(outlinePath, outlineColor, style = Stroke(width = 1.dp.toPx() / s))
         }
     }
 }
 
+/** Parses body path data into view coordinates (the back view's data is shifted by [BodyArt.originX]). */
+private fun parseBodyPath(d: String, side: BodySide): Path =
+    PathParser().parsePathString(d).toPath().apply { translate(Offset(-BodyArt.originX(side), 0f)) }
+
 /** Point-in-path test through an Android Region (the Compose Path has no contains). */
 internal fun pathContains(path: Path, x: Float, y: Float): Boolean {
-    val scaled = Path().apply {
-        addPath(path)
-        transform(Matrix().apply { scale(REGION_SCALE, REGION_SCALE) })
-    }
     val region = android.graphics.Region()
-    val clip = android.graphics.Region(0, 0, (BodyArt.WIDTH * REGION_SCALE).toInt(), (BodyArt.HEIGHT * REGION_SCALE).toInt())
-    region.setPath(scaled.asAndroidPath(), clip)
-    return region.contains((x * REGION_SCALE).toInt(), (y * REGION_SCALE).toInt())
+    val clip = android.graphics.Region(0, 0, BodyArt.WIDTH.toInt(), BodyArt.HEIGHT.toInt())
+    region.setPath(path.asAndroidPath(), clip)
+    return region.contains(x.toInt(), y.toInt())
 }
 
 @Composable
@@ -157,7 +147,7 @@ fun MuscleMapCard(
             )
         }
         Box(Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
-            MuscleBody(side, summary, Modifier.widthIn(max = 190.dp).fillMaxWidth(), onMuscleTap)
+            MuscleBody(side, summary, Modifier.widthIn(max = 170.dp).fillMaxWidth(), onMuscleTap)
         }
         HeatLegend(if (summary.max > 0) "${formatSets(summary.max)} Sätze" else "keine Sätze")
         Text(
