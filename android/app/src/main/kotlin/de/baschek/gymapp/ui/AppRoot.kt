@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -71,7 +72,7 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {})
     val test = profile == Profile.TEST
     val show: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
 
-    CompositionLocalProvider(LocalSnack provides show) {
+    CompositionLocalProvider(LocalSnack provides show, LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             if (test) TestBar()
             Box(Modifier.weight(1f).fillMaxWidth().then(if (test) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
