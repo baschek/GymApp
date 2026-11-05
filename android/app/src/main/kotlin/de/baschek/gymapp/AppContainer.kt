@@ -31,7 +31,7 @@ class AppContainer(app: Application) {
     private val httpClient = createHttpClient(OkHttp.create())
     val syncManager = SyncManager(repository, secureStore, httpClient, scheduler, DeviceKeys())
     val timer = TimerController(repository, appScope)
-    val workout = WorkoutActions(repository, timer, scheduler)
+    val workout = WorkoutActions(repository, timer, scheduler, appScope)
     val updater = AppUpdater(app, httpClient)
 
     /** Local-only exercise photos (the contract does not sync photo bytes). */
@@ -41,6 +41,7 @@ class AppContainer(app: Application) {
         Telemetry.install(repository, appScope)
         // Bring back a running timer after process death.
         appScope.launch { runCatching { timer.restore() } }
+        appScope.launch { runCatching { workout.restoreRepsOverride() } }
         // An adjustment changes sets of several exercises: the one-step undo of the last action would undo the wrong thing.
         syncManager.onAdjustmentsResolved = { workout.clearUndo() }
     }

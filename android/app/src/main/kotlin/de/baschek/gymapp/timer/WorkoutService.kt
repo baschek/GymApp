@@ -21,11 +21,16 @@ import de.baschek.gymapp.R
 import de.baschek.gymapp.core.model.OTHER_GYM_ID
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SetStatus
-import de.baschek.gymapp.core.progression.prefillSet
 import de.baschek.gymapp.core.sync.WorkoutPoll
+import de.baschek.gymapp.core.model.Metric
+import de.baschek.gymapp.core.training.NotificationReps
+import de.baschek.gymapp.core.training.PrefillLabels
+import de.baschek.gymapp.core.training.RepsOverride
 import de.baschek.gymapp.core.training.RestAlarm
 import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.sync.SyncOutcome
+import de.baschek.gymapp.telemetry.Telemetry
+import de.baschek.gymapp.workout.WorkoutActions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,12 +47,14 @@ private data class ServiceView(
     val gyms: List<de.baschek.gymapp.data.Stored<de.baschek.gymapp.core.model.Gym>>,
     val timer: TimerState?,
     val focus: String?,
+    val repsOverride: RepsOverride?,
 )
 
 /**
  * Foreground service that keeps one ongoing notification for the whole active session:
  * current exercise and set, a chronometer (rest countdown, set/setup count-up, else session
- * time) and the actions "Satz geschafft" / "Pause überspringen". It restarts itself after
+ * time) and exactly three actions: "−1 / +1 Wdh" (reps of the prefill of the next open set, shared with the app through
+ * [WorkoutActions.repsOverride]) and, as third one, "Pause überspringen" while a rest is running, else "Satz geschafft". It restarts itself after
  * process death (sticky) and stops as soon as no session is active.
  */
 class WorkoutService : Service() {
@@ -81,8 +88,22 @@ class WorkoutService : Service() {
             started = true
         }
         when (intent?.action) {
-            ACTION_LOG_SET -> scope.launch { container.workout.logNextPrefilled() }
-            ACTION_SKIP_REST -> container.workout.skipRest()
+            ACTION_LOG_SET -> {
+                Telemetry.track(TELEMETRY_SCREEN, "log_set")
+                scope.launch { container.workout.logNextPrefilled() }
+            }
+            ACTION_SKIP_REST -> {
+                Telemetry.track(TELEMETRY_SCREEN, "skip_rest")
+                container.workout.skipRest()
+            }
+            ACTION_REPS_MINUS -> {
+                Telemetry.track(TELEMETRY_SCREEN, "reps_minus")
+                scope.launch { container.workout.adjustNextReps(-1) }
+            }
+            ACTION_REPS_PLUS -> {
+                Telemetry.track(TELEMETRY_SCREEN, "reps_plus")
+                scope.launch { container.workout.adjustNextReps(+1) }
+            }
         }
         if (job == null) {
             job = scope.launch {
@@ -91,8 +112,11 @@ class WorkoutService : Service() {
                     container.repository.observeGyms(),
                     container.timer.state,
                     container.workout.focus,
-                ) { session, gyms, timer, focus -> ServiceView(session?.takeIf { it.value.status == "active" }, gyms, timer, focus) }
-                    .collectLatest { (session, gyms, timer, focus) ->
+                    container.workout.repsOverride,
+                ) { session, gyms, timer, focus, repsOverride ->
+                    ServiceView(session?.takeIf { it.value.status == "active" }, gyms, timer, focus, repsOverride)
+                }
+                    .collectLatest { (session, gyms, timer, focus, repsOverride) ->
                         if (session == null) {
                             RestAlarmScheduler.cancel(this@WorkoutService)
                             RestAlarmReceiver.cancelNotification(this@WorkoutService)
@@ -104,7 +128,9 @@ class WorkoutService : Service() {
                             ?: if (session.value.gymId == OTHER_GYM_ID) getString(R.string.gym_other_name) else null
                         val manager = getSystemService(NotificationManager::class.java)
                         val now = System.currentTimeMillis()
-                        val notification = build(session.id, session.value, gymName, timer, focus, now)
+                        // what "Satz geschafft" would save (focus exercise, machine weights, reps override)
+                        val next = container.workout.nextLogFor(session, focus, repsOverride)
+                        val notification = build(session.id, session.value, gymName, timer, focus, next, now)
                         manager.notify(ID, notification)
                         logPromotion(manager, notification)
                         // Doze-safe rest-end alarm (vibration + "Pause vorbei"); null cancels it
@@ -121,7 +147,7 @@ class WorkoutService : Service() {
                             val wait = end - System.currentTimeMillis()
                             if (wait > 0) {
                                 delay(wait + 200)
-                                manager.notify(ID, build(session.id, session.value, gymName, timer, focus, System.currentTimeMillis()))
+                                manager.notify(ID, build(session.id, session.value, gymName, timer, focus, next, System.currentTimeMillis()))
                             }
                         }
                     }
@@ -182,7 +208,10 @@ class WorkoutService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-    private fun build(sessionId: String, session: Session, gymName: String?, timer: TimerState?, focus: String?, now: Long): Notification {
+    private fun build(
+        sessionId: String, session: Session, gymName: String?, timer: TimerState?, focus: String?,
+        next: WorkoutActions.NextLog?, now: Long,
+    ): Notification {
         // The exercise the user jumped to (if it still has open sets), else the first one with open sets: the same one
         // "Satz geschafft" logs (WorkoutActions.logNextPrefilled).
         val exercise = session.exercises.getOrNull(upNextExerciseIndex(session.exercises, focus))
@@ -191,12 +220,8 @@ class WorkoutService : Service() {
             getString(R.string.notif_title, exercise.name, setNumber, exercise.sets.size)
         } else getString(R.string.notif_session_running)
 
-        val prefill = exercise?.let { prefillSet(it, emptyList()) }
-        val planned = prefill?.let {
-            val value = it.value.let { v -> if (v == Math.floor(v)) v.toLong().toString() else v.toString() }
-            it.weightKg?.let { w ->
-                getString(R.string.notif_prefill, if (w == Math.floor(w)) w.toLong().toString() else w.toString(), value)
-            } ?: getString(R.string.notif_prefill_nokg, value)
+        val planned = next?.let {
+            NotificationReps.summary(it.prefill.weightKg, it.prefill.value, it.exercise.target.metric, it.prefill.effort, prefillLabels())
         }
         val phase = when (timer?.phase) {
             TimerPhase.SET -> getString(R.string.workout_timer_set)
@@ -229,26 +254,59 @@ class WorkoutService : Service() {
             else -> builder.setWhen(runCatching { Instant.parse(session.startedAt).toEpochMilli() }.getOrDefault(now))
                 .setChronometerCountDown(false)
         }
-        if (exercise != null) builder.addAction(0, getString(R.string.notif_action_log), actionIntent(ACTION_LOG_SET, 1))
-        if (timer?.phase == TimerPhase.REST) builder.addAction(0, getString(R.string.notif_action_skip), actionIntent(ACTION_SKIP_REST, 2))
+        // At most three actions: -1 / +1 reps of the next set, then "Pause überspringen" while a rest is running (the app
+        // and the next notification update still offer "Satz geschafft" afterwards), else "Satz geschafft".
+        val resting = NotificationReps.showsSkipRest(timer?.phase == TimerPhase.REST, end, now)
+        if (next != null) {
+            val metric = next.exercise.target.metric
+            builder.addAction(0, getString(minusLabel(metric)), actionIntent(ACTION_REPS_MINUS, 3))
+            builder.addAction(0, getString(plusLabel(metric)), actionIntent(ACTION_REPS_PLUS, 4))
+        }
+        when {
+            resting -> builder.addAction(0, getString(R.string.notif_action_skip), actionIntent(ACTION_SKIP_REST, 2))
+            next != null -> builder.addAction(0, getString(R.string.notif_action_log), actionIntent(ACTION_LOG_SET, 1))
+        }
 
         // Android 16+ "Live Update" (promoted ongoing notification). Requirements: ongoing foreground
         // service, contentTitle, not colorized, no custom views. Older versions ignore these calls and
         // show the plain ongoing notification with the chronometer above.
         if (Build.VERSION.SDK_INT >= 36) {
             builder.setRequestPromotedOngoing(true)
-            val resting = timer?.phase == TimerPhase.REST && end != null && end > now
+            val countingDown = timer?.phase == TimerPhase.REST && end != null && end > now
             // A ticking rest countdown is the chronometer (shown live in the status bar chip without
             // re-posting every second); otherwise the chip shows the current set as short critical text.
-            val restOver = timer?.phase == TimerPhase.REST && !resting && end != null
+            val restOver = timer?.phase == TimerPhase.REST && !countingDown && end != null
             when {
                 restOver -> builder.setShortCriticalText(getString(R.string.notif_chip_rest_over))
-                !resting && exercise != null && setNumber != null ->
+                !countingDown && exercise != null && setNumber != null ->
                     builder.setShortCriticalText(getString(R.string.notif_chip_set, setNumber, exercise.sets.size))
             }
             progressStyle(session)?.let { builder.setStyle(it) }
         }
         return builder.build()
+    }
+
+    private fun prefillLabels() = PrefillLabels(
+        kg = getString(R.string.notif_unit_kg),
+        reps = getString(R.string.notif_unit_reps),
+        seconds = getString(R.string.notif_unit_seconds),
+        meters = getString(R.string.notif_unit_meters),
+        effortLimit = getString(R.string.notif_effort_limit),
+        effortOneTwo = getString(R.string.notif_effort_one_two),
+        effortThreeFour = getString(R.string.notif_effort_three_four),
+        effortFivePlus = getString(R.string.notif_effort_five_plus),
+    )
+
+    private fun minusLabel(metric: String): Int = when (metric) {
+        Metric.SECONDS -> R.string.notif_action_seconds_minus
+        Metric.METERS -> R.string.notif_action_meters_minus
+        else -> R.string.notif_action_reps_minus
+    }
+
+    private fun plusLabel(metric: String): Int = when (metric) {
+        Metric.SECONDS -> R.string.notif_action_seconds_plus
+        Metric.METERS -> R.string.notif_action_meters_plus
+        else -> R.string.notif_action_reps_plus
     }
 
     /** Segments = exercises (length = sets), progress = sets already handled; null without sets. */
@@ -282,6 +340,9 @@ class WorkoutService : Service() {
     companion object {
         const val ACTION_LOG_SET = "de.baschek.gymapp.timer.LOG_SET"
         const val ACTION_SKIP_REST = "de.baschek.gymapp.timer.SKIP_REST"
+        const val ACTION_REPS_MINUS = "de.baschek.gymapp.timer.REPS_MINUS"
+        const val ACTION_REPS_PLUS = "de.baschek.gymapp.timer.REPS_PLUS"
+        private const val TELEMETRY_SCREEN = "notification"
         /** Notification.CATEGORY_WORKOUT (API 36); the string is ignored by older versions. */
         private const val CATEGORY_WORKOUT = "workout"
         private const val TAG = "WorkoutService"

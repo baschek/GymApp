@@ -95,6 +95,18 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
     /** Weight accepted from a suggestion for the next set (exercise id, total kg). */
     val acceptedWeight: StateFlow<Pair<String, Double>?> = c.workout.acceptedWeight
 
+    /** Reps set with "−1 / +1" in the notification for the next open set (see WorkoutActions.repsOverride). */
+    val repsOverride: StateFlow<de.baschek.gymapp.core.training.RepsOverride?> = c.workout.repsOverride
+
+    /** Override value if it belongs to exactly this open set of this session. */
+    fun repsFor(override: de.baschek.gymapp.core.training.RepsOverride?, exerciseId: String, setId: String): Double? =
+        de.baschek.gymapp.core.training.NotificationReps.valueFor(override, sessionId, exerciseId, setId)
+
+    /** The user changed reps in the app: the notification override no longer applies. */
+    fun clearRepsOverride() {
+        c.workout.clearRepsOverride()
+    }
+
     /** Latest body weight, needed by the suggestion rule for exercises with added weight. */
     val bodyWeight: StateFlow<Double?> = repo.observeBodyWeights()
         .map { list -> list.maxByOrNull { it.value.date }?.value?.weightKg }

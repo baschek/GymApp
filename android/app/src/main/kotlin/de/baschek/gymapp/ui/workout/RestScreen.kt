@@ -52,6 +52,7 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val focus by vm.focus.collectAsStateWithLifecycle()
     val undoLabel by vm.undoLabel.collectAsStateWithLifecycle()
     val accepted by vm.acceptedWeight.collectAsStateWithLifecycle()
+    val repsOverride by vm.repsOverride.collectAsStateWithLifecycle()
     val bodyWeight by vm.bodyWeight.collectAsStateWithLifecycle()
     val now = rememberNow(250)
     var pickExercise by rememberSaveable { mutableStateOf(false) }
@@ -95,7 +96,7 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
             val arrow = if (acceptedForNext != null && lastWeight != null) {
                 when { acceptedForNext > lastWeight + 1e-6 -> " ▲"; acceptedForNext < lastWeight - 1e-6 -> " ▼"; else -> "" }
             } else ""
-            val reps = last?.reps ?: nextEx.target.max.toInt()
+            val reps = vm.repsFor(repsOverride, nextEx.id, nextSet.id)?.toInt() ?: last?.reps ?: nextEx.target.max.toInt()
             if (weight != null) "Dann: ${fmtNum(weight)} kg$arrow × $reps" else "Dann: $reps Wdh."
         }
     }
