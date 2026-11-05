@@ -1,6 +1,16 @@
 package de.baschek.gymapp.workout
 
 import de.baschek.gymapp.core.model.Metric
+import de.baschek.gymapp.core.model.SetLog
+import de.baschek.gymapp.core.progression.SetPrefill
+import de.baschek.gymapp.core.training.NotificationReps
+import de.baschek.gymapp.core.training.RepsOverride
+import de.baschek.gymapp.data.SettingKeys
+import de.baschek.gymapp.data.Stored
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.progression.prefillSet
@@ -50,6 +60,7 @@ class WorkoutActions(
     private val repository: GymRepository,
     private val timer: TimerController,
     private val scheduler: SyncScheduler,
+    private val scope: CoroutineScope,
 ) {
     private val _focus = MutableStateFlow<String?>(null)
 
@@ -57,7 +68,45 @@ class WorkoutActions(
     val focus: StateFlow<String?> = _focus.asStateFlow()
 
     fun setFocus(exerciseId: String?) {
+        if (_focus.value != exerciseId) clearRepsOverride()
         _focus.value = exerciseId
+    }
+
+    private val _repsOverride = MutableStateFlow<RepsOverride?>(null)
+
+    /**
+     * Reps (seconds, meters) the user set with "−1 / +1" in the notification for the next open set. Shared by the
+     * notification (text and "Satz geschafft") and the set entry of the app; persisted in the settings table; dropped when
+     * the set is logged, on a change of set or exercise, on a manual change in the app and when the workout ends.
+     */
+    val repsOverride: StateFlow<RepsOverride?> = _repsOverride.asStateFlow()
+
+    private val overrideMutex = Mutex()
+    private val persistMutex = Mutex()
+
+    /** Brings the persisted override back after process death (only while a session is active). */
+    suspend fun restoreRepsOverride() {
+        val stored = NotificationReps.decode(repository.getSetting(SettingKeys.NOTIFICATION_REPS))
+        _repsOverride.value = stored?.takeIf { repository.getActiveSession()?.id == it.sessionId }
+        if (stored != null && _repsOverride.value == null) persistRepsOverride()
+    }
+
+    private fun setRepsOverride(value: RepsOverride?) {
+        if (_repsOverride.value == value) return
+        _repsOverride.value = value
+        persistRepsOverride()
+    }
+
+    /** Discards the override (set logged, set/exercise changed, manual change in the app). */
+    fun clearRepsOverride() = setRepsOverride(null)
+
+    /** Writes the latest value (read when the write runs, so rapid changes cannot reorder). */
+    private fun persistRepsOverride() {
+        scope.launch {
+            persistMutex.withLock {
+                repository.setSetting(SettingKeys.NOTIFICATION_REPS, _repsOverride.value?.let(NotificationReps::encode))
+            }
+        }
     }
 
     /**
@@ -91,6 +140,7 @@ class WorkoutActions(
         val before = repository.getSession(sessionId)?.let { captureUndo(it, exerciseId, label) }
         block()
         _undo.value = before?.let { sessionId to it }
+        clearRepsOverride()
     }
 
     /** Forgets the one-step undo (an assistant adjustment changed the session underneath it). */
@@ -106,6 +156,7 @@ class WorkoutActions(
         repository.updateSession(sessionId) { applyUndo(it, entry) }
         if (timer.state.value?.phase == TimerPhase.REST) timer.stop()
         _accepted.value = null
+        clearRepsOverride()
         _focus.value = entry.exerciseId
         return entry.label
     }
@@ -157,15 +208,47 @@ class WorkoutActions(
         if (pendingLeft > 0 && exercise != null) timer.start(TimerPhase.REST, exercise.name, exercise.restSeconds) else timer.stop()
     }
 
-    /** Logs the next pending set with the prefilled values (used by the notification action). */
-    suspend fun logNextPrefilled(): Boolean {
-        val active = repository.getActiveSession() ?: return false
-        val focused = upNextExerciseIndex(active.value.exercises, _focus.value).let { active.value.exercises.getOrNull(it) }
-        val exercise = focused ?: nextExercise(active.value.exercises) ?: return false
+    /** The set "Satz geschafft" in the notification would log: the set, and the values it would save. */
+    data class NextLog(val sessionId: String, val exercise: SessionExercise, val set: SetLog, val prefill: SetPrefill)
+
+    /**
+     * The next open set of [active] (the focus exercise if it has open sets, else the first with open sets) with the
+     * prefill that would be logged, including the notification reps [override] for exactly that set. Null if no set is open.
+     */
+    suspend fun nextLogFor(active: Stored<Session>, focus: String?, override: RepsOverride?): NextLog? {
+        val exercises = active.value.exercises
+        val exercise = exercises.getOrNull(upNextExerciseIndex(exercises, focus))?.takeIf { ex -> ex.sets.any { it.status == SetStatus.PENDING } }
+            ?: nextExercise(exercises) ?: return null
         val set = exercise.sets.first { it.status == SetStatus.PENDING }
         val weights = repository.getMachineWeights(active.value.gymId)[exercise.exerciseId].orEmpty()
         val pre = prefillSet(exercise, weights)
-        logSet(active.id, exercise.id, set.id, SetInput(pre.weightKg, pre.value, pre.effort))
+        val value = NotificationReps.valueFor(override, active.id, exercise.id, set.id) ?: pre.value
+        return NextLog(active.id, exercise, set, pre.copy(value = value))
+    }
+
+    /** Logs the next pending set with the prefilled values, reps from the notification override (notification action). */
+    suspend fun logNextPrefilled(): Boolean {
+        val next = overrideMutex.withLock {
+            val active = repository.getActiveSession() ?: return false
+            nextLogFor(active, _focus.value, _repsOverride.value) ?: return false
+        }
+        val pre = next.prefill
+        logSet(next.sessionId, next.exercise.id, next.set.id, SetInput(pre.weightKg, pre.value, pre.effort))
+        return true
+    }
+
+    /** "−1 / +1" of the notification: moves the reps (seconds: 5, meters: 10) of the next open set's prefill by [direction]. */
+    suspend fun adjustNextReps(direction: Int): Boolean {
+        overrideMutex.withLock {
+            val active = repository.getActiveSession() ?: return false
+            val next = nextLogFor(active, _focus.value, _repsOverride.value) ?: return false
+            setRepsOverride(
+                NotificationReps.press(
+                    _repsOverride.value, next.sessionId, next.exercise.id, next.set.id,
+                    next.prefill.value, direction, next.exercise.target.metric,
+                ),
+            )
+        }
         return true
     }
 
@@ -203,11 +286,14 @@ class WorkoutActions(
     /** Inserts a warm-up set before the first pending working set of the exercise. */
     suspend fun addWarmup(sessionId: String, exerciseId: String) {
         _undo.value = null
+        clearRepsOverride()
         repository.updateSession(sessionId) { coreInsertWarmup(it, exerciseId) { UUID.randomUUID().toString() } }
     }
 
-    suspend fun moveExercise(sessionId: String, exerciseId: String, delta: Int) =
+    suspend fun moveExercise(sessionId: String, exerciseId: String, delta: Int) {
+        clearRepsOverride()
         repository.updateSession(sessionId) { coreMoveExercise(it, exerciseId, delta) }
+    }
 
     suspend fun toggleSkipExercise(sessionId: String, exerciseId: String) =
         recorded(sessionId, exerciseId, "Übung überspringen") { repository.updateSession(sessionId) { coreToggleSkipExercise(it, exerciseId) } }
@@ -231,6 +317,7 @@ class WorkoutActions(
         _undo.value = null
         _focus.value = null
         _accepted.value = null
+        clearRepsOverride()
         repository.finishSession(sessionId)
         scheduler.requestSync()
     }

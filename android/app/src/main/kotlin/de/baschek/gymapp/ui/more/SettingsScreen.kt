@@ -1,7 +1,5 @@
 package de.baschek.gymapp.ui.more
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
@@ -11,13 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.sp
-import de.baschek.gymapp.timer.LiveUpdateDiagnostics
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
@@ -41,7 +32,7 @@ import de.baschek.gymapp.BuildConfig
 import de.baschek.gymapp.data.Accent
 import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.telemetry.Telemetry
-import de.baschek.gymapp.timer.LiveUpdateStatus
+import de.baschek.gymapp.core.live.LiveUpdateStatus
 import de.baschek.gymapp.timer.LiveUpdateSupport
 import de.baschek.gymapp.ui.ConflictSheet
 import de.baschek.gymapp.ui.Navigator
@@ -94,10 +85,7 @@ fun SettingsScreen(nav: Navigator) {
         liveStatus = LiveUpdateSupport.status(context)
         onPauseOrDispose { }
     }
-    // TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved
-    var showDiagnostics by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
-    if (showDiagnostics) LiveUpdateDiagnosticsDialog { showDiagnostics = false }
 
     ScreenList {
         item { BackBar("Einstellungen", tracked(SCREEN, "back") { nav.pop() }) }
@@ -182,18 +170,21 @@ fun SettingsScreen(nav: Navigator) {
                         "Live-Benachrichtigung (Now Bar)",
                         subtitle = when (liveStatus) {
                             LiveUpdateStatus.ALLOWED -> "Erlaubt: Satz und Pause erscheinen auch gesperrt in der Statusleiste bzw. Now Bar"
+                            LiveUpdateStatus.SAMSUNG_TEST_SWITCH -> "Samsung-Testschalter aktiv – Now Bar sollte funktionieren"
+                            LiveUpdateStatus.NOT_OFFICIAL ->
+                                "Dieses System unterstützt Live-Benachrichtigungen für Apps nicht offiziell. Auf Samsung (One UI 8.0) hilft die " +
+                                    "Entwickleroption „Live notifications for all apps“ bzw. per ADB settings put secure enable_notification_nowbar_test 1."
                             LiveUpdateStatus.NOT_ALLOWED -> "Nicht erlaubt: tippen, um sie in den Android-Einstellungen zu erlauben"
                             LiveUpdateStatus.UNSUPPORTED -> "Nicht unterstützt (braucht Android 16 oder neuer)"
                         },
                         onClick = if (liveStatus == LiveUpdateStatus.UNSUPPORTED) null else tracked(SCREEN, "live_update") { LiveUpdateSupport.open(context) },
-                        trailing = { if (liveStatus == LiveUpdateStatus.ALLOWED) TickIcon() else if (liveStatus == LiveUpdateStatus.NOT_ALLOWED) ChevronIcon() },
-                    )
-                    Hairline()
-                    // TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved
-                    ListRow(
-                        "Diagnose (vorübergehend)", subtitle = "Werte zur Live-Benachrichtigung anzeigen, kopieren und teilen",
-                        onClick = tracked(SCREEN, "live_diagnostics") { showDiagnostics = true },
-                        trailing = { ChevronIcon() },
+                        trailing = {
+                            when (liveStatus) {
+                                LiveUpdateStatus.ALLOWED, LiveUpdateStatus.SAMSUNG_TEST_SWITCH -> TickIcon()
+                                LiveUpdateStatus.NOT_ALLOWED, LiveUpdateStatus.NOT_OFFICIAL -> ChevronIcon()
+                                LiveUpdateStatus.UNSUPPORTED -> Unit
+                            }
+                        },
                     )
                     Hairline()
                     ListRow(
@@ -253,46 +244,4 @@ fun SettingsScreen(nav: Navigator) {
             onDismiss = { showConflicts = false },
         )
     }
-}
-
-/** TEMPORARY(live-update-diagnostics): remove after the Now Bar issue is solved. */
-@Composable
-private fun LiveUpdateDiagnosticsDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    var reload by remember { mutableStateOf(0) }
-    val text = remember(reload) { LiveUpdateDiagnostics.build(context) }
-    LaunchedEffect(Unit) { Telemetry.track(SCREEN, "live_diagnostics_view") }
-    AlertDialog(
-        onDismissRequest = tracked(SCREEN, "live_diagnostics_close", onDismiss),
-        title = { Text("Diagnose (vorübergehend)") },
-        text = {
-            Column {
-                Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
-                    Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 15.sp)
-                }
-                Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    TextButton(
-                        onClick = tracked(SCREEN, "live_diagnostics_copy") {
-                            try {
-                                context.getSystemService(ClipboardManager::class.java)
-                                    ?.setPrimaryClip(ClipData.newPlainText("GymApp Diagnose", text))
-                            } catch (_: Exception) {
-                            }
-                        },
-                    ) { Text("Kopieren") }
-                    TextButton(
-                        onClick = tracked(SCREEN, "live_diagnostics_share") {
-                            try {
-                                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text)
-                                context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                            } catch (_: Exception) {
-                            }
-                        },
-                    ) { Text("Teilen") }
-                    TextButton(onClick = tracked(SCREEN, "live_diagnostics_reload") { reload++ }) { Text("Neu lesen") }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = tracked(SCREEN, "live_diagnostics_close", onDismiss)) { Text("Schließen") } },
-    )
 }

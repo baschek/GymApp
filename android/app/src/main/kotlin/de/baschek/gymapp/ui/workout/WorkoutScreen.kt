@@ -45,7 +45,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import de.baschek.gymapp.core.model.Metric
-import de.baschek.gymapp.timer.LiveUpdateStatus
+import de.baschek.gymapp.core.live.LiveUpdateStatus
 import de.baschek.gymapp.timer.LiveUpdateSupport
 import de.baschek.gymapp.core.model.SelectableEffortBands
 import de.baschek.gymapp.core.model.Session

@@ -24,6 +24,8 @@ object SettingKeys {
     const val CURRENT_GYM = "current_gym_id"
     const val KEEP_SCREEN_ON = "keep_screen_on"
     const val TIMER_STATE = "timer_state"
+    /** Reps set with "−1 / +1" in the workout notification for the next open set (JSON, device only). */
+    const val NOTIFICATION_REPS = "notification_reps"
     const val CONNECTION_LOST = "connection_lost"
     const val PLANS_SEEN = "plans_seen"
     const val PACK_PREFIX = "pack_checked:"

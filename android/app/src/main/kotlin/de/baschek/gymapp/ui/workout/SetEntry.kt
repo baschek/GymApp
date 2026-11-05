@@ -102,6 +102,7 @@ internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Dou
 /** Draft for the next open set; [accepted] is a weight the user took over from a suggestion. */
 internal fun buildDraft(
     ex: SessionExercise?, set: SetLog?, levels: List<Double>, addons: List<Double>, wheel: List<Double>, accepted: Double? = null,
+    reps: Double? = null,
 ): SetDraft {
     if (ex == null || set == null) return SetDraft(0.0, wheel.first(), emptySet(), 10.0, 1)
     val warm = set.setType == SetType.WARMUP
@@ -110,7 +111,8 @@ internal fun buildDraft(
     val level = split?.levelKg ?: wheel[nearestLevelIndex(wheel, total)]
     val last = lastWorking(ex)
     val lastValue = last?.let { resultValue(ex, it) }
-    val value = if (warm) 12.0 else lastValue ?: ex.target.max
+    // reps set with "−1 / +1" in the notification win over the proposal
+    val value = reps ?: if (warm) 12.0 else lastValue ?: ex.target.max
     val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
     return SetDraft(total, level, split?.addonsKg?.toSet() ?: emptySet(), value.coerceAtLeast(valueStep(ex.target.metric)), effort)
 }
@@ -151,6 +153,8 @@ internal fun SetEntryCard(
     screen: String,
     modifier: Modifier = Modifier,
     onCreateProfile: (() -> Unit)? = null,
+    /** Called when the user changes reps/seconds/meters by hand (drops the notification override). */
+    onValueEdited: (() -> Unit)? = null,
     afterWeight: @Composable ColumnScope.() -> Unit = {},
 ) {
     var dialog by remember { mutableStateOf<EntryDialog?>(null) }
@@ -219,6 +223,7 @@ internal fun SetEntryCard(
             onStep = { d ->
                 Telemetry.track(screen, "reps_step")
                 draft.value = (draft.value + d * step).coerceIn(step, 999.0)
+                onValueEdited?.invoke()
             },
             label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> "Wiederholungen" },
             modifier = Modifier.padding(top = if (weighted) Spacing.s5 else 0.dp),
@@ -244,7 +249,11 @@ internal fun SetEntryCard(
             title = when (ex.target.metric) { Metric.SECONDS -> "Sekunden eingeben"; Metric.METERS -> "Meter eingeben"; else -> "Wiederholungen eingeben" },
             unit = valueUnit(ex.target.metric), initial = fmtNum(draft.value), decimal = ex.target.metric == Metric.METERS,
             note = null,
-            onConfirm = { draft.value = if (ex.target.metric == Metric.METERS) it else Math.round(it).toDouble().coerceAtLeast(1.0); dialog = null },
+            onConfirm = {
+                draft.value = if (ex.target.metric == Metric.METERS) it else Math.round(it).toDouble().coerceAtLeast(1.0)
+                onValueEdited?.invoke()
+                dialog = null
+            },
             onDismiss = { dialog = null },
         )
         null -> Unit

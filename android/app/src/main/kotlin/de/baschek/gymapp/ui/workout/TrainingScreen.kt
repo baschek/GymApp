@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.progression.WEIGHTED_TYPES
 import de.baschek.gymapp.core.progression.freeWeights
+import de.baschek.gymapp.core.training.NotificationReps
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
 import de.baschek.gymapp.core.training.hasSkippedSets
@@ -102,6 +104,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val focus by vm.focus.collectAsStateWithLifecycle()
     val undoLabel by vm.undoLabel.collectAsStateWithLifecycle()
     val accepted by vm.acceptedWeight.collectAsStateWithLifecycle()
+    val repsOverride by vm.repsOverride.collectAsStateWithLifecycle()
     val bodyWeight by vm.bodyWeight.collectAsStateWithLifecycle()
     val now = rememberNow(1000)
 
@@ -121,7 +124,10 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val wheel = if (hasProfile) levels else remember { freeWeights() }
     val weighted = ex != null && ex.measurementType in WEIGHTED_TYPES
     val acceptedForEx = accepted?.takeIf { ex != null && it.first == ex.id }?.second
-    val draft = remember(set?.id, hasProfile, acceptedForEx) { buildDraft(ex, set, levels, addonList, wheel, acceptedForEx) }
+    val overrideReps = if (ex != null && set != null) NotificationReps.valueFor(repsOverride, sessionId, ex.id, set.id) else null
+    val draft = remember(set?.id, hasProfile, acceptedForEx) { buildDraft(ex, set, levels, addonList, wheel, acceptedForEx, overrideReps) }
+    // "−1 / +1" in the notification while this screen is open: the entry follows the shared value (weight edits stay).
+    LaunchedEffect(set?.id, overrideReps) { overrideReps?.let { draft.value = it } }
 
     val hint = remember(ex, info, bodyWeight, warm) {
         if (ex == null || warm || !weighted) null else weightHint(ex, info?.candidates.orEmpty(), info?.workingWeightKg, bodyWeight)
@@ -193,6 +199,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                     SetEntryCard(
                         ex = ex, draft = draft, weighted = weighted, warm = warm, levels = levels, addonList = addonList, wheel = wheel,
                         screen = SCREEN,
+                        onValueEdited = vm::clearRepsOverride,
                         onCreateProfile = tracked(SCREEN, "create_profile") { session.gymId?.let { nav.push(Routes.machine(it, ex.exerciseId)) } },
                         afterWeight = {
                             if (hint != null) {
