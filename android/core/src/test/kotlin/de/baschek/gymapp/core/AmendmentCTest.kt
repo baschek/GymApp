@@ -27,7 +27,9 @@ import de.baschek.gymapp.core.model.WeightRange
 import de.baschek.gymapp.core.model.forArea
 import de.baschek.gymapp.core.progression.freeWeights
 import de.baschek.gymapp.core.progression.nearestLevelIndex
+import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.progression.weightCandidates
 import de.baschek.gymapp.core.stats.PackState
 import de.baschek.gymapp.core.stats.StatsPeriod
 import de.baschek.gymapp.core.stats.estimateMinutes
@@ -278,6 +280,22 @@ class AmendmentCTest {
         assertEquals(1, nearestLevelIndex(listOf(5.0, 10.0, 15.0), 9.0))
         assertEquals(-1, nearestLevelIndex(emptyList(), 9.0))
         assertEquals(25.0, splitTotal(27.5, listOf(20.0, 25.0), listOf(2.5))!!.levelKg)
+    }
+
+    @Test
+    fun twoEqualAddOnsAreTwoSeparatePlates() {
+        val mp = DocumentCodec.decode<MachineProfile>(
+            GymJson.parseToJsonElement("""{"gym_id":"g","exercise_id":"e","addon_weights_kg":[2.3,2.3]}""").jsonObject,
+        )
+        val twin = mp.effectiveAddons()
+        assertEquals(listOf(2.3, 2.3), twin)
+        assertEquals(listOf(4.5, 6.8, 9.1, 11.0, 13.3, 15.6), weightCandidates(listOf(4.5, 11.0), twin))
+        val split = splitTotal(15.6, listOf(4.5, 11.0), twin)!!
+        assertEquals(11.0, split.levelKg)
+        assertEquals(listOf(2.3, 2.3), split.addonsKg)
+        assertEquals(setOf(0), selectedAddonIndices(listOf(2.3), twin))
+        assertEquals(setOf(0, 1), selectedAddonIndices(listOf(2.3, 2.3), twin))
+        assertEquals(setOf(1), selectedAddonIndices(listOf(2.5), listOf(1.25, 2.5)))
     }
 
     // ---- trend -------------------------------------------------------------

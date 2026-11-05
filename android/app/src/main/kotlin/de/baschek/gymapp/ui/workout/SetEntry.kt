@@ -30,6 +30,7 @@ import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.progression.isSelectableWeight
 import de.baschek.gymapp.core.progression.nearestLevelIndex
 import de.baschek.gymapp.core.progression.neighborWeights
+import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.core.progression.splitTotal
 import de.baschek.gymapp.core.progression.weightCandidates
 import de.baschek.gymapp.core.training.describeTarget
@@ -51,7 +52,7 @@ import de.baschek.gymapp.ui.theme.gymColors
 import de.baschek.gymapp.ui.tracked
 
 /** Editable values of one set (the current set, or a logged set that is being corrected). */
-internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Double>, value: Double, effort: Int) {
+internal class SetDraft(val initialTotal: Double, level: Double, addons: List<Double>, value: Double, effort: Int) {
     var level by mutableDoubleStateOf(level)
     var addons by mutableStateOf(addons)
     var value by mutableDoubleStateOf(value)
@@ -71,7 +72,7 @@ internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Dou
         if (exact) {
             applyTotal(total, levels, addonList)
         } else {
-            addons = emptySet()
+            addons = emptyList()
             level = wheel[nearestLevelIndex(wheel, total)]
             custom = Math.round(total * 1000.0) / 1000.0
         }
@@ -85,14 +86,14 @@ internal class SetDraft(val initialTotal: Double, level: Double, addons: Set<Dou
         custom = null
         if (levels.isEmpty()) {
             level = total
-            addons = emptySet()
+            addons = emptyList()
             return
         }
         val candidates = weightCandidates(levels, addonList)
         val chosen = if (candidates.isEmpty()) total else candidates[nearestLevelIndex(candidates, total)]
         val split = splitTotal(chosen, levels, addonList)
         level = split?.levelKg ?: chosen
-        addons = split?.addonsKg?.toSet() ?: emptySet()
+        addons = split?.addonsKg ?: emptyList()
     }
 
     /** Effort band to log (null for warm-up sets). */
@@ -104,7 +105,7 @@ internal fun buildDraft(
     ex: SessionExercise?, set: SetLog?, levels: List<Double>, addons: List<Double>, wheel: List<Double>, accepted: Double? = null,
     reps: Double? = null,
 ): SetDraft {
-    if (ex == null || set == null) return SetDraft(0.0, wheel.first(), emptySet(), 10.0, 1)
+    if (ex == null || set == null) return SetDraft(0.0, wheel.first(), emptyList(), 10.0, 1)
     val warm = set.setType == SetType.WARMUP
     val total = accepted?.takeIf { !warm } ?: prefillTotal(ex, set, levels)
     val split = if (levels.isNotEmpty() && !warm) splitTotal(total, levels, addons) else null
@@ -114,7 +115,7 @@ internal fun buildDraft(
     // reps set with "−1 / +1" in the notification win over the proposal
     val value = reps ?: if (warm) 12.0 else lastValue ?: ex.target.max
     val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
-    return SetDraft(total, level, split?.addonsKg?.toSet() ?: emptySet(), value.coerceAtLeast(valueStep(ex.target.metric)), effort)
+    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort)
 }
 
 /** Draft from a logged set, for correcting it. Values are taken exactly as logged. */
@@ -128,7 +129,7 @@ internal fun buildDraftFromSet(ex: SessionExercise, set: SetLog, levels: List<Do
         levels.isEmpty() -> total
         else -> wheel[nearestLevelIndex(wheel, total)]
     }
-    val chosenAddons = stored?.toSet() ?: split?.addonsKg?.toSet() ?: emptySet()
+    val chosenAddons = stored?.sorted() ?: split?.addonsKg ?: emptyList()
     val value = (resultValue(ex, set) ?: ex.target.max).coerceAtLeast(valueStep(ex.target.metric))
     val effort = bandIndex(set.effort).takeIf { it >= 0 } ?: 1
     return SetDraft(total, level, chosenAddons, value, effort)
@@ -174,7 +175,7 @@ internal fun SetEntryCard(
                 onStep = { d ->
                     Telemetry.track(screen, "weight_step")
                     if (around != null) {
-                        (if (d < 0) around.first else around.second)?.let { draft.custom = null; draft.addons = emptySet(); draft.level = it }
+                        (if (d < 0) around.first else around.second)?.let { draft.custom = null; draft.addons = emptyList(); draft.level = it }
                     } else {
                         draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
                     }
@@ -194,13 +195,16 @@ internal fun SetEntryCard(
             }
             if (!warm && hasProfile && addonList.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(top = Spacing.s3), horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
-                    addonList.forEach { a ->
+                    val chosen = selectedAddonIndices(draft.addons, addonList)
+                    addonList.forEachIndexed { i, a ->
+                        val on = i in chosen
                         AddonButton(
-                            AddonOption("+ ${fmtNum(a)} kg", a in draft.addons),
+                            AddonOption("+ ${fmtNum(a)} kg", on),
                             {
                                 Telemetry.track(screen, "toggle_addon")
                                 draft.custom = null
-                                draft.addons = if (a in draft.addons) draft.addons - a else draft.addons + a
+                                // List minus removes one plate only, so two equal add-ons toggle separately
+                                draft.addons = (if (on) draft.addons - a else draft.addons + a).sorted()
                             },
                             Modifier.weight(1f),
                         )

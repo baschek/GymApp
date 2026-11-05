@@ -7,12 +7,28 @@ package de.baschek.gymapp.core.progression
 
 private fun r3(v: Double) = Math.round(v * 1000.0) / 1000.0
 
-/** All subsets of [addons] (at most two are expected), the empty subset first. */
+/**
+ * All subsets of [addons] (at most two are expected), the empty subset first. Equal values are two
+ * separate plates ([2.3, 2.3] gives +2.3 and +4.6).
+ */
 fun addonSubsets(addons: List<Double>): List<List<Double>> {
-    val a = addons.filter { it > 0.0 }.distinct().sorted().take(2)
+    val a = addons.filter { it > 0.0 }.sorted().take(2)
     var out = listOf<List<Double>>(emptyList())
     for (x in a) out = out + out.map { it + x }
-    return out.sortedBy { it.size }
+    return out.distinct().sortedBy { it.size }
+}
+
+/**
+ * Indices of the add-on buttons that show [selected] as chosen. Equal values are matched to the
+ * buttons from left to right, so [2.3] on the machine [2.3, 2.3] lights only the first button.
+ */
+fun selectedAddonIndices(selected: List<Double>, addons: List<Double>): Set<Int> {
+    val out = mutableSetOf<Int>()
+    for (s in selected) {
+        val i = addons.indices.firstOrNull { it !in out && kotlin.math.abs(addons[it] - s) < 1e-6 } ?: continue
+        out += i
+    }
+    return out
 }
 
 /**
