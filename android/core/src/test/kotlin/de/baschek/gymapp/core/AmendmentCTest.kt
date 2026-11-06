@@ -25,10 +25,12 @@ import de.baschek.gymapp.core.model.levelsMatch
 import de.baschek.gymapp.core.model.rangeSpec
 import de.baschek.gymapp.core.model.WeightRange
 import de.baschek.gymapp.core.model.forArea
+import de.baschek.gymapp.core.progression.addonValuesAt
 import de.baschek.gymapp.core.progression.freeWeights
 import de.baschek.gymapp.core.progression.nearestLevelIndex
 import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.progression.toggleAddonIndex
 import de.baschek.gymapp.core.progression.weightCandidates
 import de.baschek.gymapp.core.stats.PackState
 import de.baschek.gymapp.core.stats.StatsPeriod
@@ -296,6 +298,19 @@ class AmendmentCTest {
         assertEquals(setOf(0), selectedAddonIndices(listOf(2.3), twin))
         assertEquals(setOf(0, 1), selectedAddonIndices(listOf(2.3, 2.3), twin))
         assertEquals(setOf(1), selectedAddonIndices(listOf(2.5), listOf(1.25, 2.5)))
+    }
+
+    @Test
+    fun equalAddOnButtonsToggleByPosition() {
+        val twin = listOf(2.3, 2.3)
+        val right = toggleAddonIndex(emptySet(), 1)
+        assertEquals(setOf(1), right)
+        assertEquals(listOf(2.3), addonValuesAt(right, twin))
+        val both = toggleAddonIndex(right, 0)
+        assertEquals(listOf(2.3, 2.3), addonValuesAt(both, twin))
+        assertEquals(setOf(0), toggleAddonIndex(both, 1))
+        assertEquals(listOf(1.25, 2.5), addonValuesAt(setOf(1, 0), listOf(1.25, 2.5)))
+        assertEquals(emptyList<Double>(), addonValuesAt(setOf(5), twin))
     }
 
     // ---- trend -------------------------------------------------------------
