@@ -31,6 +31,13 @@ fun selectedAddonIndices(selected: List<Double>, addons: List<Double>): Set<Int>
     return out
 }
 
+/** [selected] with button [index] switched on or off; every button toggles on its own. */
+fun toggleAddonIndex(selected: Set<Int>, index: Int): Set<Int> = if (index in selected) selected - index else selected + index
+
+/** The add-on values of the chosen button [selected] indices (ascending), ignoring indices outside [addons]. */
+fun addonValuesAt(selected: Set<Int>, addons: List<Double>): List<Double> =
+    selected.filter { it in addons.indices }.map { addons[it] }.sorted()
+
 /**
  * Candidate totals for progression rounding: every main level plus every subset of
  * the add-ons, sorted ascending and de-duplicated. Without levels the result is empty
