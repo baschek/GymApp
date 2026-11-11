@@ -11,6 +11,10 @@ import de.baschek.gymapp.core.model.SessionStatus
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.stats.MuscleSummary
+import de.baschek.gymapp.core.stats.TimingModel
+import de.baschek.gymapp.core.stats.buildTimingModel
+import de.baschek.gymapp.core.training.WeightIncrease
+import de.baschek.gymapp.core.training.weightIncreases
 import de.baschek.gymapp.core.stats.StatsPeriod
 import de.baschek.gymapp.core.stats.start
 import de.baschek.gymapp.core.stats.summarizeMuscles
@@ -29,7 +33,10 @@ import de.baschek.gymapp.workout.SetInput
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -141,6 +148,31 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
         summarizeMuscles(done.map { it.value }, { groups[it].orEmpty() }, from, subgroupsOf = { subs[it].orEmpty() })
     }.state(MuscleSummary.EMPTY)
 
+    /**
+     * How long exercises usually take in this gym, learned from the logged times of finished sessions (`completed_at` of every
+     * set): the basis of "Wie lange noch?". Rebuilt when the history or the gym changes, not on every logged set.
+     */
+    val timingModel: StateFlow<TimingModel> = combine(repo.observeCompletedSessions(), sessionFlow.map { it?.value?.gymId }.distinctUntilChanged()) { done, gym ->
+        buildTimingModel(done.map { it.value }, gym)
+    }.flowOn(Dispatchers.Default).state(TimingModel.EMPTY)
+
+    /**
+     * Exercises whose working weight went up in this workout, for the animation before the summary; null until the milestones
+     * are loaded. Empty when nothing went up.
+     */
+    val celebrations: StateFlow<List<WeightIncrease>?> = combine(repo.observeMilestones(), sessionFlow) { milestones, current ->
+        current?.value?.let { weightIncreases(milestones.map { it.value }, sessionId, it) }
+    }.state(null)
+
+    /** True once this screen has seen the session running: it was finished just now, not opened afterwards (no animation then). */
+    @Volatile
+    var sawActive = false
+        private set
+
+    init {
+        viewModelScope.launch { sessionFlow.collect { if (it?.value?.status == SessionStatus.ACTIVE) sawActive = true } }
+    }
+
     private var finishing = false
 
     /** All sets are done: the workout ends by itself and the summary appears. */
@@ -201,6 +233,11 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
         viewModelScope.launch {
             repo.saveMachineProfile(gymId, exerciseId) { it.copy(setupParameters = params.takeIf { p -> p.isNotEmpty() }) }
         }
+    }
+
+    /** An extra working set for the exercise ("Satz hinzufügen"). */
+    fun addSet(exerciseId: String) {
+        viewModelScope.launch { c.workout.addSet(sessionId, exerciseId) }
     }
 
     fun addWarmup(exerciseId: String) {

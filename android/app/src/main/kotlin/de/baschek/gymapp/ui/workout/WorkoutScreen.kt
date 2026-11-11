@@ -122,7 +122,16 @@ fun WorkoutScreen(sessionId: String, nav: Navigator) {
             val session = l.session
             LaunchedEffect(session) { vm.finishIfDone(session) }
             if (session.status == SessionStatus.COMPLETED) {
-                SummaryScreen(l.id, session, vm, onDone = { nav.resetTo(Routes.TODAY) })
+                // Just finished: one short animation per exercise whose weight went up, then the summary.
+                var celebrated by rememberSaveable(l.id) { mutableStateOf(false) }
+                val increases by vm.celebrations.collectAsStateWithLifecycle()
+                val shown = increases
+                when {
+                    celebrated || !vm.sawActive || (shown != null && shown.isEmpty()) ->
+                        SummaryScreen(l.id, session, vm, onDone = { nav.resetTo(Routes.TODAY) })
+                    shown == null -> Box(Modifier.fillMaxSize())
+                    else -> WeightIncreaseCelebration(shown, onDone = { celebrated = true })
+                }
             } else {
                 val timer by vm.timer.collectAsStateWithLifecycle()
                 val hasPending = currentExerciseIndex(session.exercises) >= 0
