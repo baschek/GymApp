@@ -13,29 +13,40 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
+import de.baschek.gymapp.core.stats.estimateTimeLeft
+import de.baschek.gymapp.core.stats.finishClock
+import de.baschek.gymapp.core.training.canAddSet
 import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.core.training.weightHint
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.timer.TimerState
 import de.baschek.gymapp.ui.components.ExercisePickerSheet
+import de.baschek.gymapp.ui.components.GymCardSurface
+import de.baschek.gymapp.ui.components.GymIcons
 import de.baschek.gymapp.ui.components.LinkButton
 import de.baschek.gymapp.ui.components.Overline
 import de.baschek.gymapp.ui.components.PinnedBottom
 import de.baschek.gymapp.ui.components.PrimaryButton
 import de.baschek.gymapp.ui.components.RestTimerCard
+import de.baschek.gymapp.ui.components.SoftButton
 import de.baschek.gymapp.ui.components.topInset
 import de.baschek.gymapp.ui.fmtNum
+import de.baschek.gymapp.ui.theme.GymTextStyles
 import de.baschek.gymapp.ui.theme.Spacing
 import de.baschek.gymapp.ui.tracked
+import java.time.Instant
 import kotlin.math.ceil
 
 private const val SCREEN = "pause"
@@ -57,6 +68,8 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val now = rememberNow(250)
     var pickExercise by rememberSaveable { mutableStateOf(false) }
     var setupOpen by rememberSaveable { mutableStateOf(false) }
+    var showTimeLeft by rememberSaveable { mutableStateOf(false) }
+    val timingModel by vm.timingModel.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { Telemetry.track(SCREEN, "view") }
 
@@ -117,6 +130,41 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
                 caption = caption, remainingSeconds = remaining, progress = progress, nextText = nextText,
                 onPlus15 = tracked(SCREEN, "plus15", vm::plus15), badge = badge,
             )
+            // "Wie lange noch?": hidden until asked for (tap to reveal, tap again to hide)
+            if (showTimeLeft) {
+                val left = remember(timingModel, session, now / 1000, nextEx?.id) {
+                    estimateTimeLeft(timingModel, session, Instant.ofEpochMilli(now), nextEx?.id)
+                }
+                GymCardSurface(Modifier.fillMaxWidth(), onClick = tracked(SCREEN, "time_left_hide") { showTimeLeft = false }) {
+                    Overline("Noch zu trainieren")
+                    Text(
+                        left.text(), Modifier.padding(top = 4.dp),
+                        style = GymTextStyles.number.copy(fontSize = MaterialTheme.typography.headlineMedium.fontSize),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    if (left.pendingSets > 0) {
+                        Text(
+                            "Fertig gegen ${finishClock(Instant.ofEpochMilli(now), left.seconds)} Uhr · ${left.pendingSets} Sätze in ${left.exercisesRemaining} Übungen",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        listOfNotNull(left.paceNote(), left.basis()).joinToString(" "),
+                        Modifier.padding(top = 4.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                SoftButton(
+                    "Wie lange noch?", tracked(SCREEN, "time_left_show") { showTimeLeft = true }, Modifier.fillMaxWidth(),
+                    icon = GymIcons.History, height = Spacing.TouchMin,
+                )
+            }
+            if (lastLogged != null && canAddSet(session, lastLogged.first.id)) {
+                SoftButton(
+                    "Noch ein Satz: ${lastLogged.first.name}", tracked(SCREEN, "add_set") { vm.addSet(lastLogged.first.id) }, Modifier.fillMaxWidth(),
+                    icon = GymIcons.Plus, height = Spacing.TouchMin,
+                )
+            }
             if (nextEx != null && nextSet != null) {
                 if (newExercise) SetupLine(nextInfo?.setup, tracked(SCREEN, "setup_open") { setupOpen = true }, Modifier.padding(horizontal = 4.dp))
                 if (hint != null) {
