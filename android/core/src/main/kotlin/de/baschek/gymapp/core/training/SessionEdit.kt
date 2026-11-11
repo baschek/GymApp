@@ -132,6 +132,34 @@ fun insertWarmup(session: Session, exerciseId: String, newId: () -> String): Ses
         },
     )
 
+/** Most working sets one exercise can have (same limit as the assistant's `set_sets`). */
+const val MAX_WORKING_SETS = 20
+
+/** Whether [addSet] would add a set: the exercise exists, is not skipped as a whole and has fewer than [MAX_WORKING_SETS] working sets. */
+fun canAddSet(session: Session, exerciseId: String): Boolean {
+    val ex = session.exercises.firstOrNull { it.id == exerciseId } ?: return false
+    return !isSkipped(ex) && ex.sets.count { it.setType == SetType.WORKING } < MAX_WORKING_SETS
+}
+
+/**
+ * Adds one more pending working set at the end of the exercise, the same kind of set the plan or the assistant
+ * (`set_sets`) creates: it is logged, skipped and synced like any other and counts for progression only once it is
+ * logged and meets the target. A weight the assistant planned for the open sets is carried over, so the new set starts like
+ * its neighbours. `planned_sets` stays what was planned. Returns the session unchanged if [canAddSet] is false.
+ */
+fun addSet(session: Session, exerciseId: String, newId: () -> String): Session {
+    if (!canAddSet(session, exerciseId)) return session
+    return session.copy(
+        exercises = session.exercises.map { ex ->
+            if (ex.id != exerciseId) ex
+            else {
+                val planned = ex.sets.lastOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
+                ex.copy(sets = renumber(ex.sets + SetLog(id = newId(), setType = SetType.WORKING, status = SetStatus.PENDING, weightKg = planned)))
+            }
+        },
+    )
+}
+
 /** Adds a note to an exercise of the session. */
 fun setExerciseNote(session: Session, exerciseId: String, note: String): Session =
     session.copy(exercises = session.exercises.map { if (it.id == exerciseId) it.copy(notes = note.ifBlank { null }) else it })

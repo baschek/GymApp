@@ -2,6 +2,18 @@
 
 All notable GymApp changes are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Native Android app: add an extra set to the running exercise yourself ("Satz hinzufügen" below the set list, "Noch ein Satz" on the rest screen); the set is logged, undone and synced like any other set
+- Native Android app: "Wie lange noch?" on the rest screen estimates the time left from the logged set times of earlier workouts (per exercise, same gym preferred), falls back to the plan formula without history, scales with today's pace, and gets better with every recorded workout
+- Native Android app: a short animation per exercise whose working weight went up ("Beinpresse 60 → 65 kg") before the summary, based on the milestone screen of the web version; tap to continue, "Überspringen", still pictures when system animations are off
+
+### Validation
+
+- 26 new Kotlin unit tests (`AddSetTest`, `TimeLeftTest`, `WeightCelebrationTest`) in `android/core`
+
 ## [0.2.0-beta.2] - 2026-08-28
 
 ### Added

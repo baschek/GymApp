@@ -46,6 +46,7 @@ import de.baschek.gymapp.core.progression.freeWeights
 import de.baschek.gymapp.core.training.NotificationReps
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.core.training.canAddSet
 import de.baschek.gymapp.core.training.hasSkippedSets
 import de.baschek.gymapp.core.training.setRows
 import de.baschek.gymapp.core.training.viewExerciseIndex
@@ -193,7 +194,10 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                     }
                 }
 
-                SetListCard(ex, onTapSet = { row -> sheet = (if (row.kind == de.baschek.gymapp.core.training.SetRowKind.DONE) "edit:" else "resume:") + row.setId })
+                SetListCard(
+                    ex, onTapSet = { row -> sheet = (if (row.kind == de.baschek.gymapp.core.training.SetRowKind.DONE) "edit:" else "resume:") + row.setId },
+                    onAddSet = if (canAddSet(session, ex.id)) ({ vm.addSet(ex.id) }) else null,
+                )
 
                 if (set != null) {
                     SetEntryCard(

@@ -90,7 +90,7 @@ internal fun ExerciseStrip(
  * open sets with their target. Logged and skipped sets can be tapped (correct / take back).
  */
 @Composable
-internal fun SetListCard(ex: SessionExercise, onTapSet: (SetRow) -> Unit, modifier: Modifier = Modifier) {
+internal fun SetListCard(ex: SessionExercise, onTapSet: (SetRow) -> Unit, modifier: Modifier = Modifier, onAddSet: (() -> Unit)? = null) {
     val cs = MaterialTheme.colorScheme
     val rows = setRows(ex)
     Group(modifier) {
@@ -128,6 +128,20 @@ internal fun SetListCard(ex: SessionExercise, onTapSet: (SetRow) -> Unit, modifi
                     else -> row.secondary.orEmpty()
                 }
                 Text(tail, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant, maxLines = 1)
+            }
+        }
+        if (onAddSet != null) {
+            if (rows.isNotEmpty()) Hairline()
+            Row(
+                Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    .clickable(role = Role.Button, onClickLabel = "Einen Satz zu dieser Übung hinzufügen") { Telemetry.track("training", "add_set"); onAddSet() }
+                    .padding(horizontal = 14.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    Icon(GymIcons.Plus, contentDescription = null, Modifier.size(18.dp), tint = cs.primary)
+                }
+                Text("Satz hinzufügen", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium), color = cs.onSurface, maxLines = 1)
             }
         }
     }
