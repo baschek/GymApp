@@ -31,6 +31,7 @@ import de.baschek.gymapp.core.training.reopenSet as coreReopenSet
 import de.baschek.gymapp.core.training.resumeSkippedSets as coreResumeSkippedSets
 import de.baschek.gymapp.core.training.skipRemainingSets as coreSkipRemainingSets
 import de.baschek.gymapp.core.training.addExercise as coreAddExercise
+import de.baschek.gymapp.core.training.addSet as coreAddSet
 import de.baschek.gymapp.core.training.insertWarmup as coreInsertWarmup
 import de.baschek.gymapp.core.training.moveExercise as coreMoveExercise
 import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
@@ -281,6 +282,16 @@ class WorkoutActions(
     suspend fun removeExercise(sessionId: String, exerciseId: String) {
         recorded(sessionId, exerciseId, "Übung entfernt") { repository.updateSession(sessionId) { coreRemoveExercise(it, exerciseId) } }
         if (_focus.value == exerciseId) _focus.value = null
+    }
+
+    /**
+     * Adds one more open working set to the exercise (the user wants to do an extra set). It is a normal set: logged, skipped,
+     * undone and synced like the others. The exercise becomes the focus, so the extra set comes next even if the exercise was
+     * already finished.
+     */
+    suspend fun addSet(sessionId: String, exerciseId: String) {
+        recorded(sessionId, exerciseId, "Satz hinzugefügt") { repository.updateSession(sessionId) { coreAddSet(it, exerciseId) { UUID.randomUUID().toString() } } }
+        _focus.value = exerciseId
     }
 
     /** Inserts a warm-up set before the first pending working set of the exercise. */
