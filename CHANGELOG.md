@@ -4,6 +4,11 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.5.0] - 2026-11-12
+
+Native Android app release (GitHub release `android-v2.5.0`). Earlier Android
+releases (up to `android-v2.4.2`) are listed on the GitHub releases page only.
+
 ### Added
 
 - Native Android app: add an extra set to the running exercise yourself ("Satz hinzufügen" below the set list, "Noch ein Satz" on the rest screen); the set is logged, undone and synced like any other set
