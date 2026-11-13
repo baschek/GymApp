@@ -4,7 +4,7 @@ This repository contains two generations of GymApp:
 
 | | Location | Status |
 |---|---|---|
-| Native Android app (Kotlin, Compose, Room, server sync) | [`android/`](android/) | in development, successor |
+| Native Android app (Kotlin, Compose, Room, server sync) | [`android/`](android/) | in daily use (releases `android-v*`, current 2.5.0), successor |
 | Progressive Web App (React, Dexie) | repository root | legacy, stays deployed on GitHub Pages |
 
 The sections below describe the **legacy PWA**. The Android app is described in
@@ -20,7 +20,7 @@ documented in [`android/docs/sync-protocol.md`](android/docs/sync-protocol.md).
 - `android/core`: pure Kotlin module (domain model, progression rules, sync engine, API client)
 - `android/app`: Android application (Room, WorkManager sync, timer service, updater, Compose UI)
 - Build: JDK 17 and the Android SDK, then `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`
-- Releases: push a tag `android-v<version>` on `main`; CI builds a signed APK and creates a GitHub release. The app can update itself from these releases.
+- Releases: push a tag `android-v<version>` on `main`, or run the `Android` workflow manually on `main` with `release_version`; CI builds a signed APK and creates a GitHub release. The app can update itself from these releases.
 - Test profile: a local-only profile that is never synchronized, for experiments and demo data.
 - The repository is public: no secrets, server addresses or personal training data are committed. See [AGENTS.md](AGENTS.md).
 
