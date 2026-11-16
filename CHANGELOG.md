@@ -4,6 +4,10 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.5.1] - 2026-11-16
+
+Native Android app release (GitHub release `android-v2.5.1`).
+
 ### Changed
 
 - Native Android app build: Gradle 9.8.2, Android Gradle plugin 9.5.1 (built-in Kotlin, `org.jetbrains.kotlin.android` plugin removed), Kotlin 2.4.21, KSP 2.3.14, WorkManager 2.12.0 (replaces Dependabot PRs #9, #12, #14)
