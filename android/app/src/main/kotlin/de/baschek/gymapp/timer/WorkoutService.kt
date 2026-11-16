@@ -217,7 +217,9 @@ class WorkoutService : Service() {
         val exercise = session.exercises.getOrNull(upNextExerciseIndex(session.exercises, focus))
         val setNumber = exercise?.sets?.indexOfFirst { it.status == SetStatus.PENDING }?.plus(1)
         val title = if (exercise != null && setNumber != null) {
-            getString(R.string.notif_title, exercise.name, setNumber, exercise.sets.size)
+            // Plain Int local (no smart cast from Int?): Kotlin 2.4 + lint otherwise flags %2$d as StringFormatMatches.
+            val setNo: Int = setNumber
+            getString(R.string.notif_title, exercise.name, setNo, exercise.sets.size)
         } else getString(R.string.notif_session_running)
 
         val planned = next?.let {
