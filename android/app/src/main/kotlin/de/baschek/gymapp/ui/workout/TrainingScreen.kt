@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.Session
+import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
@@ -52,6 +53,7 @@ import de.baschek.gymapp.core.training.setRows
 import de.baschek.gymapp.core.training.viewExerciseIndex
 import de.baschek.gymapp.core.training.warmupProposal
 import de.baschek.gymapp.core.training.weightHint
+import de.baschek.gymapp.timer.TimerPhase
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.ui.Navigator
 import de.baschek.gymapp.ui.Routes
@@ -108,6 +110,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val repsOverride by vm.repsOverride.collectAsStateWithLifecycle()
     val bodyWeight by vm.bodyWeight.collectAsStateWithLifecycle()
     val now = rememberNow(1000)
+    val timer by vm.timer.collectAsStateWithLifecycle()
 
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var confirmFinish by rememberSaveable { mutableStateOf(false) }
@@ -117,6 +120,9 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val ex = session.exercises.getOrNull(exIndex)
     val set = ex?.sets?.firstOrNull { it.status == SetStatus.PENDING }
     val warm = set?.setType == SetType.WARMUP
+    val runningSetTimer = timer?.takeIf { it.phase == TimerPhase.SET }
+    val timedHere = runningSetTimer != null && ex != null && set != null && runningSetTimer.matchesSet(sessionId, ex.id, set.id)
+    val elapsed = if (timedHere) runningSetTimer!!.elapsedSeconds(now) else 0
 
     val info = ex?.let { machines[it.exerciseId] }
     val levels = info?.levels.orEmpty()
@@ -219,6 +225,18 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                             }
                         },
                     )
+                    if (ex.target.metric == Metric.SECONDS) {
+                        if (timedHere) {
+                            Text("Gemessene Zeit: ${formatElapsed(elapsed.toLong())}", style = MaterialTheme.typography.titleMedium)
+                            LinkButton("Zeitmessung abbrechen", tracked(SCREEN, "timer_cancel") { vm.cancelSetTimer() }, height = Spacing.TouchMin)
+                        } else if (runningSetTimer == null) {
+                            SoftButton("Zeitmessung starten", tracked(SCREEN, "timer_start") { vm.startTimedSet(ex.id, set.id, ex.name) }, Modifier.fillMaxWidth(), height = 52.dp)
+                        }
+                    }
+                    if (runningSetTimer != null && !timedHere) {
+                        Text("Eine Zeitmessung für einen anderen Satz läuft. Wechsle dorthin oder brich sie ab.", style = MaterialTheme.typography.bodyMedium)
+                        LinkButton("Zeitmessung abbrechen", tracked(SCREEN, "timer_cancel_other") { vm.cancelSetTimer() }, height = Spacing.TouchMin)
+                    }
                 } else {
                     FinishedExerciseCard(
                         ex,
@@ -233,7 +251,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
         }
 
         PinnedBottom(Modifier.align(Alignment.BottomCenter).onSizeChanged { pinnedPx = it.height }) {
-            PrimaryButton("Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = ex != null && set != null)
+            PrimaryButton(if (timedHere) "Zeit stoppen und Satz speichern" else "Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = ex != null && set != null && (runningSetTimer == null || timedHere && elapsed > 0))
             val pad = PaddingValues(horizontal = 0.dp)
             // Four equal columns; labels never wrap. Disabled actions stay readable (60 % instead of 40 %).
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {

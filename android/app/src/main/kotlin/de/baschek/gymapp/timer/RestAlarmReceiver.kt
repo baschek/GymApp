@@ -42,9 +42,9 @@ class RestAlarmReceiver : BroadcastReceiver() {
                 if (container.timer.state.value == null) runCatching { container.timer.restore() }
                 val timer = container.timer.state.value
                 val due = RestAlarm.isStillDue(expectedEnd, timer?.phase == TimerPhase.REST, timer?.endsAtMillis)
-                if (due) {
-                    if (container.prefs.restVibration.first()) vibrate(context)
-                    notifyRestOver(context)
+                if (due && container.repository.getSetting("watch_alarm_leader") != "watch") {
+                    if (container.prefs.restVibration.first() && container.repository.getSetting("watch_alarm_leader") != "watch") vibrate(context)
+                    if (container.repository.getSetting("watch_alarm_leader") != "watch") notifyRestOver(context)
                 }
             } finally {
                 pending.finish()

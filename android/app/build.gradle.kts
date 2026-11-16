@@ -81,6 +81,8 @@ dependencies {
     implementation(project(":core"))
 
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.health.connect)
+    implementation("com.google.android.gms:play-services-wearable:20.0.1")
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

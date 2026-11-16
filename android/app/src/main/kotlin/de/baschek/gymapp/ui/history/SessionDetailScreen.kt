@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import de.baschek.gymapp.ui.health.HeartHistoryCard
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
@@ -126,6 +127,7 @@ fun SessionDetailScreen(sessionId: String, nav: Navigator) {
                     ) { de.baschek.gymapp.ui.components.LinkButton("Als geprüft markieren", tracked(SCREEN, "mark_reviewed", vm::markReviewed)) }
                 }
             }
+            item { HeartHistoryCard(sessionId, session) }
             session.exercises.forEach { ex ->
                 item(key = ex.id) {
                     GymCardSurface {

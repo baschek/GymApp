@@ -81,6 +81,9 @@ interface GymDao {
     suspend fun rebaseOutbox(entity: String, id: String, rev: Long)
 
     // settings
+    @Query("SELECT * FROM settings WHERE name LIKE :prefix || '%' ORDER BY name")
+    fun observeSettingsPrefix(prefix: String): Flow<List<SettingEntity>>
+
     @Query("SELECT value FROM settings WHERE name = :name")
     fun observeSetting(name: String): Flow<String?>
 
@@ -92,6 +95,9 @@ interface GymDao {
 
     @Query("DELETE FROM settings WHERE name = :name")
     suspend fun deleteSetting(name: String)
+
+    @Query("DELETE FROM settings WHERE name LIKE 'watch_outgoing:%:' || :eventId")
+    suspend fun deleteWatchOutgoing(eventId: String)
 
     @Query("DELETE FROM settings WHERE name LIKE :prefix || '%'")
     suspend fun deleteSettingsWithPrefix(prefix: String)

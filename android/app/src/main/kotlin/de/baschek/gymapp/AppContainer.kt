@@ -18,6 +18,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import de.baschek.gymapp.workout.WorkoutActions
+import de.baschek.gymapp.wear.WatchCatalogPublisher
+import de.baschek.gymapp.wear.PhoneEventPublisher
 
 /** Hand-wired dependencies (no DI framework needed at this size). */
 class AppContainer(app: Application) {
@@ -39,6 +41,8 @@ class AppContainer(app: Application) {
 
     init {
         Telemetry.install(repository, appScope)
+        WatchCatalogPublisher(appContext, repository, prefs).start(appScope)
+        PhoneEventPublisher(appContext, repository).start(appScope)
         // Bring back a running timer after process death.
         appScope.launch { runCatching { timer.restore() } }
         appScope.launch { runCatching { workout.restoreRepsOverride() } }

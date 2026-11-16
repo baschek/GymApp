@@ -21,5 +21,6 @@ gymapp-backup-*.json
 .gradle/
 android/**/build/
 android/.idea/
+android/.kotlin/
 *.apk
 *.aab

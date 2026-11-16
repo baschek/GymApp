@@ -48,6 +48,7 @@ import de.baschek.gymapp.ui.plans.PlanEditorScreen
 import de.baschek.gymapp.ui.plans.PlansScreen
 import de.baschek.gymapp.ui.progress.ProgressScreen
 import de.baschek.gymapp.ui.workout.WorkoutScreen
+import de.baschek.gymapp.ui.health.WatchConflictNotice
 import kotlinx.coroutines.launch
 
 /** Navigation shell: top-level tabs with the translucent bottom bar, detail screens, the training flow without bar. */
@@ -75,6 +76,7 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {})
     CompositionLocalProvider(LocalSnack provides show, LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             if (test) TestBar()
+            WatchConflictNotice()
             Box(Modifier.weight(1f).fillMaxWidth().then(if (test) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
                 when (Routes.kind(route)) {
                     Routes.TODAY -> HomeScreen(nav, onOpenWorkout = { nav.push(Routes.workout(it)) })
