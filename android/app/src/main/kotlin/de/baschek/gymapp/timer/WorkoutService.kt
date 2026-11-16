@@ -215,10 +215,11 @@ class WorkoutService : Service() {
         // The exercise the user jumped to (if it still has open sets), else the first one with open sets: the same one
         // "Satz geschafft" logs (WorkoutActions.logNextPrefilled).
         val exercise = session.exercises.getOrNull(upNextExerciseIndex(session.exercises, focus))
-        val title = if (exercise != null) {
+        val setNumber = exercise?.sets?.indexOfFirst { it.status == SetStatus.PENDING }?.plus(1)
+        val title = if (exercise != null && setNumber != null) {
             // Plain Int local (no smart cast from Int?): Kotlin 2.4 + lint otherwise flags %2$d as StringFormatMatches.
-            val setNumber: Int = exercise.sets.indexOfFirst { it.status == SetStatus.PENDING } + 1
-            getString(R.string.notif_title, exercise.name, setNumber, exercise.sets.size)
+            val setNo: Int = setNumber
+            getString(R.string.notif_title, exercise.name, setNo, exercise.sets.size)
         } else getString(R.string.notif_session_running)
 
         val planned = next?.let {
