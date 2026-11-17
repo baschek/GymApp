@@ -283,7 +283,10 @@ class GymRepository(
             .map { row -> row?.toStored(Goal.serializer())?.let { GoalState(it.value, row?.updatedAt) } }
 
     /** Snapshot only personal documents. Raw fields and stable IDs are preserved. */
-    suspend fun watchCatalog(): WatchCatalog? = db.withTransaction {
+    suspend fun watchCatalog(): WatchCatalog? = watchCatalogSnapshot()?.first
+
+    /** Catalog plus all existing session IDs, including the active session, from one Room snapshot. */
+    suspend fun watchCatalogSnapshot(): Pair<WatchCatalog, List<String>>? = db.withTransaction {
         if (currentProfile() != Profile.PERSONAL) return@withTransaction null
         // The watch needs finished sessions as progression history; the active one reaches it as events.
         suspend fun docs(entity: String, activeToo: Boolean = true) = dao.getDocs(Profile.PERSONAL, entity)
@@ -294,7 +297,7 @@ class GymRepository(
             gyms = docs(Entity.GYM), plans = docs(Entity.PLAN), exercises = docs(Entity.EXERCISE),
             machineProfiles = docs(Entity.MACHINE_PROFILE), sessions = docs(Entity.SESSION, activeToo = false),
             dayWorkouts = docs(Entity.DAY_WORKOUT),
-        )
+        ) to dao.getDocs(Profile.PERSONAL, Entity.SESSION).map { it.id }.sorted()
     }
 
     /** Triggers a fresh transactionally consistent snapshot whenever a catalog document changes. */
@@ -303,7 +306,7 @@ class GymRepository(
         dao.observeDocs(Profile.PERSONAL, Entity.EXERCISE), dao.observeDocs(Profile.PERSONAL, Entity.MACHINE_PROFILE),
         dao.observeDocs(Profile.PERSONAL, Entity.SESSION).map { docs ->
             // Set-by-set edits of the running workout must not republish the whole catalog.
-            docs.filter { it.status != SessionStatus.ACTIVE }.map { it.id to it.data.hashCode() }
+            docs.map { it.id to if (it.status == SessionStatus.ACTIVE) "active" else it.data.hashCode().toString() }
         }.distinctUntilChanged(),
         dao.observeDocs(Profile.PERSONAL, Entity.DAY_WORKOUT),
     ) { Unit }.combine(activeProfile) { _, _ -> Unit }
@@ -423,7 +426,10 @@ class GymRepository(
             ?: return@withTransaction false
         val deviceKey = "watch_phone_device_id"
         val device = dao.getSetting(deviceKey) ?: newId().also { dao.putSetting(SettingEntity(deviceKey, it)) }
-        val event = WorkoutEvents.createResolution(state.copy(document = raw), choice, newId(), device, clock().toEpochMilli())
+        val preceding = if (dao.getSetting("watch_peer_event_protocol") == "2") pendingPhoneEventFor(sessionId) else null
+        val stamp = maxOf(clock().toEpochMilli(), (state.lastOperation?.occurredAtMillis ?: -1L) + 1L)
+        val event = WorkoutEvents.createResolution(state.copy(document = raw), choice, newId(), device, stamp)
+            .copy(predecessorEventId = preceding?.eventId)
         val result = importWatchEvent(event, fromPhone = true)
         if (result !is EventResult.Applied) return@withTransaction false
         dao.putSetting(SettingEntity("watch_outgoing:${event.occurredAtMillis.toString().padStart(19, '0')}:${event.eventId}",
@@ -487,6 +493,12 @@ class GymRepository(
         }
     }
 
+    private suspend fun pendingPhoneEventFor(sessionId: String): WorkoutEvent? =
+        dao.getSettingsPrefix("watch_outgoing:").asReversed().firstNotNullOfOrNull { row ->
+            runCatching { GymJson.decodeFromString(WorkoutEvent.serializer(), row.value) }.getOrNull()
+                ?.takeIf { it.sessionId == sessionId }
+        }
+
     private suspend fun enqueuePhoneWatchEvent(sessionId: String, before: JsonObject, after: JsonObject) {
         if (dao.getSetting("watch_companion_enabled") != "1") return
         val deviceKey = "watch_phone_device_id"
@@ -498,10 +510,14 @@ class GymRepository(
                 t.startedAtMillis + t.suggestedRestSeconds * 1000L else null,
                 t.label, t.pendingRest, t.pendingSetup, t.sessionId, t.exerciseId, t.setId)
         } }
-        val event = WorkoutEvent(newId(), device, clock().toEpochMilli(), WorkoutProfile.PERSONAL,
-            sessionId, before, after, timer, (after["focus_exercise_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content)
         val key = "watch_replica:$sessionId"
         val prior = dao.getSetting(key)?.let { GymJson.decodeFromString(ReplicaState.serializer(), it) }
+        val preceding = if (dao.getSetting("watch_peer_event_protocol") == "2") pendingPhoneEventFor(sessionId) else null
+        val stamp = maxOf(clock().toEpochMilli(), (prior?.lastOperation?.occurredAtMillis ?: -1L) + 1L,
+            (preceding?.occurredAtMillis ?: -1L) + 1L)
+        val event = WorkoutEvent(newId(), device, stamp, WorkoutProfile.PERSONAL,
+            sessionId, before, after, timer, (after["focus_exercise_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content,
+            predecessorEventId = preceding?.eventId)
         val base = prior?.copy(document = before) ?: ReplicaState(WorkoutProfile.PERSONAL, sessionId, before)
         val applied = WorkoutEvents.apply(base, event)
         if (applied is EventResult.Applied)
@@ -513,8 +529,10 @@ class GymRepository(
     }
 
     /** A trusted watch handshake enables durable phone events; existing pending events are never discarded. */
-    suspend fun enableWatchCompanion() = db.withTransaction {
-        if (currentProfile() != Profile.PERSONAL || dao.getSetting("watch_companion_enabled") == "1") return@withTransaction
+    suspend fun enableWatchCompanion(peerEventProtocol: Int = 1) = db.withTransaction {
+        if (currentProfile() != Profile.PERSONAL) return@withTransaction
+        dao.putSetting(SettingEntity("watch_peer_event_protocol", peerEventProtocol.coerceIn(1, 2).toString()))
+        if (dao.getSetting("watch_companion_enabled") == "1") return@withTransaction
         dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
         val session = dao.getActiveSession(Profile.PERSONAL) ?: return@withTransaction
         val raw = parseObject(session.data)

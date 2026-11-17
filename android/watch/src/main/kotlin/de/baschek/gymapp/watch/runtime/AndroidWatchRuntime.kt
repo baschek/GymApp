@@ -80,6 +80,17 @@ class AndroidWatchRuntime(private val app: WatchApplication, private val request
             catch (_: Exception) { RuntimeMonitor.state.update { it.copy(connectionLabel = "Konflikt") } }
         }
     }
+    override fun openPhoneHealthSettings() {
+        app.scope.launch {
+            try {
+                val repo = app.repository.value ?: return@launch
+                if (repo.state.value.profile != de.baschek.gymapp.core.wear.events.WorkoutProfile.PERSONAL) return@launch
+                val nodes = Tasks.await(Wearable.getNodeClient(app).connectedNodes)
+                if (nodes.isEmpty()) { RuntimeMonitor.state.update { it.copy(connectionLabel = "Nur Uhr") }; return@launch }
+                nodes.forEach { Tasks.await(Wearable.getMessageClient(app).sendMessage(it.id, "/gymapp/open-health/v1", byteArrayOf())) }
+            } catch (_: Exception) { RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") } }
+        }
+    }
     override fun openPhone() {
         app.scope.launch {
             try {

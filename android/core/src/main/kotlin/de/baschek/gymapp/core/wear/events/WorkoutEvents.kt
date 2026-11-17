@@ -3,6 +3,8 @@ package de.baschek.gymapp.core.wear.events
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import de.baschek.gymapp.core.model.GymJson
@@ -16,6 +18,9 @@ import de.baschek.gymapp.core.model.GymJson
     val profile: WorkoutProfile, val sessionId: String, val before: JsonObject, val after: JsonObject,
     val timer: WorkoutTimer? = null, val focusExerciseId: String? = null,
     val resolutions: List<ConflictResolution> = emptyList(),
+    @OptIn(ExperimentalSerializationApi::class)
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val predecessorEventId: String? = null,
 )
 @Serializable data class ConflictResolution(
     val conflictId: String, val path: List<String>, val candidateA: JsonElement?,
@@ -71,7 +76,8 @@ object WorkoutEvents {
     fun apply(state: ReplicaState, event: WorkoutEvent): EventResult {
         validate(state)?.let { return EventResult.Rejected(it) }
         if (!uuid(event.eventId) || !uuid(event.sessionId) || !id(event.deviceId) || event.occurredAtMillis < 0 ||
-            !documentValid(event.before) || !documentValid(event.after) || !timerValid(event.timer) || !optionalId(event.focusExerciseId)) return EventResult.Rejected("invalid_event")
+            !documentValid(event.before) || !documentValid(event.after) || !timerValid(event.timer) || !optionalId(event.focusExerciseId) ||
+            (event.predecessorEventId != null && (!uuid(event.predecessorEventId) || event.predecessorEventId == event.eventId))) return EventResult.Rejected("invalid_event")
         if (event.resolutions.size > MAX_CONFLICTS || (event.resolutions.isNotEmpty() && event.before != event.after) ||
             event.resolutions.any { !hash(it.conflictId) || it.path.isEmpty() || it.path.size > 8 || it.path.any { p -> !id(p) } || (it.chosen != it.candidateA && it.chosen != it.candidateB) } ||
             event.resolutions.map { it.conflictId }.toSet().size != event.resolutions.size ||
@@ -82,6 +88,7 @@ object WorkoutEvents {
         state.receipts.firstOrNull { it.eventId == event.eventId }?.let {
             return if (it.fingerprint == fingerprint) EventResult.Replayed(state) else EventResult.Rejected("event_id_reused")
         }
+        if (event.predecessorEventId != null && state.receipts.none { it.eventId == event.predecessorEventId }) return EventResult.Rejected("missing_predecessor")
         if (state.receipts.size >= MAX_RECEIPTS) return EventResult.Rejected("receipt_capacity")
         val stamp = OperationStamp(event.occurredAtMillis, event.deviceId, event.eventId)
         if (event.resolutions.isNotEmpty()) return applyResolution(state, event, stamp, fingerprint)

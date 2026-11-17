@@ -27,7 +27,9 @@ class PrivateHeartStore(context: Context) {
         return AtomicFile(File(directory, "${profile.name}-$name.json"))
     }
 
-    suspend fun save(recording: HeartRecording) = withContext(Dispatchers.IO) { healthStoreMutex.withLock {
+    suspend fun save(recording: HeartRecording) = withContext(Dispatchers.IO) { healthStoreMutex.withLock { saveUnlocked(recording) } }
+
+    private fun saveUnlocked(recording: HeartRecording) {
         val target = file(recording.profile, recording.sessionId)
         val existing = readUnlocked(recording.profile, recording.sessionId)
         require(existing == null || recording.version > existing.version || recording == existing) {
@@ -43,7 +45,13 @@ class PrivateHeartStore(context: Context) {
             target.failWrite(stream)
             throw e
         }
-    } }
+    }
+
+    /** Creates the initial no-pulse version atomically against a concurrent watch import. */
+    suspend fun ensureEmpty(profile: RecordingProfile, sessionId: String, startMillis: Long, endMillis: Long): HeartRecording =
+        withContext(Dispatchers.IO) { healthStoreMutex.withLock {
+            readUnlocked(profile, sessionId) ?: HeartRecording(profile, sessionId, startMillis, endMillis, 0, emptyList()).also { saveUnlocked(it) }
+        } }
 
     suspend fun read(profile: RecordingProfile, sessionId: String): HeartRecording? = withContext(Dispatchers.IO) { healthStoreMutex.withLock { readUnlocked(profile, sessionId) } }
 

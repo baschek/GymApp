@@ -11,10 +11,8 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 
 internal fun transferHash(id: String): String = MessageDigest.getInstance("SHA-256")
     .digest(id.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
@@ -22,8 +20,7 @@ internal fun transferHash(id: String): String = MessageDigest.getInstance("SHA-2
 /** Queue lives in Room, not in a transient callback; DataItems persist until acknowledged. */
 class PhoneEventPublisher(private val context: Context, private val repository: GymRepository) {
     fun start(scope: CoroutineScope) = scope.launch {
-        repository.observePhoneWatchEvents().collectLatest { events ->
-            while (events.isNotEmpty() && isActive) {
+        publishWhileActive(repository.observePhoneWatchEvents()) { events ->
               withContext(Dispatchers.IO) {
                 for (event in events) {
                     try {
@@ -38,13 +35,13 @@ class PhoneEventPublisher(private val context: Context, private val repository: 
                             }.asPutDataRequest().setUrgent()
                             Tasks.await(Wearable.getDataClient(context).putDataItem(request), 30, TimeUnit.SECONDS)
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (_: Exception) {
                         // Keep the durable outbox for a later attempt.
                     }
                 }
               }
-              delay(30_000)
-            }
         }
     }
 }

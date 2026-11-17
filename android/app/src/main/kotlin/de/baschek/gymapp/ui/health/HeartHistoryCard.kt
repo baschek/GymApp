@@ -1,6 +1,5 @@
 package de.baschek.gymapp.ui.health
 
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Column
@@ -9,13 +8,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -26,7 +23,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.GymApplication
 import de.baschek.gymapp.core.health.HeartRecording
@@ -36,16 +32,9 @@ import de.baschek.gymapp.core.health.SampleQuality
 import de.baschek.gymapp.core.health.correlatePhases
 import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.core.model.Session
-import de.baschek.gymapp.health.HealthConnectExporter
 import de.baschek.gymapp.health.HealthExportConsent
-import de.baschek.gymapp.health.HealthExportWorker
-import de.baschek.gymapp.health.HealthExportResult
-import de.baschek.gymapp.health.publishHealthStatus
-import de.baschek.gymapp.health.watchStatus
 import de.baschek.gymapp.health.PrivateHeartStore
-import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.ui.components.GymCardSurface
-import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -59,40 +48,7 @@ fun HeartHistoryCard(sessionId: String, session: Session) {
     val profile by repository.activeProfile.collectAsStateWithLifecycle(initialValue = Profile.PERSONAL)
     var recording by remember(sessionId, profile) { mutableStateOf<HeartRecording?>(null) }
     var selected by remember(sessionId) { mutableStateOf<Int?>(null) }
-    var message by remember(sessionId) { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val exporter = remember(context) { HealthConnectExporter(context) }
     val consent = remember(context) { HealthExportConsent(context) }
-    val exportNow: () -> Unit = {
-        scope.launch {
-            val store = PrivateHeartStore(context)
-            val latest = store.read(RecordingProfile.PERSONAL, sessionId) ?: run {
-                val start = runCatching { Instant.parse(session.startedAt).toEpochMilli() }.getOrNull()
-                val end = runCatching { Instant.parse(session.completedAt).toEpochMilli() }.getOrNull()
-                if (start == null || end == null || start < 0 || end <= start || end - start > 86_400_000L) null
-                else HeartRecording(RecordingProfile.PERSONAL, sessionId, start, end, 0, emptyList()).also {
-                    store.save(it); recording = it
-                }
-            }
-            if (latest == null) message = "Trainingszeit fehlt – Export nicht möglich"
-            else {
-                val result = exporter.export(sessionId, RecordingProfile.PERSONAL, latest.version, true)
-                publishHealthStatus(context, sessionId, latest.version, result.watchStatus())
-                when (result) {
-                HealthExportResult.Exported -> message = "In Health Connect gespeichert"
-                HealthExportResult.UnsupportedHistory -> message = "Ältere Daten können auf diesem Gerät nicht abgeglichen werden"
-                is HealthExportResult.PermissionRequired -> message = "Berechtigung fehlt – Training bleibt gespeichert"
-                else -> { message = "Gesundheitsexport ausstehend"; HealthExportWorker.enqueue(context, sessionId) }
-                }
-            }
-        }
-    }
-    val launcher = rememberLauncherForActivityResult(PermissionController.createRequestPermissionResultContract()) { granted ->
-        if (granted.containsAll(exporter.requiredPermissions) && profile == Profile.PERSONAL) {
-            consent.set(sessionId, true)
-            exportNow()
-        } else message = "Berechtigung fehlt – Training bleibt gespeichert"
-    }
     LaunchedEffect(sessionId, profile) {
         recording = runCatching { PrivateHeartStore(context).read(if (profile == Profile.PERSONAL) RecordingProfile.PERSONAL else RecordingProfile.TEST, sessionId) }.getOrNull()
     }
@@ -174,22 +130,8 @@ fun HeartHistoryCard(sessionId: String, session: Session) {
             } }
         }
         if (profile == Profile.PERSONAL) {
-                Text("Mit deiner Freigabe werden Training und gegebenenfalls Puls an Health Connect übertragen. Zum Abgleichen liest die App nur eigene Pulsdaten.", style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = {
-                    Telemetry.track("health", "export")
-                    scope.launch {
-                        val missing = runCatching { exporter.missingPermissions() }.getOrNull()
-                        if (missing == null) message = "Health Connect ist nicht verfügbar"
-                        else if (missing.isNotEmpty()) launcher.launch(exporter.requiredPermissions)
-                        else { consent.set(sessionId, true); exportNow() }
-                    }
-                }) { Text("In Health Connect speichern") }
-                if (consent.allowed(sessionId)) TextButton(onClick = {
-                    Telemetry.track("health", "revoke_export")
-                    consent.set(sessionId, false); message = "Weitere Exporte für dieses Training gestoppt"
-                    scope.launch { recording?.let { publishHealthStatus(context, sessionId, it.version, "NOT_ENABLED") } }
-                }) { Text("Weitere Exporte stoppen") }
-                message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            Text(if (consent.enabled()) "Health Connect: automatischer Export eingeschaltet" else "Health Connect: automatischer Export ausgeschaltet",
+                style = MaterialTheme.typography.bodySmall)
         } else Text("Testprofil: kein Gesundheitsexport", style = MaterialTheme.typography.bodySmall)
     }
 }

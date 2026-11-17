@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
@@ -59,17 +60,25 @@ class HealthConnectExporter(private val context: Context) {
         else -> HealthAvailability.Unavailable
     }
 
+    fun supportsBackgroundRead(): Boolean = availability() == HealthAvailability.Available &&
+        HealthConnectClient.getOrCreate(context).features.getFeatureStatus(HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND) ==
+        HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+
+    suspend fun backgroundReadGranted(): Boolean = supportsBackgroundRead() &&
+        HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
+
     suspend fun missingPermissions(): Set<String>? {
         if (availability() != HealthAvailability.Available) return null
         return requiredPermissions - HealthConnectClient.getOrCreate(context).permissionController.getGrantedPermissions()
     }
 
     /** Loads the current local version; expectedVersion protects an out-of-date consent screen. */
-    suspend fun export(sessionId: String, profile: RecordingProfile, expectedVersion: Long, userConsented: Boolean): HealthExportResult {
+    suspend fun export(sessionId: String, profile: RecordingProfile, expectedVersion: Long, userConsented: Boolean, automatic: Boolean = false): HealthExportResult {
         if (profile == RecordingProfile.TEST) return HealthExportResult.LocalOnly
         if (!userConsented) return HealthExportResult.ConsentRequired
         return withContext(Dispatchers.IO) { healthStoreMutex.withLock {
             try {
+                if (automatic && !HealthExportConsent(context).enabled()) return@withLock HealthExportResult.ConsentRequired
                 val recording = PrivateHeartStore(context).readUnlocked(profile, sessionId)
                     ?: return@withLock HealthExportResult.RecordingChanged
                 if (recording.version != expectedVersion) return@withLock HealthExportResult.RecordingChanged

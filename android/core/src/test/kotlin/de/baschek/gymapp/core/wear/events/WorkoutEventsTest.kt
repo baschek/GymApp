@@ -1,10 +1,19 @@
 package de.baschek.gymapp.core.wear.events
 
 import de.baschek.gymapp.core.model.GymJson
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.*
 import kotlin.test.*
+
+// Exact v1 wire fields: strict older clients must be able to read an unnegotiated event.
+@Serializable private data class LegacyEvent(
+    val eventId: String, val deviceId: String, val occurredAtMillis: Long,
+    val profile: WorkoutProfile, val sessionId: String, val before: JsonObject, val after: JsonObject,
+    val timer: WorkoutTimer? = null, val focusExerciseId: String? = null,
+    val resolutions: List<ConflictResolution> = emptyList(),
+)
 
 class WorkoutEventsTest {
     private val sessionId = "00000000-0000-4000-8000-000000000001"
@@ -73,6 +82,27 @@ class WorkoutEventsTest {
         assertEquals(15, set(received, 0)["reps"]!!.jsonPrimitive.int)
         assertEquals(1, received.conflicts.size)
     }
+    @Test fun unnegotiatedEventRemainsReadableByStrictV1Peer() {
+        val original = event(aId, doc(), doc(first = "completed"))
+        val wire = GymJson.encodeToString(original)
+        assertFalse(wire.contains("predecessorEventId"))
+        val legacy = Json { ignoreUnknownKeys = false }.decodeFromString<LegacyEvent>(wire)
+        assertEquals(original.eventId, legacy.eventId)
+        assertEquals(original.after, legacy.after)
+        assertEquals(original, GymJson.decodeFromString<WorkoutEvent>(wire))
+    }
+    @Test fun outOfOrderEventsWaitForPredecessorAndReplay() {
+        val base = doc()
+        val first = event(aId, base, doc(first = "completed"))
+        val second = event(bId, first.after, doc(first = "completed", second = "completed"), 2).copy(predecessorEventId = first.eventId)
+        assertEquals("missing_predecessor", (WorkoutEvents.apply(start(), second) as EventResult.Rejected).reason)
+        val afterFirst = apply(start(), first)
+        val merged = apply(afterFirst, second)
+        assertTrue(merged.conflicts.isEmpty())
+        assertEquals("completed", set(merged, 0)["status"]!!.jsonPrimitive.content)
+        assertEquals("completed", set(merged, 1)["status"]!!.jsonPrimitive.content)
+        assertIs<EventResult.Replayed>(WorkoutEvents.apply(merged, second))
+    }
     @Test fun rejectsWrongProfileAndMalformedIdentity() {
         val wrong = event(aId, doc(), doc(first = "completed"), profile = WorkoutProfile.TEST)
         assertEquals("different_profile", (WorkoutEvents.apply(start(), wrong) as EventResult.Rejected).reason)
@@ -86,10 +116,10 @@ class EventRejectionsTest {
             kotlin.test.assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
     }
 
-    @kotlin.test.Test fun permanentReasonsAreAcknowledged() {
+    @kotlin.test.Test fun rejectedEventsAreNotAcknowledged() {
         for (r in listOf("invalid_event", "invalid_session", "invalid_resolution", "event_id_reused", "receipt_capacity",
             "conflict_capacity", "deleted_session", "different_session", "other_active_session", "different_active_session",
             "missing_finish_time", "missing_duration", "different_profile"))
-            kotlin.test.assertTrue(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
+            kotlin.test.assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
     }
 }

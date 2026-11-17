@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- All meaningful artwork stays inside the adaptive icon's central safe circle. -->
+    <path android:pathData="M72,35 A27,27 0,1 0,79,57 L65,57"
+        android:fillColor="@android:color/transparent" android:strokeColor="#A8CF8E"
+        android:strokeWidth="5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M40,53 L67,53"
+        android:fillColor="@android:color/transparent" android:strokeColor="#F5F5F5"
+        android:strokeWidth="5" android:strokeLineCap="round" />
+    <path android:pathData="M39,43 L39,63 M45,46 L45,60 M63,46 L63,60 M69,43 L69,63"
+        android:fillColor="@android:color/transparent" android:strokeColor="#F5F5F5"
+        android:strokeWidth="5" android:strokeLineCap="round" />
+</vector>

@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
     <!-- Reconcile only this app's previously exported pulse records after workout corrections. -->
     <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <!-- Optional: reconcile only our own exported pulse records while the app is backgrounded. -->
+    <uses-permission android:name="android.permission.health.READ_HEALTH_DATA_IN_BACKGROUND" />
 
     <queries>
         <package android:name="com.google.android.apps.healthdata" />
@@ -91,6 +93,7 @@
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:path="/gymapp/open-phone/v1" />
+                <data android:scheme="wear" android:host="*" android:path="/gymapp/open-health/v1" />
             </intent-filter>
         </service>
 

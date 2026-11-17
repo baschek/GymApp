@@ -40,6 +40,10 @@ import kotlinx.serialization.json.JsonObject
     val packChecks: Map<String, String> = emptyMap(),
     val milestones: Map<String, Milestone> = emptyMap(),
     val durationRing: Boolean = false,
+    val peerEventProtocol: Int = 1,
+    val catalogSessionIds: Set<String> = emptySet(),
+    val catalogSessionIdsInitialized: Boolean = false,
+    val deletedSessionIds: Set<String> = emptySet(),
 ) {
     val sessionId: String? get() = replica?.sessionId
     val session: Session? get() = replica?.document?.let { runCatching { DocumentCodec.decode(Session.serializer(), it) }.getOrNull() }
@@ -105,11 +109,39 @@ class WatchWorkoutRepository private constructor(
         try { output.write(bytes); atomic.finishWrite(output) } catch (e: Exception) { atomic.failWrite(output); throw e }
     }
     suspend fun reload() = locked { it to Unit }
-    suspend fun replaceCatalog(catalog: WatchCatalog): Boolean = locked { s ->
-        if (catalog.profile != profile || catalog.schemaVersion != 1) return@locked s to false
-        // Preserve local session documents until a dedicated reconciliation has acknowledged them.
-        val merged = catalog.copy(sessions = catalog.sessions + s.catalog.sessions)
-        s.copy(catalog = merged) to true
+    suspend fun replaceCatalog(catalog: WatchCatalog, peerEventProtocol: Int = 1, allSessionIds: Set<String>? = null): Boolean = locked { s ->
+        if (catalog.profile != profile || catalog.schemaVersion != 1 ||
+            (allSessionIds != null && (allSessionIds.any { it.isBlank() || it.length > 128 } || !allSessionIds.containsAll(catalog.sessions.keys)))) return@locked s to false
+        // Without the complete ID list (older phone), omission can also mean an active session.
+        val known = if (s.catalogSessionIdsInitialized) s.catalogSessionIds else s.catalog.sessions.keys
+        val deleted = if (allSessionIds == null) s.deletedSessionIds else
+            (s.deletedSessionIds + (known - allSessionIds)) - allSessionIds
+        val pending = s.outbox.map { it.sessionId }.toSet()
+        val local = s.catalog.sessions.filterKeys { id ->
+            val replica = s.replica?.takeIf { it.sessionId == id } ?: s.archivedReplicas[id]
+            id !in catalog.sessions || id in pending || !replica?.conflicts.isNullOrEmpty() ||
+                (s.replica?.sessionId == id && s.session?.status == SessionStatus.ACTIVE)
+        }
+        val merged = catalog.copy(sessions = catalog.sessions + local)
+        val updated = s.copy(catalog = merged, peerEventProtocol = peerEventProtocol.coerceIn(1, 2),
+            catalogSessionIds = if (allSessionIds == null) s.catalogSessionIds else known + allSessionIds,
+            catalogSessionIdsInitialized = s.catalogSessionIdsInitialized || allSessionIds != null, deletedSessionIds = deleted)
+        discardDeletedWhenSafe(updated) to true
+    }
+
+    /** Do not discard a workout with local work, active training, or an unresolved conflict. */
+    private fun discardDeletedWhenSafe(s: WatchWorkoutState): WatchWorkoutState {
+        val pending = s.outbox.map { it.sessionId }.toSet()
+        val removable = s.deletedSessionIds.filter { id ->
+            val replica = s.replica?.takeIf { it.sessionId == id } ?: s.archivedReplicas[id]
+            id !in pending && replica?.conflicts.isNullOrEmpty() &&
+                !(s.replica?.sessionId == id && s.session?.status == SessionStatus.ACTIVE)
+        }.toSet()
+        val current = s.replica?.takeIf { it.sessionId in removable }
+        return s.copy(catalog = s.catalog.copy(sessions = s.catalog.sessions - removable),
+            replica = if (current != null) null else s.replica,
+            archivedReplicas = if (current != null) s.archivedReplicas + (current.sessionId to current) else s.archivedReplicas,
+            milestones = s.milestones.filterValues { it.sessionId !in removable })
     }
     suspend fun setDurationRing(enabled: Boolean) = locked { it.copy(durationRing = enabled) to Unit }
     suspend fun togglePackItem(key: String, day: String, itemId: String, defaults: Set<String> = emptySet()) = locked { s ->
@@ -123,7 +155,8 @@ class WatchWorkoutRepository private constructor(
     private fun session(s: WatchWorkoutState): Session? = s.session
     private fun event(s: WatchWorkoutState, before: ReplicaState, document: JsonObject, timer: WorkoutTimer?, focus: String?): WatchWorkoutState {
         val stamp = maxOf(now(), (before.lastOperation?.occurredAtMillis ?: -1L) + 1L)
-        val event = WorkoutEvent(newId(), deviceId, stamp, profile, before.sessionId, before.document, document, timer, focus)
+        val event = WorkoutEvent(newId(), deviceId, stamp, profile, before.sessionId, before.document, document, timer, focus,
+            predecessorEventId = if (s.peerEventProtocol >= 2) s.outbox.lastOrNull { it.sessionId == before.sessionId }?.eventId else null)
         val result = WorkoutEvents.apply(before, event)
         require(result is EventResult.Applied) { "Workout event rejected: $result" }
         return s.copy(replica = result.state, outbox = if (profile == WorkoutProfile.PERSONAL) s.outbox + event else s.outbox)
@@ -318,11 +351,16 @@ class WatchWorkoutRepository private constructor(
         return (needed + recent).associate { it.key to it.value }
     }
     /** Acknowledge only IDs durably accepted by the receiver. */
-    suspend fun acknowledge(eventIds: Set<String>) = locked { s -> s.copy(outbox = s.outbox.filterNot { it.eventId in eventIds }) to Unit }
+    suspend fun acknowledge(eventIds: Set<String>) = locked { s -> discardDeletedWhenSafe(s.copy(outbox = s.outbox.filterNot { it.eventId in eventIds })) to Unit }
     suspend fun receive(event: WorkoutEvent): EventResult = locked { s ->
         if (profile != WorkoutProfile.PERSONAL || event.profile != profile) return@locked s to EventResult.Rejected("profile_local_only")
         val active = s.replica
         val archived = s.archivedReplicas[event.sessionId]
+        val retained = active?.takeIf { it.sessionId == event.sessionId } ?: archived
+        if (event.sessionId in s.deletedSessionIds && event.sessionId !in s.catalog.sessions && retained?.conflicts.isNullOrEmpty() && s.outbox.none { it.sessionId == event.sessionId }) {
+            val replay = retained?.let { WorkoutEvents.apply(it, event) }
+            return@locked s to if (replay is EventResult.Replayed) replay else EventResult.Rejected("deleted_session")
+        }
         val current = when {
             active?.sessionId == event.sessionId -> active
             archived != null -> archived
@@ -347,6 +385,7 @@ class WatchWorkoutRepository private constructor(
         val current = s.replica ?: return@locked s to EventResult.Rejected("no_session")
         val stamp = maxOf(now(), (current.lastOperation?.occurredAtMillis ?: -1L) + 1L)
         val resolution = WorkoutEvents.createResolution(current, choice, newId(), deviceId, stamp)
+            .copy(predecessorEventId = if (s.peerEventProtocol >= 2) s.outbox.lastOrNull { it.sessionId == current.sessionId }?.eventId else null)
         when (val result = WorkoutEvents.apply(current, resolution)) {
             is EventResult.Applied -> s.copy(replica = result.state, undo = null, outbox = if (profile == WorkoutProfile.PERSONAL) s.outbox + resolution else s.outbox) to result
             else -> s to result
