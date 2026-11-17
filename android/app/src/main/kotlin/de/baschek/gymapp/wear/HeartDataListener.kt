@@ -63,9 +63,13 @@ class HeartDataListener : WearableListenerService() {
                     changed
                 } ?: continue
                 if (accepted) {
-                    val allowed = HealthExportConsent(this).allowed(recording.sessionId)
+                    val allowed = HealthExportConsent(this).enabled()
                     runBlocking { publishHealthStatus(this@HeartDataListener, recording.sessionId, recording.version, if (allowed) "PENDING" else "NOT_ENABLED") }
-                    if (allowed) HealthExportWorker.enqueue(this, recording.sessionId)
+                    if (allowed) {
+                        HealthExportWorker.enqueue(this, recording.sessionId)
+                        val container = (application as GymApplication).container
+                        container.health.onRecordingChanged(container.appScope)
+                    }
                 }
                 val ack = PutDataMapRequest.create("/gymapp/heart-ack/v1/$hash/$version").apply {
                     dataMap.putString("attempt", java.util.UUID.randomUUID().toString())

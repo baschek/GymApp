@@ -56,7 +56,7 @@ class WorkoutDataListener : WearableListenerService() {
                 val operation = GymJson.decodeFromString(WorkoutEvent.serializer(), bytes.toString(Charsets.UTF_8))
                 if (operation.profile != WorkoutProfile.PERSONAL || hash(operation.eventId) != id) continue
                 val result = runBlocking { (application as GymApplication).container.repository.importWatchEvent(operation) }
-                // Transient rejections stay unacknowledged for a retry; permanent ones are dropped by the sender.
+                // A rejection was not durably applied: retain the sender's event for recovery.
                 if (result is EventResult.Rejected && !EventRejections.shouldAcknowledge(result)) continue
                 if (result is EventResult.Applied) (application as GymApplication).container.scheduler.requestSync()
                 if (result is EventResult.Applied && result.state.lastOperation?.eventId == operation.eventId) {

@@ -34,6 +34,7 @@ import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.core.live.LiveUpdateStatus
 import de.baschek.gymapp.timer.LiveUpdateSupport
+import de.baschek.gymapp.ui.health.HealthExportSettings
 import de.baschek.gymapp.ui.ConflictSheet
 import de.baschek.gymapp.ui.Navigator
 import de.baschek.gymapp.ui.Routes
@@ -134,6 +135,8 @@ fun SettingsScreen(nav: Navigator) {
                 }
             }
         }
+
+        item { HealthExportSettings(profile) }
 
         item {
             Column {

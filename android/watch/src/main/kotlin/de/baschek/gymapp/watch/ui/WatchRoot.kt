@@ -1,9 +1,14 @@
 package de.baschek.gymapp.watch.ui
 
 import androidx.compose.runtime.*
+import androidx.activity.compose.LocalActivity
 import de.baschek.gymapp.core.health.RecordingProfile
 import de.baschek.gymapp.core.model.*
 import de.baschek.gymapp.core.wear.events.WorkoutProfile
+import de.baschek.gymapp.core.wear.progress.watchProgress
+import de.baschek.gymapp.core.wear.progress.WatchProgress
+import de.baschek.gymapp.watch.update.WatchUpdater
+import de.baschek.gymapp.watch.update.WatchUpdatePhase
 import de.baschek.gymapp.core.stats.PackState
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.progression.totalVolume
@@ -24,12 +29,16 @@ import kotlin.math.roundToInt
 fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
     val workout by repository.state.collectAsState()
     val runtimeState by runtime.state.collectAsState()
+    val update by WatchUpdater.state.collectAsState()
+    val activity = LocalActivity.current
     var clock by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(workout.timer, runtimeState.ambient) { while (true) { clock = System.currentTimeMillis(); delay(if (runtimeState.ambient) 60_000 else 1_000) } }
     LaunchedEffect(workout.session?.status) { if (workout.session?.status == SessionStatus.COMPLETED) runtime.stopRecording() }
-    val presentation = present(workout, runtimeState, repository, clock).copy(error = error)
+    val today = LocalDate.now()
+    val progress = remember(workout.catalog, today) { watchProgress(workout.catalog, today) }
+    val presentation = present(workout, runtimeState, repository, clock, progress).copy(error = error, phoneHealthEnabled = runtimeState.phoneHealthEnabled, phoneHealthBackground = runtimeState.phoneHealthBackground, updateStatus = update.message.ifBlank { "Wird geprüft" }, updateCanInstall = update.phase in setOf(WatchUpdatePhase.READY, WatchUpdatePhase.INSTALL_PERMISSION_REQUIRED))
     CompositionLocalProvider(LocalInteraction provides { runtime.trackInteraction("watch", "tap") }) { WatchUi(presentation) { action ->
         runtime.trackInteraction("watch", action.javaClass.simpleName.lowercase(java.util.Locale.ROOT))
         error = null
@@ -67,6 +76,9 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
                     WatchAction.SkipRest -> repository.skipRest()
                     WatchAction.Retry -> { runtime.retrySync(); true }
                     is WatchAction.Resolve -> { runtime.resolveConflict(action.latest); true }
+                    WatchAction.OpenPhoneHealthSettings -> { runtime.openPhoneHealthSettings(); true }
+                    WatchAction.CheckUpdate -> { WatchUpdater.checkNow(); true }
+                    WatchAction.InstallUpdate -> { if (activity != null) WatchUpdater.install(activity) else error = "Installation nicht verfügbar"; true }
                     WatchAction.OpenPhone -> { runtime.openPhone(); true }
                 }
                 if (!ok) error = "Aktion nicht möglich"
@@ -86,7 +98,7 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
 private inline fun <reified T> decode(raw: JsonObject): T? = runCatching { DocumentCodec.decode<T>(raw) }.getOrNull()
 private inline fun <reified T> decodeMap(raw: Map<String, JsonObject>): Map<String, T> = raw.mapNotNull { (id, value) -> decode<T>(value)?.let { id to it } }.toMap()
 
-private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: WatchWorkoutRepository, now: Long): WatchPresentation {
+private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: WatchWorkoutRepository, now: Long, progress: WatchProgress): WatchPresentation {
     val gyms = decodeMap<Gym>(s.catalog.gyms).filterValues { it.archived != true }
     val plans = decodeMap<Plan>(s.catalog.plans).filterValues { it.archived != true }
     val library = decodeMap<Exercise>(s.catalog.exercises)
@@ -123,7 +135,28 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         val sets = done.exercises.flatMap { it.sets }.filter { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
         WatchSummary("${done.exercises.sumOf { totalVolume(it) }.roundToInt()} kg", sets.size.toString(), "${(done.durationSeconds ?: 0) / 60} min", if (heartMatches && rt.averageBpm != null && rt.maxBpm != null) "${rt.averageBpm} / ${rt.maxBpm}" else "– –")
     }
+    fun number(value: Double): String = if (value == value.toLong().toDouble()) value.toLong().toString() else "%.2f".format(java.util.Locale.GERMANY, value).trimEnd('0').trimEnd(',')
+    val frequency = listOf(WatchProgressRow("last7", "Letzte 7 Tage", "${progress.last7DaysCount} Trainings")) + progress.weeklySessions.map { WatchProgressRow(it.start.toString(), "Woche ab ${it.start}", "${it.count} Trainings") }
+    val weights = progress.workingWeights.map { WatchProgressRow("${it.gymId}:${it.exerciseId}", it.exerciseName, "${number(it.weightKg)} kg · ${it.gymName}") }
+    val bests = progress.personalBests.map { best ->
+        val unit = if (best.unit == "reps") "Wdh." else best.unit
+        val basis = when (best.loadBasis) { LoadBasis.PER_HAND -> " · pro Hand"; LoadBasis.ASSISTANCE -> " · Hilfe"; else -> "" }
+        WatchProgressRow("${best.sessionId}:${best.setId}", best.exerciseName, "${number(best.value)} $unit$basis · ${best.gymName ?: "Studio unbekannt"}")
+    }
+    val history = progress.history.map { row ->
+        val completedSets = row.session.exercises.flatMap { it.sets }.count { it.status == SetStatus.COMPLETED }
+        val info = listOfNotNull(row.gymName, row.session.durationSeconds?.let { "${it / 60} min" }, "$completedSets Sätze").joinToString(" · ")
+        val sections = row.session.exercises.sortedBy { it.order }.map { ex ->
+            val logged = ex.sets.filter { it.status == SetStatus.COMPLETED }.map { set ->
+                val value = listOfNotNull(set.weightKg?.let { "${number(it)} kg" }, set.reps?.let { "$it Wdh." }, set.seconds?.let { "$it s" }, set.meters?.let { "${number(it)} m" }).joinToString(" × ")
+                (if (set.setType == SetType.WARMUP) "W · " else "") + value
+            }
+            ex.name to logged.joinToString("\n").ifBlank { "Kein Satz gespeichert" }
+        }
+        WatchHistoryEntry(row.sessionId, row.session.planName.ifBlank { "Training" }, listOfNotNull(row.session.effectiveTime.take(10).takeIf { it.isNotBlank() }, info).joinToString(" · "), sections)
+    }
     return WatchPresentation(
+        frequency = frequency, weights = weights, bests = bests, history = history,
         accent = s.catalog.accent,
         gyms = gyms.map { (id, gym) -> WatchOption(id, gym.name, gym.subtitle.orEmpty(), gym.color?.removePrefix("#")?.toLongOrNull(16)?.or(0xff000000)) },
         plans = plans.map { (id, plan) -> WatchOption(id, plan.name) }, dayWorkouts = days.map { (id, d) -> WatchOption(id, d.title) },

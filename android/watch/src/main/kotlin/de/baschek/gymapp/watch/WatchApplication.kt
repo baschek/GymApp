@@ -28,6 +28,7 @@ class WatchApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        de.baschek.gymapp.watch.update.WatchUpdater.initialize(applicationContext)
         restoreJob = scope.launch {
             restoreRepository()
             runCatching { WatchTransport.reconcile(this@WatchApplication) }

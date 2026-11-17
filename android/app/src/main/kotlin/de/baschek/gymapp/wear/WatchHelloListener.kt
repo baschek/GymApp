@@ -24,7 +24,7 @@ class WatchHelloListener : WearableListenerService() {
                 if (nodeId == local.id) continue
                 val data = DataMapItem.fromDataItem(item).dataMap
                 if (data.getString("nodeId") != nodeId || data.getString("id") != parts[4] || transferHash(nodeId) != parts[4]) continue
-                runBlocking { (application as GymApplication).container.repository.enableWatchCompanion() }
+                runBlocking { (application as GymApplication).container.repository.enableWatchCompanion(data.getInt("eventProtocol", 1)) }
             } catch (_: Exception) {
                 // The watch retries the durable handshake.
             }

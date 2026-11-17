@@ -20,6 +20,8 @@ data class WatchRuntimeState(
     val exportLabel: String = "Gesundheitsexport ausstehend",
     val ambient: Boolean = false,
     val phoneLeads: Boolean = false,
+    val phoneHealthEnabled: Boolean? = null,
+    val phoneHealthBackground: Boolean? = null,
 )
 
 interface WatchRuntime {
@@ -28,6 +30,7 @@ interface WatchRuntime {
     fun retrySync()
     fun resolveConflict(useLatest: Boolean)
     fun openPhone()
+    fun openPhoneHealthSettings() {}
     fun startRecording(sessionId: String, profile: RecordingProfile)
     fun stopRecording()
 }

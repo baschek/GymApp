@@ -53,7 +53,8 @@ import kotlinx.coroutines.launch
 
 /** Navigation shell: top-level tabs with the translucent bottom bar, detail screens, the training flow without bar. */
 @Composable
-fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {}) {
+fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {},
+    requestedHealthSettings: Boolean = false, onHealthSettingsHandled: () -> Unit = {}) {
     val container = (LocalContext.current.applicationContext as GymApplication).container
     val nav = rememberNavigator(Routes.TODAY)
     val snackbar = remember { SnackbarHostState() }
@@ -65,6 +66,9 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {})
             nav.push(Routes.workout(requestedSession))
             onRequestHandled()
         }
+    }
+    LaunchedEffect(requestedHealthSettings) {
+        if (requestedHealthSettings) { nav.push(Routes.SETTINGS); onHealthSettingsHandled() }
     }
     BackHandler(enabled = nav.canPop) { nav.pop() }
 

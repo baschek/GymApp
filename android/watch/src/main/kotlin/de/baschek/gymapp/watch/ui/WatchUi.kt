@@ -13,6 +13,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.wear.compose.foundation.BasicSwipeToDismissBox
+import androidx.wear.compose.foundation.edgeSwipeToDismiss
+import androidx.wear.compose.foundation.rememberSwipeToDismissBoxState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.*
@@ -21,11 +24,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.geometry.Offset
@@ -77,8 +82,10 @@ data class WatchCurrentSet(
 )
 data class WatchSummary(val volume: String, val sets: String, val duration: String, val pulse: String)
 data class WatchCelebration(val exercise: String, val from: String, val to: String)
+data class WatchProgressRow(val id: String, val title: String, val detail: String)
+data class WatchHistoryEntry(val id: String, val title: String, val detail: String, val sections: List<Pair<String, String>>)
 data class WatchPresentation(
-    val accent: String? = null, val gyms: List<WatchOption> = emptyList(), val plans: List<WatchOption> = emptyList(),
+    val phoneHealthEnabled: Boolean? = null, val phoneHealthBackground: Boolean? = null, val updateStatus: String = "Wird geprüft", val updateCanInstall: Boolean = false, val frequency: List<WatchProgressRow> = emptyList(), val weights: List<WatchProgressRow> = emptyList(), val bests: List<WatchProgressRow> = emptyList(), val history: List<WatchHistoryEntry> = emptyList(), val accent: String? = null, val gyms: List<WatchOption> = emptyList(), val plans: List<WatchOption> = emptyList(),
     val dayWorkouts: List<WatchOption> = emptyList(), val library: List<WatchOption> = emptyList(),
     val packItems: List<WatchOption> = emptyList(), val packsByDay: Map<String, List<WatchOption>> = emptyMap(), val packsByGym: Map<String, List<WatchOption>> = emptyMap(), val modes: List<WatchOption> = emptyList(),
     val suggestion: String = "Kein Training vorgeschlagen", val suggestionDetail: String = "",
@@ -121,16 +128,21 @@ sealed interface WatchAction {
     data object SkipRest : WatchAction
     data object Retry : WatchAction
     data class Resolve(val latest: Boolean) : WatchAction
+    data object OpenPhoneHealthSettings : WatchAction
+    data object CheckUpdate : WatchAction
+    data object InstallUpdate : WatchAction
     data object OpenPhone : WatchAction
 }
 
-private enum class Screen { HOME, GYM, PICK, SPONTANEOUS, MODE, PACK, TRAIN, REST, EXERCISE_DONE, SETUP, CELEBRATION, SUMMARY, HEALTH, CONNECTION, SETTINGS }
+private enum class Screen { HOME, GYM, PICK, SPONTANEOUS, MODE, PACK, TRAIN, TRAIN_EXERCISES, TRAIN_SETS, TRAIN_NOTE, TRAIN_PULSE, PROGRESS, FREQUENCY, WEIGHTS, BESTS, HISTORY, HISTORY_DETAIL, REST, EXERCISE_DONE, SETUP, CELEBRATION, SUMMARY, HEALTH, CONNECTION, SETTINGS }
 private enum class Editor { WEIGHT, AMOUNT, REST }
 
 @Composable
 fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
     var screen by remember { mutableStateOf(if (state.sessionActive) Screen.TRAIN else Screen.HOME) }
     var previous by remember { mutableStateOf(Screen.HOME) }
+    var healthReturn by remember { mutableStateOf(Screen.HOME) }
+    var historySelection by remember { mutableStateOf<String?>(null) }
     var gym by remember { mutableStateOf("") }
     var plan by remember { mutableStateOf("") }
     var day by remember { mutableStateOf("") }
@@ -152,7 +164,8 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
     val current = state.current
     val packItems = (state.packsByGym[gym] ?: state.packItems) + state.packsByDay[day].orEmpty()
     val checked = state.packChecked[gym].orEmpty() + state.packChecked["day:$day"].orEmpty()
-    val pager = rememberPagerState(initialPage = 1, pageCount = { 6 })
+    val pager = rememberPagerState(initialPage = 1, pageCount = { 3 })
+    val swipeToDismissState = rememberSwipeToDismissBoxState()
     val scope = rememberCoroutineScope()
     val setRequester = remember { FocusRequester() }
     LaunchedEffect(pager.currentPage, editor, screen) { if (pager.currentPage == 1 && editor == null && screen == Screen.TRAIN) runCatching { setRequester.requestFocus() } }
@@ -172,8 +185,13 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
             exerciseMenu != null -> exerciseMenu = null
             editingSet != null -> editingSet = null
             endConfirm -> endConfirm = false
-            screen in listOf(Screen.HEALTH, Screen.CONNECTION, Screen.SETTINGS) -> screen = previous
-            screen == Screen.TRAIN -> if (pager.currentPage > 0) scope.launch { pager.animateScrollToPage(pager.currentPage - 1) } else screen = Screen.HOME
+            screen == Screen.HEALTH -> screen = healthReturn
+            screen in listOf(Screen.CONNECTION, Screen.SETTINGS) -> screen = previous
+            screen in listOf(Screen.TRAIN_EXERCISES, Screen.TRAIN_SETS, Screen.TRAIN_NOTE, Screen.TRAIN_PULSE) -> screen = Screen.TRAIN
+            screen == Screen.TRAIN -> if (pager.currentPage != 1) scope.launch { pager.animateScrollToPage(1) } else screen = Screen.HOME
+            screen == Screen.HISTORY_DETAIL -> screen = Screen.HISTORY
+            screen in listOf(Screen.FREQUENCY, Screen.WEIGHTS, Screen.BESTS, Screen.HISTORY) -> screen = Screen.PROGRESS
+            screen == Screen.PROGRESS -> screen = Screen.HOME
             screen == Screen.PACK -> screen = Screen.MODE
             screen == Screen.MODE -> screen = Screen.PICK
             screen == Screen.SPONTANEOUS && addingExercise -> { addingExercise = false; screen = Screen.TRAIN }
@@ -192,12 +210,13 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                 }
             } else {
                 when (screen) {
-                    Screen.HOME -> CenterColumn {
-                        Small(if (state.sessionActive) "Training läuft" else "Heute · ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date())}")
-                        Title(if (state.sessionActive) current?.exerciseName ?: "Training" else state.suggestion)
-                        Small(if (state.sessionActive) current?.let { "Satz ${it.number} von ${it.total} · ${setValue(it.weight, it.amount, it.unit, it.weightLabel)}" }.orEmpty() else state.suggestionDetail)
-                        Pill(if (state.sessionActive) "Fortsetzen  ▶" else "Start  ▶", true) { screen = if (state.sessionActive) Screen.TRAIN else Screen.GYM }
-                        Pill(state.connection + if (state.pendingCount > 0) " · ${state.pendingCount} offen" else "") { previous = Screen.HOME; screen = Screen.CONNECTION }
+                    Screen.HOME -> ListScreen(if (state.sessionActive) "Training läuft" else "Heute · ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date())}") {
+                        item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Title(if (state.sessionActive) current?.exerciseName ?: "Training" else state.suggestion) } }
+                        item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Small(if (state.sessionActive) current?.let { "Satz ${it.number} von ${it.total} · ${setValue(it.weight, it.amount, it.unit, it.weightLabel)}" }.orEmpty() else state.suggestionDetail) } }
+                        item { RowPill(if (state.sessionActive) "Fortsetzen" else "Start", selected = true) { screen = if (state.sessionActive) Screen.TRAIN else Screen.GYM } }
+                        item { RowPill(state.connection + if (state.pendingCount > 0) " · ${state.pendingCount} offen" else "") { previous = Screen.HOME; screen = Screen.CONNECTION } }
+                        item { RowPill("Fortschritt & Verlauf") { screen = Screen.PROGRESS } }
+                        item { RowPill("Einstellungen") { previous = Screen.HOME; screen = Screen.SETTINGS } }
                     }
                     Screen.GYM -> ListScreen("Studio", state.gyms.isEmpty(), "Keine Studios auf der Uhr. Mit dem Handy verbinden.") {
                         items(state.gyms, key = { it.id }) { item -> RowPill(item.name, item.detail, color = item.color) { gym = item.id; screen = Screen.PICK } }
@@ -225,18 +244,25 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                             }
                         }
                     }
-                    Screen.TRAIN -> {
+                    Screen.TRAIN -> BasicSwipeToDismissBox(onDismissed = { back() }, state = swipeToDismissState) { background ->
+                        if (!background) {
                         if (durationRing && state.durationRing != null) ProgressRing(state.durationRing)
-                        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize()) { page ->
+                        HorizontalPager(state = pager, modifier = Modifier.fillMaxSize().edgeSwipeToDismiss(swipeToDismissState)) { page ->
                             when (page) {
-                                0 -> ListScreen("Übungen", bottom = 32) { items(state.exercises, key = { it.id }) { ex -> RowPill("${ex.status}  ${ex.name}", ex.detail, selected = ex.current) { exerciseMenu = ex } } }
+                                0 -> ListScreen("Info") {
+                                    item { RowPill("Übungen") { screen = Screen.TRAIN_EXERCISES } }
+                                    item { RowPill("Bisherige Sätze") { screen = Screen.TRAIN_SETS } }
+                                    item { RowPill("Notiz") { screen = Screen.TRAIN_NOTE } }
+                                    item { RowPill("Puls") { screen = Screen.TRAIN_PULSE } }
+                                    item { RowPill("Zum Satz") { scope.launch { pager.animateScrollToPage(1) } } }
+                                }
                                 1 -> if (current != null) Box(Modifier.fillMaxSize().focusRequester(setRequester).onRotaryScrollEvent {
                                     if (current.hasWeight) editor = Editor.WEIGHT else editor = Editor.AMOUNT
                                     true
                                 }.focusable()) {
                                     Column(Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, bottom = 68.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                        Small("♥ ${state.bpm?.toString() ?: "– –"}" + if (state.phoneLeads) "  ▣ Handy" else "")
+                                        PulseHeader(state.bpm, state.phoneLeads)
                                         Title(current.exerciseName, size = 18)
                                         Small(if (current.isDuration && state.timedElapsedSeconds != null) "Zeit: ${clock(state.timedElapsedSeconds)}" else "Satz ${current.number} von ${current.total}")
                                         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -250,17 +276,8 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                                         else Pill("✓", true, "Satz geschafft") { dispatch(WatchAction.Log(current.exerciseId, current.setId, draftWeight?.plus(addOns.sumOf { current.addOns.getOrElse(it) { 0.0 } }), draftAmount, addOns.sorted().mapNotNull { current.addOns.getOrNull(it) }, current.effort)) }
                                     }
                                 } else CenterColumn { Small("Kein offener Satz") }
-                                2 -> ListScreen(current?.exerciseName ?: "Sätze", state.sets.isEmpty(), "Noch kein Satz.", bottom = 32) { items(state.sets, key = { it.id }) { row -> RowPill("${row.label}  ${row.value}", row.effort) { editingSet = row; editWeight = row.weight; editAmount = row.amount } } }
-                                3 -> ListScreen("Notiz", bottom = 32) {
-                                    current?.setup?.takeIf { it.isNotBlank() }?.let { item { InfoCard("Einstellung", it) } }
-                                    item { InfoCard("Notiz", current?.note?.takeIf { it.isNotBlank() } ?: "Keine Notiz") }
-                                }
-                                4 -> CenterColumn {
-                                    if (!state.pulsePermission) { Title("Pulserlaubnis fehlt"); Small("Puls während des Trainings anzeigen und aufzeichnen."); Pill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } }
-                                    else if (state.bpm == null) { Title("– –", size = 40); Small("Kein Messwert. Trag die Uhr enger und halte den Arm ruhig.") }
-                                    else { Title(state.bpm.toString(), size = 44); Small("Schläge pro Minute"); PulseCurve(state.pulseSamples); Small(state.recording) }
-                                }
-                                5 -> ListScreen("Mehr", bottom = 32) {
+                                2 -> ListScreen("Steuerung") {
+                                    item { RowPill("Zum Satz") { scope.launch { pager.animateScrollToPage(1) } } }
                                     if (state.undoAvailable) item { RowPill("Rückgängig") { dispatch(WatchAction.Undo) } }
                                     item { RowPill("Übung hinzufügen") { addingExercise = true; screen = Screen.SPONTANEOUS } }
                                     if (current?.isDuration == true) item { RowPill("Zeitwert speichern") { dispatch(WatchAction.Log(current.exerciseId, current.setId, draftWeight?.plus(addOns.sumOf { current.addOns.getOrElse(it) { 0.0 } }), draftAmount, addOns.sorted().mapNotNull { current.addOns.getOrNull(it) }, current.effort)) } }
@@ -268,7 +285,7 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                                     item { RowPill("Satz hinzufügen") { current?.let { dispatch(WatchAction.AddSet(it.exerciseId)) } } }
                                     item { RowPill("Satz überspringen") { current?.let { dispatch(WatchAction.SkipSet(it.exerciseId, it.setId)) } } }
                                     item { InfoCard("Pause ändern", "Während der Pause verfügbar") }
-                                    item { RowPill("Gesundheit") { previous = Screen.TRAIN; screen = Screen.HEALTH } }
+                                    item { RowPill("Gesundheit") { healthReturn = Screen.TRAIN; screen = Screen.HEALTH } }
                                     item { RowPill("Verbindung") { previous = Screen.TRAIN; screen = Screen.CONNECTION } }
                                     item { RowPill("Einstellungen") { previous = Screen.TRAIN; screen = Screen.SETTINGS } }
                                     item { RowPill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } }
@@ -276,17 +293,75 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                                 }
                             }
                         }
-                        PageDots(pager.currentPage, Modifier.align(Alignment.BottomCenter).padding(bottom = 9.dp))
+                        if (pager.currentPage == 1) Text("‹ Info     Steuerung ›", color = Muted, fontFamily = Hanken, fontSize = 10.sp,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 5.dp), textAlign = TextAlign.Center)
+                        }
+                    }
+                    Screen.TRAIN_EXERCISES -> ListScreen("Übungen", state.exercises.isEmpty(), "Keine Übungen") {
+                        items(state.exercises, key = { it.id }) { ex -> RowPill("${ex.status}  ${ex.name}", ex.detail, selected = ex.current) { exerciseMenu = ex } }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.TRAIN_SETS -> ListScreen(current?.exerciseName ?: "Sätze", state.sets.isEmpty(), "Noch kein Satz.") {
+                        items(state.sets, key = { it.id }) { row -> RowPill("${row.label}  ${row.value}", row.effort) { editingSet = row; editWeight = row.weight; editAmount = row.amount } }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.TRAIN_NOTE -> ListScreen("Notiz") {
+                        current?.setup?.takeIf { it.isNotBlank() }?.let { item { InfoCard("Einstellung", it) } }
+                        item { InfoCard("Notiz", current?.note?.takeIf { it.isNotBlank() } ?: "Keine Notiz") }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.TRAIN_PULSE -> ListScreen("Puls") {
+                        if (!state.pulsePermission) { item { InfoCard("Pulserlaubnis fehlt", "Puls während des Trainings anzeigen und aufzeichnen.") }; item { RowPill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } } }
+                        else if (state.bpm == null) item { InfoCard("Kein Messwert", "Trag die Uhr enger und halte den Arm ruhig.") }
+                        else { item { InfoCard("Schläge pro Minute", state.bpm.toString()) }; item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PulseCurve(state.pulseSamples) } }; item { InfoCard("Aufzeichnung", state.recording) } }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.PROGRESS -> ListScreen("Fortschritt & Verlauf") {
+                        item { RowPill("Trainingshäufigkeit") { screen = Screen.FREQUENCY } }
+                        item { RowPill("Arbeitsgewichte") { screen = Screen.WEIGHTS } }
+                        item { RowPill("Bestleistungen") { screen = Screen.BESTS } }
+                        item { RowPill("Verlauf") { screen = Screen.HISTORY } }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.FREQUENCY -> ListScreen("Trainingshäufigkeit", state.frequency.isEmpty(), "Noch keine abgeschlossenen Trainings.") {
+                        items(state.frequency, key = { it.id }) { InfoCard(it.title, it.detail) }; item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.WEIGHTS -> ListScreen("Arbeitsgewichte", state.weights.isEmpty(), "Noch keine Arbeitsgewichte vorhanden.") {
+                        items(state.weights, key = { it.id }) { InfoCard(it.title, it.detail) }; item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.BESTS -> ListScreen("Bestleistungen", state.bests.isEmpty(), "Noch keine Bestleistungen vorhanden.") {
+                        items(state.bests, key = { it.id }) { InfoCard(it.title, it.detail) }; item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.HISTORY -> ListScreen("Verlauf", state.history.isEmpty(), "Noch keine abgeschlossenen Trainings.") {
+                        items(state.history, key = { it.id }) { entry -> RowPill(entry.title, entry.detail.substringBefore(" · ")) { historySelection = entry.id; screen = Screen.HISTORY_DETAIL } }
+                        item { RowPill("Zurück") { back() } }
+                    }
+                    Screen.HISTORY_DETAIL -> ListScreen("Training") {
+                        state.history.firstOrNull { it.id == historySelection }?.let { entry ->
+                            item { InfoCard(entry.title, entry.detail) }
+                            items(entry.sections) { section -> InfoCard(section.first, section.second) }
+                        }
+                        item { RowPill("Zurück") { back() } }
                     }
                     Screen.REST -> {
                         val seconds = state.restRemainingSeconds ?: 0
                         ProgressRing(if (state.restTotalSeconds > 0) (seconds.toFloat() / state.restTotalSeconds).coerceIn(0f, 1f) else 0f)
-                        CenterColumn {
-                            if (state.undoAvailable) Pill("Rückgängig") { dispatch(WatchAction.Undo) }
-                            Small(if (state.exerciseFinished) "Übung fertig" else if (seconds <= 0) "Los" else "Pause")
-                            Box(Modifier.heightIn(min = 48.dp).clickable { editor = Editor.REST }, contentAlignment = Alignment.Center) { Title(clock(seconds), size = 42) }
-                            Small(if (state.exerciseFinished) "Danach: Nächste Übung auf Befehl" else "Als Nächstes: ${current?.let { setValue(it.weight, it.amount, it.unit, it.weightLabel) }.orEmpty()}")
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { Pill("+15 s") { dispatch(WatchAction.ChangeRest(15)) }; Pill("Weiter", true) { dispatch(WatchAction.SkipRest) } }
+                        // Keep the corners of every touch rectangle inside the round screen, even at 192 dp.
+                        BoxWithConstraints(Modifier.fillMaxSize()) {
+                            if (state.undoAvailable) Box(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * 0.06f)) {
+                                RestUndoPill { dispatch(WatchAction.Undo) }
+                            } else Box(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * 0.14f)) {
+                                Small(if (state.exerciseFinished) "Übung fertig" else if (seconds <= 0) "Los" else "Pause")
+                            }
+                            Box(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * 0.34f).defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                                .clickable { editor = Editor.REST }
+                                .semantics { contentDescription = "Pause ändern, " + clock(seconds) + if (state.exerciseFinished) ", Übung fertig" else ", als Nächstes " + (current?.let { setValue(it.weight, it.amount, it.unit, it.weightLabel) } ?: "") }, contentAlignment = Alignment.Center) {
+                                Title(clock(seconds), size = 32)
+                            }
+                            Row(Modifier.align(Alignment.TopCenter).offset(y = maxHeight * 0.615f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                RestActionButton("+15 s") { dispatch(WatchAction.ChangeRest(15)) }
+                                RestActionButton("Weiter", primary = true) { dispatch(WatchAction.SkipRest) }
+                            }
                         }
                     }
                     Screen.EXERCISE_DONE -> CenterColumn {
@@ -306,16 +381,33 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                         item { RowPill("Fertig", selected = true) { screen = Screen.HOME } }
                     }
                     Screen.HEALTH -> ListScreen("Gesundheit") {
-                        item { InfoCard("Aufzeichnung", state.recording) }; item { InfoCard("Puls", "Puls während des Trainings anzeigen und aufzeichnen.") }; item { RowPill("Puls aufzeichnen") { dispatch(WatchAction.StartRecording) } }; item { InfoCard("Puls", if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "Wird gemessen") }; item { InfoCard("Export in Health Connect", state.export) }
-                        item { RowPill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } }; item { RowPill("Zurück") { back() } }
+                        item { InfoCard("Aufzeichnung", state.recording) }
+                        item { InfoCard("Puls", "Puls während des Trainings anzeigen und aufzeichnen.") }
+                        if (state.sessionActive) item { RowPill("Puls aufzeichnen") { dispatch(WatchAction.StartRecording) } }
+                        item { InfoCard("Puls", if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "Wird gemessen") }
+                        if (state.testProfile) item { InfoCard("Gesundheitsdaten", "Testprofil: nur lokal, kein Export") }
+                        else {
+                            item { InfoCard("Export in Health Connect", state.export) }
+                            item { InfoCard("Handy-Gesundheitsdaten", when (state.phoneHealthEnabled) { true -> if (state.phoneHealthBackground == true) "Einwilligung erteilt · Hintergrundzugriff erlaubt" else "Einwilligung erteilt · Hintergrundzugriff nicht bestätigt"; false -> "Keine Einwilligung"; null -> "Status unbekannt" }) }
+                            item { RowPill("Auf Handy einrichten") { dispatch(WatchAction.OpenPhoneHealthSettings) } }
+                        }
+                        item { RowPill("Zurück") { back() } }
                     }
                     Screen.CONNECTION -> ListScreen("Verbindung") {
                         item { InfoCard(state.connection, if (state.pendingCount > 0) "${state.pendingCount} Änderungen offen" else "Keine Änderungen offen") }
                         state.conflict?.let { message -> item { InfoCard("Konflikt", message) }; item { RowPill("Neueste") { dispatch(WatchAction.Resolve(true)) } }; item { RowPill("Meine") { dispatch(WatchAction.Resolve(false)) } } }
                         item { RowPill("Erneut") { dispatch(WatchAction.Retry) } }; item { RowPill("Zurück") { back() } }
                     }
-                    Screen.SETTINGS -> ListScreen("Rand im Training") {
-                        item { RowPill("Dauer anzeigen", selected = durationRing) { dispatch(WatchAction.SetDurationRing(true)) } }; item { RowPill("Dauer ausblenden", selected = !durationRing) { dispatch(WatchAction.SetDurationRing(false)) } }; item { RowPill("Zurück") { back() } }
+                    Screen.SETTINGS -> ListScreen("Einstellungen") {
+                        item { InfoCard("Rand im Training", if (durationRing) "Dauer anzeigen" else "Dauer ausblenden") }
+                        item { RowPill("Dauer anzeigen", selected = durationRing) { dispatch(WatchAction.SetDurationRing(true)) } }
+                        item { RowPill("Dauer ausblenden", selected = !durationRing) { dispatch(WatchAction.SetDurationRing(false)) } }
+                        item { RowPill("Gesundheit") { healthReturn = Screen.SETTINGS; screen = Screen.HEALTH } }
+                        item { InfoCard("Uhr-App-Update", state.updateStatus) }
+                        item { RowPill("Nach Update suchen") { dispatch(WatchAction.CheckUpdate) } }
+                        if (state.updateCanInstall && state.sessionActive) item { InfoCard("Update bereit", "Nach dem Training installieren") }
+                        else if (state.updateCanInstall) item { RowPill("Update installieren") { dispatch(WatchAction.InstallUpdate) } }
+                        item { RowPill("Zurück") { back() } }
                     }
                 }
                 if (state.testProfile) Text("Testprofil", color = Warning, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopCenter).background(Color.Black))
@@ -334,7 +426,7 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                     }
                 }
                 exerciseMenu?.let { ex -> ListScreen(ex.name) {
-                    if (!ex.completed) item { RowPill("Jetzt") { dispatch(WatchAction.Focus(ex.id)); exerciseMenu = null; scope.launch { pager.scrollToPage(1) } } }
+                    if (!ex.completed) item { RowPill("Jetzt") { dispatch(WatchAction.Focus(ex.id)); exerciseMenu = null; screen = Screen.TRAIN; scope.launch { pager.scrollToPage(1) } } }
                     item { RowPill(if (ex.skipped) "Wieder aufnehmen" else "Überspringen") { dispatch(WatchAction.ToggleExercise(ex.id, ex.skipped)); exerciseMenu = null } }
                     item { RowPill("Nach oben") { dispatch(WatchAction.Move(ex.id, -1)); exerciseMenu = null } }; item { RowPill("Nach unten") { dispatch(WatchAction.Move(ex.id, 1)); exerciseMenu = null } }; item { RowPill("Schließen") { exerciseMenu = null } }
                 } }
@@ -384,6 +476,27 @@ private fun PulseCurve(samples: List<Pair<Long, Int?>>) {
     }
 }
 
+/** Monochrome vector silhouette; it does not depend on the device's emoji font. */
+@Composable
+private fun PulseHeader(bpm: Int?, phoneLeads: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "Puls ${bpm?.toString() ?: "kein Messwert"}" + if (phoneLeads) ", Handy führt" else "" }) {
+        Canvas(Modifier.size(12.dp)) {
+            val w = size.width; val h = size.height
+            val heart = Path().apply {
+                moveTo(w * .5f, h * .88f)
+                cubicTo(w * .42f, h * .8f, w * .08f, h * .56f, w * .08f, h * .32f)
+                cubicTo(w * .08f, h * .09f, w * .34f, h * .03f, w * .5f, h * .24f)
+                cubicTo(w * .66f, h * .03f, w * .92f, h * .09f, w * .92f, h * .32f)
+                cubicTo(w * .92f, h * .56f, w * .58f, h * .8f, w * .5f, h * .88f)
+                close()
+            }
+            drawPath(heart, Muted)
+        }
+        Small((bpm?.toString() ?: "– –") + if (phoneLeads) "  Handy" else "")
+    }
+}
+
 @Composable
 private fun Small(text: String) {
     if (text.isNotBlank()) Text(text, color = Muted, fontFamily = Hanken, fontSize = 12.sp, lineHeight = 15.sp, textAlign = TextAlign.Center, style = TextStyle(platformStyle = PlatformTextStyle(includeFontPadding = false)))
@@ -395,6 +508,27 @@ private fun Pill(text: String, primary: Boolean = false, description: String = t
     val accent = LocalAccent.current
     Box(Modifier.defaultMinSize(minWidth = 70.dp, minHeight = 48.dp).background(if (primary) accent.color else Surface, CircleShape).clickable { track(); onClick() }.semantics { contentDescription = description }.padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
         Text(text, color = if (primary) accent.onColor else Paper, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun RestUndoPill(onClick: () -> Unit) {
+    val track = LocalInteraction.current
+    Box(Modifier.width(88.dp).height(48.dp).background(Surface, CircleShape).clickable { track(); onClick() }
+        .semantics { contentDescription = "Rückgängig" }, contentAlignment = Alignment.Center) {
+        Text("Rückgängig", color = Paper, fontFamily = Hanken, fontWeight = FontWeight.Bold,
+            fontSize = 12.sp, maxLines = 1, textAlign = TextAlign.Center)
+    }
+}
+
+@Composable
+private fun RestActionButton(text: String, primary: Boolean = false, onClick: () -> Unit) {
+    val track = LocalInteraction.current
+    val accent = LocalAccent.current
+    Box(Modifier.width(60.dp).height(48.dp).background(if (primary) accent.color else Surface, CircleShape)
+        .clickable { track(); onClick() }.semantics { contentDescription = text }, contentAlignment = Alignment.Center) {
+        Text(text, color = if (primary) accent.onColor else Paper, fontFamily = Hanken,
+            fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, textAlign = TextAlign.Center)
     }
 }
 
@@ -423,7 +557,7 @@ private fun ListScreen(title: String, empty: Boolean = false, emptyText: String 
     val requester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { requester.requestFocus() }
-    LazyColumn(Modifier.fillMaxSize().background(Color.Black).focusRequester(requester).onRotaryScrollEvent { event ->
+    LazyColumn(Modifier.fillMaxSize().background(Color.Black).testTag("watch-list").focusRequester(requester).onRotaryScrollEvent { event ->
         scope.launch { list.scrollBy(event.verticalScrollPixels) }; true
     }.focusable(), state = list, contentPadding = PaddingValues(start = 25.dp, end = 25.dp, top = 24.dp, bottom = bottom.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
         item { Text(title, color = Muted, fontFamily = Hanken, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) }

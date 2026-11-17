@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     /** Session requested by tapping the ongoing notification. */
     private var requestedSession by mutableStateOf<String?>(null)
+    private var requestedHealthSettings by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,19 +34,27 @@ class MainActivity : ComponentActivity() {
         )
         val prefs = (application as GymApplication).container.prefs
         requestedSession = intent?.getStringExtra(EXTRA_SESSION_ID)
+        requestedHealthSettings = intent?.getBooleanExtra(EXTRA_HEALTH_SETTINGS, false) == true
         setContent {
             val accent by prefs.accent.collectAsState(initial = Accent.PAPIER)
             GymAppTheme(accent) {
-                AppRoot(requestedSession = requestedSession, onRequestHandled = { requestedSession = null })
+                AppRoot(requestedSession = requestedSession, onRequestHandled = { requestedSession = null },
+                    requestedHealthSettings = requestedHealthSettings, onHealthSettingsHandled = { requestedHealthSettings = false })
             }
         }
         watchActiveSession()
+    }
+
+    override fun onStop() {
+        (application as GymApplication).container.health.onBackground()
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         requestedSession = intent.getStringExtra(EXTRA_SESSION_ID)
+        requestedHealthSettings = intent.getBooleanExtra(EXTRA_HEALTH_SETTINGS, false)
     }
 
     /**
@@ -58,6 +67,7 @@ class MainActivity : ComponentActivity() {
         val repository = container.repository
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { container.health.onForeground() }
                 // Opening the app during a workout: fetch assistant adjustments and push the running session now
                 // (the service syncs periodically on top of this).
                 launch { if (repository.getActiveSession() != null) container.syncManager.runSync() }
@@ -72,6 +82,7 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_HEALTH_SETTINGS = "de.baschek.gymapp.HEALTH_SETTINGS"
         const val EXTRA_SESSION_ID = "de.baschek.gymapp.SESSION_ID"
     }
 }

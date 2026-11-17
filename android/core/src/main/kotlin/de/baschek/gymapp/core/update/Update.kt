@@ -68,6 +68,37 @@ object ReleaseParser {
             ?.second?.firstOrNull()
     }
 
+    /** Exact watch release asset only; never select a phone APK or an arbitrary APK. */
+    fun newestWatchUpdate(json: String, currentVersion: String, includePreReleases: Boolean = false): UpdateInfo? {
+        val current = AppVersion.parse(currentVersion) ?: return null
+        val array = try { GymJson.parseToJsonElement(json) as? JsonArray } catch (_: Exception) { null } ?: return null
+        return array.mapNotNull { element ->
+            val release = element as? JsonObject ?: return@mapNotNull null
+            if (bool(release, "draft") || (!includePreReleases && bool(release, "prerelease"))) return@mapNotNull null
+            val tag = str(release, "tag_name") ?: return@mapNotNull null
+            if (!tag.startsWith(TAG_PREFIX)) return@mapNotNull null
+            val versionName = tag.removePrefix(TAG_PREFIX)
+            val version = AppVersion.parse(versionName) ?: return@mapNotNull null
+            if (version <= current || (!includePreReleases && version.preRelease != null)) return@mapNotNull null
+            val name = "gymapp-watch-$versionName.apk"
+            val asset = (release["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.firstOrNull {
+                str(it, "name") == name && isWatchReleaseUrl(str(it, "browser_download_url"), tag, name)
+            } ?: return@mapNotNull null
+            val digest = str(asset, "digest")?.takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:")
+                ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            version to UpdateInfo(tag, versionName, str(asset, "browser_download_url")!!, name,
+                (asset["size"] as? JsonPrimitive)?.longOrNull, digest, str(release, "body")?.take(2000))
+        }.maxByOrNull { it.first }?.second
+    }
+
+    /** The first URL must name this repository, release tag and exact watch artifact. */
+    fun isWatchReleaseUrl(url: String?, tag: String, name: String): Boolean {
+        if (url == null || !isTrustedDownloadUrl(url)) return false
+        val uri = try { java.net.URI(url) } catch (_: Exception) { return false }
+        return uri.host.equals("github.com", ignoreCase = true) && uri.port == -1 &&
+            uri.query == null && uri.fragment == null && uri.path == "/baschek/GymApp/releases/download/$tag/$name"
+    }
+
     private const val WATCH_ASSET_PREFIX = "gymapp-watch-"
 
     private fun str(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull

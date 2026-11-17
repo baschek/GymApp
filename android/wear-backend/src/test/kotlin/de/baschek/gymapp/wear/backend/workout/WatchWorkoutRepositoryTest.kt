@@ -120,6 +120,41 @@ class WatchWorkoutRepositoryTest {
         assertEquals(pending, restored.state.value.outbox)
     }
 
+    @Test fun `authoritative catalog deletes completed history after pending work is acknowledged`() = runTest {
+        val file = temporary.newFile("deleted-history.json").also { it.delete() }
+        val r = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch", now = { 1767261600000L })
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2, emptySet())
+        val id = r.startSpontaneous("exercise", "gym")!!
+        val ex = r.state.value.session!!.exercises.single()
+        r.logSet(ex.id, ex.sets.single().id, WatchSetInput(20.0, 12.0, "one_two"))
+        val event = r.state.value.outbox.first()
+        val finished = r.state.value.catalog.sessions.getValue(id)
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL).copy(sessions = mapOf(id to finished)), 2, setOf(id))
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2, emptySet())
+        assertTrue("pending local data remains", id in r.state.value.catalog.sessions)
+        r.acknowledge(r.state.value.outbox.map { it.eventId }.toSet())
+        assertFalse(id in r.state.value.catalog.sessions)
+        assertNull(r.state.value.replica)
+        assertTrue(r.receive(event) is EventResult.Replayed)
+        assertFalse(id in r.state.value.catalog.sessions)
+        val restored = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch")
+        assertFalse(id in restored.state.value.catalog.sessions)
+        val unseen = event.copy(eventId = "00000000-0000-4000-8000-000000000099")
+        assertEquals("deleted_session", (restored.receive(unseen) as EventResult.Rejected).reason)
+    }
+
+    @Test fun `active workout survives catalog omission and acknowledgement`() = runTest {
+        val file = temporary.newFile("active-deletion.json").also { it.delete() }
+        val r = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch")
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2, emptySet())
+        val id = r.startPlan("plan", "gym", WorkoutMode.NORMAL)!!
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2, setOf(id))
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2, emptySet())
+        r.acknowledge(r.state.value.outbox.map { it.eventId }.toSet())
+        assertEquals(id, r.state.value.sessionId)
+        assertEquals(SessionStatus.ACTIVE, r.state.value.session!!.status)
+    }
+
     @Test fun `archived replicas are pruned but unsent and conflicted ones are kept`() = runTest {
         val file = temporary.newFile("prune.json").also { it.delete() }
         var tick = 1767261600000L

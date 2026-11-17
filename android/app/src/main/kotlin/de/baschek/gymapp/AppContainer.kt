@@ -2,6 +2,7 @@ package de.baschek.gymapp
 
 import android.app.Application
 import de.baschek.gymapp.core.api.createHttpClient
+import de.baschek.gymapp.health.AutomaticHealthExport
 import de.baschek.gymapp.data.AppPrefs
 import de.baschek.gymapp.data.DeviceKeys
 import de.baschek.gymapp.data.GymRepository
@@ -28,6 +29,7 @@ class AppContainer(app: Application) {
 
     val repository = GymRepository(GymDatabase.build(app))
     val prefs = AppPrefs(app)
+    val health = AutomaticHealthExport(appContext, repository)
     val secureStore = SecureStore(app)
     val scheduler = SyncScheduler(app)
     private val httpClient = createHttpClient(OkHttp.create())
@@ -41,6 +43,7 @@ class AppContainer(app: Application) {
 
     init {
         Telemetry.install(repository, appScope)
+        health.start(appScope)
         WatchCatalogPublisher(appContext, repository, prefs).start(appScope)
         PhoneEventPublisher(appContext, repository).start(appScope)
         // Bring back a running timer after process death.
