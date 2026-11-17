@@ -16,4 +16,11 @@ class TimedSetTest {
         assertFalse(timer.copy(phase = TimerPhase.REST).matchesSet("session", "exercise", "set"))
         assertFalse(timer.copy(setId = null).matchesSet("session", "exercise", "set"))
     }
+
+    @Test fun legacyTimerWithoutIdsMatchesAnySet() {
+        val legacy = TimerState(TimerPhase.SET, 1_000, "Synthetic hold")
+        assertTrue(legacy.matchesSet("session", "exercise", "set"))
+        assertTrue(legacy.matchesSet("other", "other", "other"))
+        assertFalse(legacy.copy(phase = TimerPhase.REST).matchesSet("session", "exercise", "set"))
+    }
 }

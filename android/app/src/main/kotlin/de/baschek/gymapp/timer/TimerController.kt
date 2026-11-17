@@ -27,8 +27,12 @@ data class TimerState(
     val endsAtMillis: Long?
         get() = if (phase == TimerPhase.REST && suggestedRestSeconds > 0) startedAtMillis + suggestedRestSeconds * 1000L else null
 
+    /** A SET stopwatch persisted before timers carried IDs has none; it belongs to whichever set is logged. */
+    private val isLegacySet: Boolean get() = sessionId == null && exerciseId == null && setId == null
+
     fun matchesSet(sessionId: String, exerciseId: String, setId: String): Boolean =
-        phase == TimerPhase.SET && this.sessionId == sessionId && this.exerciseId == exerciseId && this.setId == setId
+        phase == TimerPhase.SET && (isLegacySet ||
+            (this.sessionId == sessionId && this.exerciseId == exerciseId && this.setId == setId))
 
     fun elapsedSeconds(nowMillis: Long = System.currentTimeMillis()): Int =
         ((nowMillis - startedAtMillis) / 1000).toInt().coerceAtLeast(0)

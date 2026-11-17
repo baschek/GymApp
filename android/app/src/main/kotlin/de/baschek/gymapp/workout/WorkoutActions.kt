@@ -165,17 +165,17 @@ class WorkoutActions(
     }
 
     suspend fun logSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
-        val running = timer.state.value?.takeIf { it.phase == TimerPhase.SET }
-        if (running != null && (!running.matchesSet(sessionId, exerciseId, setId) || running.elapsedSeconds() <= 0)) return
         recorded(sessionId, exerciseId, "Satz geloggt") { doLogSet(sessionId, exerciseId, setId, input) }
     }
 
     private suspend fun doLogSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
         val current = repository.getSession(sessionId) ?: return
         val running = timer.state.value
-        val runningSet = running?.takeIf { it.phase == TimerPhase.SET }
-        // A stopwatch belongs to one stable set, including after a device transfer or process restore.
-        if (runningSet != null && !runningSet.matchesSet(sessionId, exerciseId, setId)) return
+        val anySet = running?.takeIf { it.phase == TimerPhase.SET }
+        // A stopwatch belongs to one stable set (or is a legacy one without IDs); another set's stopwatch is
+        // neither used for this set's duration nor stopped by logging it.
+        val runningSet = anySet?.takeIf { it.matchesSet(sessionId, exerciseId, setId) }
+        val foreignStopwatch = anySet != null && runningSet == null
         val setSeconds = runningSet?.elapsedSeconds()
         val exerciseForLog = current.exercises.firstOrNull { it.id == exerciseId }
         if (runningSet != null && exerciseForLog?.target?.metric == Metric.SECONDS && (setSeconds == null || setSeconds <= 0)) return
@@ -216,6 +216,7 @@ class WorkoutActions(
         val pendingLeft = current.exercises.sumOf { ex ->
             ex.sets.count { it.status == SetStatus.PENDING && !(ex.id == exerciseId && it.id == setId) }
         }
+        if (foreignStopwatch) return
         if (pendingLeft > 0 && exercise != null) timer.start(TimerPhase.REST, exercise.name, exercise.restSeconds) else timer.stop()
     }
 

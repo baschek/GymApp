@@ -128,4 +128,33 @@ class WatchRepositoryTest {
         assertNull(repo.watchCatalog())
         assertNull(repo.getSession(sessionId))
     }
+
+    @Test fun editingUnrelatedCompletedSessionQueuesNoWatchEvent() = runBlocking {
+        val old = finish(set(base, 0, 30.0, "2026-01-01T00:01:00Z"))
+        repo.syncStore.applyRemote(listOf(Document(sessionId, "session", 1, "2026-01-01T00:00:00Z", false, "server", raw(old))))
+        repo.enableWatchCompanion()
+        assertTrue(repo.observePhoneWatchEvents().first().isEmpty())
+        repo.updateSession(sessionId) { it.copy(notes = "late edit") }
+        assertTrue(db.dao().getSettingsPrefix("watch_outgoing:").isEmpty())
+        assertNull(db.dao().getSetting("watch_replica:$sessionId"))
+    }
+
+    @Test fun finishedSessionReplicaIsPrunedOnceNothingIsPending() = runBlocking {
+        start()
+        val finished = finish(set(base, 0, 30.0, "2026-01-01T00:01:00Z"))
+        assertTrue(repo.importWatchEvent(event(base, finished)) is EventResult.Applied)
+        assertNotNull(db.dao().getSetting("watch_replica:$sessionId"))
+        repo.acknowledgePhoneWatchEvent("unrelated")
+        assertNull(db.dao().getSetting("watch_replica:$sessionId"))
+    }
+
+    @Test fun replicaWithConflictIsKept() = runBlocking {
+        start()
+        repo.updateSession(sessionId) { set(it, 0, 30.0, "2026-01-01T00:01:00Z") }
+        val watch = finish(set(set(base, 0, 40.0, "2026-01-01T00:01:01Z"), 1, 30.0, "2026-01-01T00:03:00Z"))
+        assertTrue(repo.importWatchEvent(event(base, watch)) is EventResult.Applied)
+        repo.acknowledgePhoneWatchEvent("unrelated")
+        assertNotNull(db.dao().getSetting("watch_replica:$sessionId"))
+        assertTrue(repo.observeWatchConflicts().first().isNotEmpty())
+    }
 }

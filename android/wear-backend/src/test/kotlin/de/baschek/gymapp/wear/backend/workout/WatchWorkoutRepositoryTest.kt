@@ -120,4 +120,23 @@ class WatchWorkoutRepositoryTest {
         assertEquals(pending, restored.state.value.outbox)
     }
 
+    @Test fun `archived replicas are pruned but unsent and conflicted ones are kept`() = runTest {
+        val file = temporary.newFile("prune.json").also { it.delete() }
+        var tick = 1767261600000L
+        val r = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch", now = { tick += 1000; tick })
+        r.replaceCatalog(catalog(WorkoutProfile.PERSONAL))
+        val ids = mutableListOf<String>()
+        repeat(9) {
+            ids += r.startPlan("plan", "gym", WorkoutMode.NORMAL)!!
+            val ex = r.state.value.session!!.exercises.single()
+            r.logSet(ex.id, ex.sets[0].id, WatchSetInput(20.0, 12.0, "one_two"))
+            r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 12.0, "one_two"))
+            if (it > 0) r.acknowledge(r.state.value.outbox.filter { e -> e.sessionId != ids.first() }.map { e -> e.eventId }.toSet())
+        }
+        val archived = r.state.value.archivedReplicas
+        assertTrue(archived.size <= 6)
+        assertTrue("session with unsent events survives", archived.containsKey(ids.first()))
+        assertTrue(archived.containsKey(ids[7]))
+        assertFalse(archived.containsKey(ids[1]))
+    }
 }

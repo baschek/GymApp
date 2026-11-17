@@ -285,12 +285,14 @@ class GymRepository(
     /** Snapshot only personal documents. Raw fields and stable IDs are preserved. */
     suspend fun watchCatalog(): WatchCatalog? = db.withTransaction {
         if (currentProfile() != Profile.PERSONAL) return@withTransaction null
-        suspend fun docs(entity: String) = dao.getDocs(Profile.PERSONAL, entity)
+        // The watch needs finished sessions as progression history; the active one reaches it as events.
+        suspend fun docs(entity: String, activeToo: Boolean = true) = dao.getDocs(Profile.PERSONAL, entity)
+            .filter { activeToo || it.status != SessionStatus.ACTIVE }
             .associate { it.id to parseObject(it.data) }
         WatchCatalog(
             profile = WorkoutProfile.PERSONAL,
             gyms = docs(Entity.GYM), plans = docs(Entity.PLAN), exercises = docs(Entity.EXERCISE),
-            machineProfiles = docs(Entity.MACHINE_PROFILE), sessions = docs(Entity.SESSION),
+            machineProfiles = docs(Entity.MACHINE_PROFILE), sessions = docs(Entity.SESSION, activeToo = false),
             dayWorkouts = docs(Entity.DAY_WORKOUT),
         )
     }
@@ -299,13 +301,18 @@ class GymRepository(
     fun observeWatchCatalogChanges(): Flow<Unit> = combine(
         dao.observeDocs(Profile.PERSONAL, Entity.GYM), dao.observeDocs(Profile.PERSONAL, Entity.PLAN),
         dao.observeDocs(Profile.PERSONAL, Entity.EXERCISE), dao.observeDocs(Profile.PERSONAL, Entity.MACHINE_PROFILE),
-        dao.observeDocs(Profile.PERSONAL, Entity.SESSION), dao.observeDocs(Profile.PERSONAL, Entity.DAY_WORKOUT),
+        dao.observeDocs(Profile.PERSONAL, Entity.SESSION).map { docs ->
+            // Set-by-set edits of the running workout must not republish the whole catalog.
+            docs.filter { it.status != SessionStatus.ACTIVE }.map { it.id to it.data.hashCode() }
+        }.distinctUntilChanged(),
+        dao.observeDocs(Profile.PERSONAL, Entity.DAY_WORKOUT),
     ) { Unit }.combine(activeProfile) { _, _ -> Unit }
 
     /** Atomically merge a watch operation, its receipt, the document and the sync outbox. */
     suspend fun importWatchEvent(event: WorkoutEvent, fromPhone: Boolean = false): EventResult = db.withTransaction {
         if (event.profile != WorkoutProfile.PERSONAL || currentProfile() != Profile.PERSONAL)
             return@withTransaction EventResult.Rejected("local_only")
+        pruneWatchReplicas(keep = event.sessionId)
         val currentRow = dao.getDoc(Profile.PERSONAL, Entity.SESSION, event.sessionId)
         if (currentRow?.deleted == true) return@withTransaction EventResult.Rejected("deleted_session")
         val currentRaw = currentRow?.let { parseObject(it.data) }
@@ -403,7 +410,7 @@ class GymRepository(
         if (profile != Profile.PERSONAL) emptyList() else rows.mapNotNull {
             runCatching { GymJson.decodeFromString(ReplicaState.serializer(), it.value) }.getOrNull()
         }.filter { it.conflicts.isNotEmpty() }
-    }
+    }.distinctUntilChanged()
 
     /** Resolve and enqueue the exact resolution in the same transaction as the changed session. */
     suspend fun resolveWatchConflicts(sessionId: String, choice: ConflictChoice): Boolean = db.withTransaction {
@@ -447,7 +454,36 @@ class GymRepository(
         )
         if (profile == Profile.PERSONAL) {
             enqueue(entity, id, PushOp.UPSERT, existing?.rev, ts, merged)
-            if (entity == Entity.SESSION && raw != merged) enqueuePhoneWatchEvent(id, raw ?: merged, merged)
+            if (entity == Entity.SESSION && raw != merged && sharedWithWatch(id, raw, merged))
+                enqueuePhoneWatchEvent(id, raw ?: merged, merged)
+        }
+    }
+
+    /** Only the active session, or one the watch already shares, is mirrored to the watch. */
+    private suspend fun sharedWithWatch(sessionId: String, before: JsonObject?, after: JsonObject): Boolean {
+        fun active(o: JsonObject?) = (o?.get("status") as? kotlinx.serialization.json.JsonPrimitive)?.content == SessionStatus.ACTIVE
+        return active(before) || active(after) || dao.getSetting("watch_replica:$sessionId") != null
+    }
+
+    /**
+     * Drops replica states of sessions that are no longer active, have no unresolved conflicts, no
+     * deferred progression and no unacknowledged phone event. [keep] is the session being handled now.
+     */
+    private suspend fun pruneWatchReplicas(keep: String? = null) {
+        val replicas = dao.getSettingsPrefix("watch_replica:")
+        if (replicas.isEmpty()) return
+        val pending = dao.getSettingsPrefix("watch_outgoing:").mapNotNull {
+            runCatching { GymJson.decodeFromString(WorkoutEvent.serializer(), it.value).sessionId }.getOrNull()
+        }.toSet()
+        for (row in replicas) {
+            val id = row.name.removePrefix("watch_replica:")
+            if (id == keep || id in pending || dao.getSetting("watch_progression_pending:$id") != null) continue
+            val state = runCatching { GymJson.decodeFromString(ReplicaState.serializer(), row.value) }.getOrNull()
+            if (state != null && state.conflicts.isNotEmpty()) continue
+            val doc = dao.getDoc(Profile.PERSONAL, Entity.SESSION, id)?.takeIf { !it.deleted }
+            val status = doc?.let { runCatching { (parseObject(it.data)["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content }.getOrNull() }
+            if (status == SessionStatus.ACTIVE) continue
+            dao.deleteSetting(row.name)
         }
     }
 
@@ -499,10 +535,13 @@ class GymRepository(
         if (profile != Profile.PERSONAL) emptyList() else rows.mapNotNull {
             runCatching { GymJson.decodeFromString(WorkoutEvent.serializer(), it.value) }.getOrNull()
         }
-    }
+    }.distinctUntilChanged()
 
     suspend fun acknowledgePhoneWatchEvent(eventId: String) = db.withTransaction {
-        if (currentProfile() == Profile.PERSONAL) dao.deleteWatchOutgoing(eventId)
+        if (currentProfile() == Profile.PERSONAL) {
+            dao.deleteWatchOutgoing(eventId)
+            pruneWatchReplicas()
+        }
     }
 
     private suspend fun enqueue(entity: String, id: String, op: String, baseRev: Long?, ts: String, data: JsonObject) {

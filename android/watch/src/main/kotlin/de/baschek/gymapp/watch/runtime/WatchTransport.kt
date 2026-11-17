@@ -114,6 +114,13 @@ object WatchTransport {
             if (rescan) reconcile(context, eventsOnly = true)
             return@withContext
         }
+        if (eventType == DataEvent.TYPE_DELETED && parts.size == 4 && parts[0] == "gymapp" && parts[1] == "event" && parts[2] == "v1" &&
+            parts[3].matches(Regex("[0-9a-f]{64}"))) {
+            // The phone dropped its event after our ACK, so the ACK item is no longer needed.
+            val ackUri = Uri.Builder().scheme("wear").authority(own).path("/gymapp/event-ack/v1/${parts[3]}").build()
+            Tasks.await(Wearable.getDataClient(context).deleteDataItems(ackUri))
+            return@withContext
+        }
         if (eventType != DataEvent.TYPE_CHANGED || parts.size != 4 || parts[0] != "gymapp" || parts[2] != "v1") return@withContext
         val hash = parts[3]
         if (!hash.matches(Regex("[0-9a-f]{64}"))) return@withContext
@@ -135,21 +142,21 @@ object WatchTransport {
                 require(incoming.profile == WorkoutProfile.PERSONAL && HeartTransfer.id(incoming.eventId) == hash)
                 val repo = app.restoreRepository() ?: return@withContext
                 if (repo.state.value.profile != WorkoutProfile.PERSONAL) return@withContext
-                when (repo.receive(incoming)) {
-                    is EventResult.Applied, is EventResult.Replayed -> {
+                val result = repo.receive(incoming)
+                if (result is EventResult.Applied || result is EventResult.Replayed ||
+                    (result is EventResult.Rejected && EventRejections.shouldAcknowledge(result))) {
+                    run {
                         val ack = PutDataMapRequest.create("/gymapp/event-ack/v1/$hash")
                         ack.dataMap.putString("id", hash)
                         ack.dataMap.putString("attempt", java.util.UUID.randomUUID().toString())
                         Tasks.await(Wearable.getDataClient(context).putDataItem(ack.asPutDataRequest().setUrgent()))
                     }
-                    is EventResult.Rejected -> RuntimeMonitor.state.update { it.copy(connectionLabel = "Konflikt") }
-                }
+                } else RuntimeMonitor.state.update { it.copy(connectionLabel = "Konflikt") }
             }
             "event-ack" -> {
                 val repo = app.restoreRepository() ?: return@withContext
                 val matched = repo.state.value.outbox.filter { HeartTransfer.id(it.eventId) == hash }.map { it.eventId }.toSet()
-                if (matched.isEmpty()) return@withContext
-                repo.acknowledge(matched)
+                if (matched.isNotEmpty()) repo.acknowledge(matched)
                 val uriToDelete = Uri.Builder().scheme("wear").authority(own).path("/gymapp/event/v1/$hash").build()
                 Tasks.await(Wearable.getDataClient(context).deleteDataItems(uriToDelete))
             }

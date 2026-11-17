@@ -1,5 +1,6 @@
 package de.baschek.gymapp.wear
 
+import android.net.Uri
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
@@ -9,6 +10,7 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import de.baschek.gymapp.GymApplication
 import de.baschek.gymapp.core.model.GymJson
+import de.baschek.gymapp.core.wear.events.EventRejections
 import de.baschek.gymapp.core.wear.events.EventResult
 import de.baschek.gymapp.core.wear.events.WorkoutEvent
 import de.baschek.gymapp.core.wear.events.WorkoutProfile
@@ -21,7 +23,7 @@ import kotlinx.coroutines.runBlocking
 class WorkoutDataListener : WearableListenerService() {
     override fun onDataChanged(events: DataEventBuffer) {
         for (event in events) {
-            if (event.type != DataEvent.TYPE_CHANGED) continue
+            if (event.type != DataEvent.TYPE_CHANGED && event.type != DataEvent.TYPE_DELETED) continue
             try {
                 val item = event.dataItem
                 val localNode = Tasks.await(Wearable.getNodeClient(this).localNode, 10, TimeUnit.SECONDS)
@@ -30,6 +32,12 @@ class WorkoutDataListener : WearableListenerService() {
                 if (parts.size != 5 || parts[1] != "gymapp" || parts[2] != "event" || parts[3] != "v1") continue
                 val id = parts[4]
                 if (!id.matches(Regex("[0-9a-f]{64}"))) continue
+                if (event.type == DataEvent.TYPE_DELETED) {
+                    // The watch dropped its event after our ACK, so the ACK item is no longer needed.
+                    val ackUri = Uri.Builder().scheme("wear").authority(localNode.id).path("/gymapp/event-ack/v1/$id").build()
+                    Tasks.await(Wearable.getDataClient(this).deleteDataItems(ackUri), 30, TimeUnit.SECONDS)
+                    continue
+                }
                 val map = DataMapItem.fromDataItem(item).dataMap
                 if (map.getString("id") != id) continue
                 val asset = map.getAsset("payload") ?: continue
@@ -48,7 +56,8 @@ class WorkoutDataListener : WearableListenerService() {
                 val operation = GymJson.decodeFromString(WorkoutEvent.serializer(), bytes.toString(Charsets.UTF_8))
                 if (operation.profile != WorkoutProfile.PERSONAL || hash(operation.eventId) != id) continue
                 val result = runBlocking { (application as GymApplication).container.repository.importWatchEvent(operation) }
-                if (result is EventResult.Rejected) continue
+                // Transient rejections stay unacknowledged for a retry; permanent ones are dropped by the sender.
+                if (result is EventResult.Rejected && !EventRejections.shouldAcknowledge(result)) continue
                 if (result is EventResult.Applied) (application as GymApplication).container.scheduler.requestSync()
                 if (result is EventResult.Applied && result.state.lastOperation?.eventId == operation.eventId) {
                     runBlocking {

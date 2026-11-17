@@ -1,5 +1,6 @@
 package de.baschek.gymapp.wear
 
+import android.net.Uri
 import com.google.android.gms.tasks.Tasks
 import com.google.android.gms.wearable.Wearable
 import java.util.concurrent.TimeUnit
@@ -27,6 +28,9 @@ class PhoneEventAckListener : WearableListenerService() {
                     repo.observePhoneWatchEvents().first().firstOrNull { transferHash(it.eventId) == hash }
                         ?.let { repo.acknowledgePhoneWatchEvent(it.eventId) }
                 }
+                // Acknowledged (or already gone from the outbox): remove our own event DataItem and its asset.
+                val own = Uri.Builder().scheme("wear").authority(localNode.id).path("/gymapp/event/v1/$hash").build()
+                Tasks.await(Wearable.getDataClient(this).deleteDataItems(own), 30, TimeUnit.SECONDS)
             } catch (_: Exception) { /* Keep the outbox for replay. */ }
         }
     }

@@ -79,3 +79,17 @@ class WorkoutEventsTest {
         assertEquals("invalid_event", (WorkoutEvents.apply(start(), wrong.copy(eventId = "bad")) as EventResult.Rejected).reason)
     }
 }
+
+class EventRejectionsTest {
+    @kotlin.test.Test fun transientReasonsAreKeptForRetry() {
+        for (r in listOf("local_only", "profile_local_only", "resolution_missing_conflict"))
+            kotlin.test.assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
+    }
+
+    @kotlin.test.Test fun permanentReasonsAreAcknowledged() {
+        for (r in listOf("invalid_event", "invalid_session", "invalid_resolution", "event_id_reused", "receipt_capacity",
+            "conflict_capacity", "deleted_session", "different_session", "other_active_session", "different_active_session",
+            "missing_finish_time", "missing_duration", "different_profile"))
+            kotlin.test.assertTrue(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
+    }
+}

@@ -64,7 +64,9 @@ Android modules:
 - **Device key.** Every authenticated request is signed with the device's Keystore key (`core/api/RequestSigning.kt`, protocol amendment B). Unpairing deletes token and key. A 404 after a successful sync means "disconnected"; retry with backoff, never in a loop.
 - **Network.** HTTPS only (`network_security_config`); cleartext only in debug
   builds for `10.0.2.2`/`localhost`. No exported components except the launcher
-  activity. Never log tokens or request bodies.
+  activity, the Wear Data Layer listener services (`WearableListenerService`, which the Data Layer
+  only delivers from the same package and signing identity) and the Health Connect permission
+  rationale activity and its usage alias (required by Health Connect). Never log tokens or request bodies.
 - **Releases.** Push a tag `android-v<version>` (for example `android-v0.2.0`) on a
   commit on `main`, or run the `Android` workflow manually on `main` with
   `release_version` (for example `2.3.0`), which creates the tag with the release. The workflow `android.yml` builds a signed APK (keystore from the

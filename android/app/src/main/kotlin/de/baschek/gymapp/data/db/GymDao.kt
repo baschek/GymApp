@@ -84,6 +84,9 @@ interface GymDao {
     @Query("SELECT * FROM settings WHERE name LIKE :prefix || '%' ORDER BY name")
     fun observeSettingsPrefix(prefix: String): Flow<List<SettingEntity>>
 
+    @Query("SELECT * FROM settings WHERE name LIKE :prefix || '%' ORDER BY name")
+    suspend fun getSettingsPrefix(prefix: String): List<SettingEntity>
+
     @Query("SELECT value FROM settings WHERE name = :name")
     fun observeSetting(name: String): Flow<String?>
 

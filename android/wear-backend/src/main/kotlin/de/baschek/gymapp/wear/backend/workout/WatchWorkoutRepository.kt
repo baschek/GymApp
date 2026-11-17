@@ -152,7 +152,7 @@ class WatchWorkoutRepository private constructor(
             planName = plan.name, mode = mode, startedAt = iso(), exercises = list, source = dayId?.let { SOURCE_DAY_WORKOUT }, dayWorkoutId = dayId), null)
         val replica = ReplicaState(profile, id, document, focusExerciseId = list.first().id)
         val archived = s.replica?.let { s.archivedReplicas + (it.sessionId to it) } ?: s.archivedReplicas
-        val updated = event(s.copy(replica = replica, undo = null, finishUndo = null, archivedReplicas = archived), replica, document, null, list.first().id)
+        val updated = event(s.copy(replica = replica, undo = null, finishUndo = null, archivedReplicas = pruneArchived(archived, s.outbox)), replica, document, null, list.first().id)
         return updated to id
     }
     suspend fun startPlan(planId: String, gymId: String, mode: String): String? = locked { s ->
@@ -309,6 +309,14 @@ class WatchWorkoutRepository private constructor(
             milestones = updated.milestones + result.milestones.associate { it.id to it.milestone },
             undo = if (finishUndo != null) s.undo else null, finishUndo = finishUndo) to true
     }
+    /** Keeps archived replicas that still matter (conflicts, unsent events) plus the newest few; the rest only grows the state file. */
+    private fun pruneArchived(archived: Map<String, ReplicaState>, outbox: List<WorkoutEvent>): Map<String, ReplicaState> {
+        if (archived.size <= MAX_ARCHIVED_REPLICAS) return archived
+        val pendingSessions = outbox.map { it.sessionId }.toSet()
+        val (needed, rest) = archived.entries.partition { it.value.conflicts.isNotEmpty() || it.key in pendingSessions }
+        val recent = rest.sortedByDescending { it.value.lastOperation?.occurredAtMillis ?: Long.MIN_VALUE }.take(MAX_ARCHIVED_REPLICAS)
+        return (needed + recent).associate { it.key to it.value }
+    }
     /** Acknowledge only IDs durably accepted by the receiver. */
     suspend fun acknowledge(eventIds: Set<String>) = locked { s -> s.copy(outbox = s.outbox.filterNot { it.eventId in eventIds }) to Unit }
     suspend fun receive(event: WorkoutEvent): EventResult = locked { s ->
@@ -326,10 +334,10 @@ class WatchWorkoutRepository private constructor(
                 if (archived != null && active?.sessionId != event.sessionId) {
                     val decoded = decode<Session>(result.state.document)
                     val catalog = if (decoded?.status == SessionStatus.COMPLETED) s.catalog.copy(sessions = s.catalog.sessions + (event.sessionId to result.state.document)) else s.catalog
-                    s.copy(archivedReplicas = s.archivedReplicas + (event.sessionId to result.state), catalog = catalog) to result
+                    s.copy(archivedReplicas = pruneArchived(s.archivedReplicas + (event.sessionId to result.state), s.outbox), catalog = catalog) to result
                 } else {
                     val old = if (active != null && active.sessionId != event.sessionId) s.archivedReplicas + (active.sessionId to active) else s.archivedReplicas
-                    s.copy(replica = result.state, archivedReplicas = old, undo = null, finishUndo = null) to result
+                    s.copy(replica = result.state, archivedReplicas = pruneArchived(old, s.outbox), undo = null, finishUndo = null) to result
                 }
             }
             else -> s to result
@@ -346,6 +354,7 @@ class WatchWorkoutRepository private constructor(
     }
     companion object {
         private const val MAX_BYTES = 8 * 1024 * 1024
+        internal const val MAX_ARCHIVED_REPLICAS = 5
         private val locks = mutableMapOf<String, Mutex>()
         suspend fun open(context: Context, profile: WorkoutProfile, deviceId: String): WatchWorkoutRepository =
             at(File(context.noBackupFilesDir, "wear/workout-${profile.name.lowercase()}.json"), profile, deviceId)

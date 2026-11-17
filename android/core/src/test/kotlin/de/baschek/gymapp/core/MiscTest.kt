@@ -62,6 +62,15 @@ class UpdateTest {
         assertNotNull(ReleaseParser.newestUpdate("[" + release("android-v0.2.0") + "]", "0.1.0"))
     }
 
+    @Test fun watchApkIsNeverThePhoneUpdate() {
+        val base = "https://github.com/baschek/GymApp/releases/download/android-v0.2.0"
+        fun asset(n: String) = """{"name":"$n","size":5,"browser_download_url":"$base/$n"}"""
+        fun rel(vararg names: String) = """[{"tag_name":"android-v0.2.0","draft":false,"prerelease":false,"assets":[${names.joinToString(",") { asset(it) }}]}]"""
+        assertEquals("gymapp-0.2.0.apk", ReleaseParser.newestUpdate(rel("gymapp-watch-0.2.0.apk", "gymapp-0.2.0.apk"), "0.1.0")!!.apkName)
+        assertEquals("gymapp-0.2.0.apk", ReleaseParser.newestUpdate(rel("gymapp-watch-0.2.0.apk", "other.apk", "gymapp-0.2.0.apk"), "0.1.0")!!.apkName)
+        assertNull(ReleaseParser.newestUpdate(rel("gymapp-watch-0.2.0.apk"), "0.1.0"))
+    }
+
     @Test fun garbageYieldsNull() {
         assertNull(ReleaseParser.newestUpdate("not json", "0.1.0"))
     }
