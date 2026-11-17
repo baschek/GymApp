@@ -4,6 +4,25 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.7.0] - 2026-11-17
+
+Native Android app release (GitHub release `android-v2.7.0`) with phone APK
+`gymapp-2.7.0.apk` and watch APK `gymapp-watch-2.7.0.apk`.
+
+### Added
+
+- Watch: vertically scrolling start screen with settings, progress (frequency, working weights, comparable bests per gym) and history; horizontal gestures to info and controls during a workout; round-safe rest screen; own launcher icon
+- Watch: built-in updater that finds the matching watch APK in GitHub releases, verifies size, SHA-256, package, version and signature and offers the install (the first version with the updater has to be installed manually once)
+- Phone: after a one-time Health Connect approval, finished personal workouts are exported automatically, including workouts without pulse and pulse data that arrives later; the Test profile stays local
+
+### Changed
+
+- Phone/watch sync: pending events are kept and retried until applied, publications are no longer cancelled by new database changes, and updated devices check the event order; a complete session index removes deleted finished workouts from the watch history
+
+### Validation
+
+- Full Gradle check (core, app, wear-backend, watch) with 310 unit tests; phone/watch sync, gestures and Health Connect still need testing on real hardware
+
 ## [android-v2.6.0] - 2026-11-17
 
 Native Android app release (GitHub release `android-v2.6.0`). The release now
