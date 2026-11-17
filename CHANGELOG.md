@@ -4,6 +4,28 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.6.0] - 2026-11-17
+
+Native Android app release (GitHub release `android-v2.6.0`). The release now
+also contains `gymapp-watch-2.6.0.apk` for the watch; phone and watch APKs are
+signed with the same key, which Wear sync requires.
+
+### Added
+
+- Native Wear OS app for Galaxy Watch: prepare and run workouts on the watch (rotary/touch set editing, rest and setup timers, measured timed holds, corrections and undo, weight-increase celebrations, ambient mode, start/resume complication)
+- Phone and watch sync workouts through the Wear Data Layer: stable session/set/event IDs prevent duplicate sets, concurrent edits show up as explicit conflicts on the phone, and the phone recalculates progression on finish, undo and refinish
+- Heart-rate recording on the watch; the phone shows the pulse curve in history and summary, and exports to Health Connect only after explicit consent (Test-profile data stays local)
+
+### Changed
+
+- Timed sets on the phone use the measured stopwatch time of the matching set
+- The in-app updater ignores the watch APK in a release
+
+### Validation
+
+- New unit tests in `android/core`, `android/app`, `android/wear-backend` and `android/watch`; CI builds, tests and lints all three Android modules
+- Not yet tested on a paired phone and watch
+
 ## [android-v2.5.1] - 2026-11-16
 
 Native Android app release (GitHub release `android-v2.5.1`).
