@@ -1,0 +1,38 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-feature android:name="android.hardware.type.watch" android:required="true" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <application android:allowBackup="false" android:name=".WatchApplication" android:label="GymApp" android:theme="@android:style/Theme.DeviceDefault">
+        <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- Lint's health-FGS check does not yet recognize API 36 READ_HEART_RATE.
+             BODY_SENSORS is declared through API 35, and the runtime requires the
+             appropriate granted heart-rate permission before starting this service.
+             https://developer.android.com/develop/background-work/services/fgs/service-types#health -->
+        <service android:name=".runtime.HeartRecordingService" android:exported="false"
+            android:foregroundServiceType="health" tools:ignore="ForegroundServicePermission" />
+        <service android:name=".runtime.WatchDataListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gymapp/" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".runtime.RestAlarmReceiver" android:exported="false" />
+        <service android:name=".runtime.WorkoutComplication" android:exported="true"
+            android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER"
+            android:icon="@android:drawable/ic_menu_compass" android:label="GymApp">
+            <intent-filter><action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" /></intent-filter>
+            <meta-data android:name="android.support.wearable.complications.SUPPORTED_TYPES" android:value="SHORT_TEXT" />
+            <meta-data android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS" android:value="0" />
+        </service>
+    </application>
+</manifest>

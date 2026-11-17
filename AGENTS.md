@@ -21,6 +21,12 @@ Android modules:
 - `android/app`: Android application (Room, repository, WorkManager sync, timer
   foreground service, updater, minimal Compose UI in `ui/<feature>/` with ViewModels).
   The repository (`data/GymRepository`) is the only code that touches the database.
+- `android/wear-backend`: Android library for the upcoming Wear OS app: private
+  offline workouts, event reconciliation and Health Services heart-rate recording.
+  `android/watch` is the native Wear Compose application and foreground-service host. Integration
+  boundaries and the design brief are in `android/docs/watch-backend.md` and
+  `android/docs/watch-design-prompt.md`. Health data remains device-local; test
+  recordings must never reach Health Connect or a peer device.
 
 ## Android Rules
 
@@ -58,7 +64,9 @@ Android modules:
 - **Device key.** Every authenticated request is signed with the device's Keystore key (`core/api/RequestSigning.kt`, protocol amendment B). Unpairing deletes token and key. A 404 after a successful sync means "disconnected"; retry with backoff, never in a loop.
 - **Network.** HTTPS only (`network_security_config`); cleartext only in debug
   builds for `10.0.2.2`/`localhost`. No exported components except the launcher
-  activity. Never log tokens or request bodies.
+  activity, the Wear Data Layer listener services (`WearableListenerService`, which the Data Layer
+  only delivers from the same package and signing identity) and the Health Connect permission
+  rationale activity and its usage alias (required by Health Connect). Never log tokens or request bodies.
 - **Releases.** Push a tag `android-v<version>` (for example `android-v0.2.0`) on a
   commit on `main`, or run the `Android` workflow manually on `main` with
   `release_version` (for example `2.3.0`), which creates the tag with the release. The workflow `android.yml` builds a signed APK (keystore from the
@@ -66,7 +74,7 @@ Android modules:
   `ANDROID_KEY_PASSWORD`) and publishes it as a GitHub release; the in-app updater
   installs it. Do not create release tags unless the owner asks.
 - **UI.** Compose screens live in `ui/<screen>`, shared pieces in `ui/components`, tokens in `ui/theme` (dark only, accent from DataStore). Gyms, their names and colours come only from synced gym documents; never hardcode them. Every interaction calls `Telemetry.track(screen, element)` (helper `tracked`). Pure logic belongs in `:core` with tests. The muscle map body (front and back, individually tinted regions) is third-party artwork (MuscleMap, MIT, modified: chest split into upper/lower, see `THIRD_PARTY_NOTICES.md`): path data in `ui/components/BodyArtPaths.kt`, region-to-muscle-group/subgroup mapping in `core/model/BodyRegions.kt`, subgroups (finer areas below the twelve groups, display only; targets, radar and counting stay on the groups) in `core/model/MuscleSubgroups.kt` (all tested); keep the notice when changing the artwork.
-- **Checks before committing:** `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`.
+- **Checks before committing:** `cd android && ./gradlew :core:test :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :wear-backend:testDebugUnitTest :wear-backend:lintDebug :wear-backend:assembleDebug :watch:testDebugUnitTest :watch:lintDebug :watch:assembleDebug`.
 
 ---
 

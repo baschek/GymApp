@@ -25,6 +25,7 @@ import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.progression.totalVolume
 import de.baschek.gymapp.telemetry.Telemetry
+import de.baschek.gymapp.ui.health.HeartHistoryCard
 import de.baschek.gymapp.ui.MuscleDetailSheet
 import de.baschek.gymapp.ui.MuscleShareSheet
 import de.baschek.gymapp.ui.components.BadgeKind
@@ -87,6 +88,7 @@ internal fun SummaryScreen(sessionId: String, session: Session, vm: WorkoutViewM
                 Hairline()
                 SummaryRow("Neue Gewichte", "$newWeights")
             }
+            HeartHistoryCard(sessionId, session)
             MuscleMapCard(
                 "Trainierte Muskeln heute", muscles, side, { side = it },
                 onMuscleTap = tracked1(SCREEN, "muscle") { detail = it },

@@ -68,9 +68,11 @@ class WorkoutActions(
     /** The exercise the user jumped to (session exercise id); null = the first exercise with an open set. */
     val focus: StateFlow<String?> = _focus.asStateFlow()
 
-    fun setFocus(exerciseId: String?) {
-        if (_focus.value != exerciseId) clearRepsOverride()
+    fun setFocus(exerciseId: String?, fromRemote: Boolean = false) {
+        val changed = _focus.value != exerciseId
+        if (changed) clearRepsOverride()
         _focus.value = exerciseId
+        if (changed && !fromRemote) scope.launch { publishFocus() }
     }
 
     private val _repsOverride = MutableStateFlow<RepsOverride?>(null)
@@ -162,13 +164,21 @@ class WorkoutActions(
         return entry.label
     }
 
-    suspend fun logSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) =
+    suspend fun logSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
         recorded(sessionId, exerciseId, "Satz geloggt") { doLogSet(sessionId, exerciseId, setId, input) }
+    }
 
     private suspend fun doLogSet(sessionId: String, exerciseId: String, setId: String, input: SetInput) {
         val current = repository.getSession(sessionId) ?: return
         val running = timer.state.value
-        val setSeconds = if (running?.phase == TimerPhase.SET) running.elapsedSeconds() else null
+        val anySet = running?.takeIf { it.phase == TimerPhase.SET }
+        // A stopwatch belongs to one stable set (or is a legacy one without IDs); another set's stopwatch is
+        // neither used for this set's duration nor stopped by logging it.
+        val runningSet = anySet?.takeIf { it.matchesSet(sessionId, exerciseId, setId) }
+        val foreignStopwatch = anySet != null && runningSet == null
+        val setSeconds = runningSet?.elapsedSeconds()
+        val exerciseForLog = current.exercises.firstOrNull { it.id == exerciseId }
+        if (runningSet != null && exerciseForLog?.target?.metric == Metric.SECONDS && (setSeconds == null || setSeconds <= 0)) return
         if (running != null && running.phase != TimerPhase.SET) timer.stop()
         val before = timer.consumeBeforeSet()
         val now = Instant.now().truncatedTo(ChronoUnit.MILLIS).toString()
@@ -185,7 +195,7 @@ class WorkoutActions(
                                 weightKg = input.weightKg,
                                 addonWeightsKg = input.addonWeightsKg?.takeIf { it.isNotEmpty() },
                                 reps = if (ex.target.metric == Metric.REPS) input.value?.toInt() else set.reps,
-                                seconds = if (ex.target.metric == Metric.SECONDS) input.value?.toInt() else set.seconds,
+                                seconds = if (ex.target.metric == Metric.SECONDS) (setSeconds ?: input.value?.toInt()) else set.seconds,
                                 meters = if (ex.target.metric == Metric.METERS) input.value else set.meters,
                                 effort = input.effort,
                                 setDurationSeconds = setSeconds,
@@ -206,6 +216,7 @@ class WorkoutActions(
         val pendingLeft = current.exercises.sumOf { ex ->
             ex.sets.count { it.status == SetStatus.PENDING && !(ex.id == exerciseId && it.id == setId) }
         }
+        if (foreignStopwatch) return
         if (pendingLeft > 0 && exercise != null) timer.start(TimerPhase.REST, exercise.name, exercise.restSeconds) else timer.stop()
     }
 

@@ -68,6 +68,8 @@ object ReleaseParser {
             ?.second?.firstOrNull()
     }
 
+    private const val WATCH_ASSET_PREFIX = "gymapp-watch-"
+
     private fun str(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
     private fun bool(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.contentOrNull == "true"
 
@@ -77,9 +79,13 @@ object ReleaseParser {
         if (!tag.startsWith(TAG_PREFIX)) return null
         val versionName = tag.removePrefix(TAG_PREFIX)
         val version = AppVersion.parse(versionName) ?: return null
-        val asset = (release["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.firstOrNull {
-            str(it, "name")?.endsWith(".apk") == true && isTrustedDownloadUrl(str(it, "browser_download_url"))
-        }
+        val candidates = (release["assets"] as? JsonArray)?.mapNotNull { it as? JsonObject }?.filter {
+            val name = str(it, "name")
+            name != null && name.endsWith(".apk") && !name.startsWith(WATCH_ASSET_PREFIX) &&
+                isTrustedDownloadUrl(str(it, "browser_download_url"))
+        }.orEmpty()
+        // Prefer exactly gymapp-<version>.apk; the watch APK is never a phone update.
+        val asset = candidates.firstOrNull { str(it, "name") == "gymapp-$versionName.apk" } ?: candidates.firstOrNull()
         val info = asset?.let {
             UpdateInfo(
                 tag = tag,

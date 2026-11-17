@@ -115,8 +115,9 @@ class WorkoutService : Service() {
                     container.workout.repsOverride,
                 ) { session, gyms, timer, focus, repsOverride ->
                     ServiceView(session?.takeIf { it.value.status == "active" }, gyms, timer, focus, repsOverride)
-                }
-                    .collectLatest { (session, gyms, timer, focus, repsOverride) ->
+                }.combine(container.repository.observeSetting("watch_alarm_leader")) { view, leader -> view to leader }
+                    .collectLatest { (view, leader) ->
+                        val (session, gyms, timer, focus, repsOverride) = view
                         if (session == null) {
                             RestAlarmScheduler.cancel(this@WorkoutService)
                             RestAlarmReceiver.cancelNotification(this@WorkoutService)
@@ -136,7 +137,7 @@ class WorkoutService : Service() {
                         // Doze-safe rest-end alarm (vibration + "Pause vorbei"); null cancels it
                         // (skip, set logged, rest reached, workout ended). "+15 s" re-plans it.
                         val alarmAt = RestAlarm.triggerAt(timer?.phase == TimerPhase.REST, timer?.endsAtMillis, now)
-                        if (alarmAt != null) {
+                        if (alarmAt != null && leader != "watch") {
                             RestAlarmScheduler.schedule(this@WorkoutService, alarmAt)
                         } else {
                             RestAlarmScheduler.cancel(this@WorkoutService)

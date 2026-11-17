@@ -1,6 +1,7 @@
 package de.baschek.gymapp.timer
 
 import de.baschek.gymapp.core.model.GymJson
+import de.baschek.gymapp.core.wear.events.WorkoutTimer
 import de.baschek.gymapp.data.GymRepository
 import de.baschek.gymapp.data.SettingKeys
 import kotlinx.coroutines.CoroutineScope
@@ -20,10 +21,18 @@ data class TimerState(
     val startedAtMillis: Long,
     val label: String,
     val suggestedRestSeconds: Int = 0,
+    val sessionId: String? = null, val exerciseId: String? = null, val setId: String? = null,
 ) {
     /** Planned end of a rest (epoch millis), if the rest has a suggested duration. */
     val endsAtMillis: Long?
         get() = if (phase == TimerPhase.REST && suggestedRestSeconds > 0) startedAtMillis + suggestedRestSeconds * 1000L else null
+
+    /** A SET stopwatch persisted before timers carried IDs has none; it belongs to whichever set is logged. */
+    private val isLegacySet: Boolean get() = sessionId == null && exerciseId == null && setId == null
+
+    fun matchesSet(sessionId: String, exerciseId: String, setId: String): Boolean =
+        phase == TimerPhase.SET && (isLegacySet ||
+            (this.sessionId == sessionId && this.exerciseId == exerciseId && this.setId == setId))
 
     fun elapsedSeconds(nowMillis: Long = System.currentTimeMillis()): Int =
         ((nowMillis - startedAtMillis) / 1000).toInt().coerceAtLeast(0)
@@ -40,6 +49,7 @@ internal data class PersistedTimer(
     val suggestedRestSeconds: Int = 0,
     val pendingRest: Int? = null,
     val pendingSetup: Int? = null,
+    val sessionId: String? = null, val exerciseId: String? = null, val setId: String? = null,
 )
 
 /**
@@ -57,11 +67,13 @@ class TimerController(
     private var pendingRest: Int? = null
     private var pendingSetup: Int? = null
     private val persistMutex = Mutex()
+    private var generation = 0L
 
     @Synchronized
-    fun start(phase: TimerPhase, label: String, suggestedRestSeconds: Int = 0) {
+    fun start(phase: TimerPhase, label: String, suggestedRestSeconds: Int = 0,
+              sessionId: String? = null, exerciseId: String? = null, setId: String? = null) {
         _state.value?.let(::rememberBeforeSet)
-        _state.value = TimerState(phase, clock(), label, suggestedRestSeconds)
+        _state.value = TimerState(phase, clock(), label, suggestedRestSeconds, sessionId, exerciseId, setId)
         persist()
     }
 
@@ -117,14 +129,30 @@ class TimerController(
             } else {
                 _state.value = stored.phase?.let { name ->
                     runCatching { TimerPhase.valueOf(name) }.getOrNull()?.let {
-                        TimerState(it, stored.startedAtMillis, stored.label, stored.suggestedRestSeconds)
+                        TimerState(it, stored.startedAtMillis, stored.label, stored.suggestedRestSeconds, stored.sessionId, stored.exerciseId, stored.setId)
                     }
                 }
                 pendingRest = stored.pendingRest
                 pendingSetup = stored.pendingSetup
             }
         }
-        persist()
+        persist(publish = false)
+    }
+
+    /** Applied after a watch event wins; never creates a phone-origin echo. */
+    @Synchronized
+    fun applyRemote(timer: WorkoutTimer?) {
+        val phase = timer?.phase?.let { runCatching { TimerPhase.valueOf(it) }.getOrNull() }
+        val end = timer?.endsAtMillis
+        _state.value = if (phase == null || timer == null) null else TimerState(
+            phase, timer.startedAtMillis, timer.label,
+            if (phase == TimerPhase.REST && end != null)
+                ((end - timer.startedAtMillis).coerceAtLeast(0) / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else 0,
+            timer.sessionId, timer.exerciseId, timer.setId,
+        )
+        pendingRest = timer?.pendingRestSeconds
+        pendingSetup = timer?.pendingSetupSeconds
+        persist(publish = false)
     }
 
     private fun rememberBeforeSet(s: TimerState) {
@@ -136,11 +164,17 @@ class TimerController(
     }
 
     /** Writes the latest state (read when the write runs, so rapid changes cannot reorder). */
-    private fun persist() {
+    @Synchronized
+    private fun persist(publish: Boolean = true) {
+        val sequence = ++generation
         scope.launch {
             persistMutex.withLock {
-                val json = snapshot()
+                val json = synchronized(this@TimerController) {
+                    if (sequence != generation) return@withLock
+                    snapshot()
+                }
                 repository.setSetting(SettingKeys.TIMER_STATE, json)
+                if (publish) repository.publishPhoneTimerEvent()
             }
         }
     }
@@ -151,7 +185,7 @@ class TimerController(
         if (s == null && pendingRest == null && pendingSetup == null) return null
         return GymJson.encodeToString(
             PersistedTimer.serializer(),
-            PersistedTimer(s?.phase?.name, s?.startedAtMillis ?: 0, s?.label.orEmpty(), s?.suggestedRestSeconds ?: 0, pendingRest, pendingSetup),
+            PersistedTimer(s?.phase?.name, s?.startedAtMillis ?: 0, s?.label.orEmpty(), s?.suggestedRestSeconds ?: 0, pendingRest, pendingSetup, s?.sessionId, s?.exerciseId, s?.setId),
         )
     }
 

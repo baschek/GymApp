@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "gymapp-android"
-include(":core", ":app")
+include(":core", ":app", ":wear-backend", ":watch")

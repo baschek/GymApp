@@ -27,6 +27,7 @@ import de.baschek.gymapp.data.SettingKeys
 import de.baschek.gymapp.data.Stored
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.timer.TimerState
+import de.baschek.gymapp.timer.TimerPhase
 import de.baschek.gymapp.ui.SyncUi
 import de.baschek.gymapp.ui.SyncUiSource
 import de.baschek.gymapp.workout.SetInput
@@ -186,6 +187,15 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
 
     fun setKeepScreenOn(on: Boolean) {
         viewModelScope.launch { repo.setSetting(SettingKeys.KEEP_SCREEN_ON, if (on) "1" else "0") }
+    }
+
+    fun startTimedSet(exerciseId: String, setId: String, label: String) {
+        if (c.timer.state.value?.phase == TimerPhase.SET) return
+        c.timer.start(TimerPhase.SET, label, sessionId = sessionId, exerciseId = exerciseId, setId = setId)
+    }
+
+    fun cancelSetTimer() {
+        if (c.timer.state.value?.phase == TimerPhase.SET) c.timer.stop()
     }
 
     fun logSet(exerciseId: String, setId: String, input: SetInput) {

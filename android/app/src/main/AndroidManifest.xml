@@ -3,6 +3,15 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Requested only by the future explicit Health Connect consent flow. -->
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
+    <uses-permission android:name="android.permission.health.WRITE_HEART_RATE" />
+    <!-- Reconcile only this app's previously exported pulse records after workout corrections. -->
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -34,6 +43,20 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".health.HealthPermissionsRationaleActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+        <activity-alias android:name=".health.ViewPermissionUsageActivity" android:exported="true"
+            android:targetActivity=".health.HealthPermissionsRationaleActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
         <service
             android:name=".timer.WorkoutService"
             android:exported="false"
@@ -41,6 +64,41 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="workout_session" />
+        </service>
+
+        <service android:name=".wear.HeartDataListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gymapp/heart/v1/" />
+            </intent-filter>
+        </service>
+
+        <service android:name=".wear.WorkoutDataListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gymapp/event/v1/" />
+            </intent-filter>
+        </service>
+
+        <service android:name=".wear.PhoneEventAckListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gymapp/event-ack/v1/" />
+            </intent-filter>
+        </service>
+
+        <service android:name=".wear.OpenPhoneListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:path="/gymapp/open-phone/v1" />
+            </intent-filter>
+        </service>
+
+        <service android:name=".wear.WatchHelloListener" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/gymapp/hello/v1/" />
+            </intent-filter>
         </service>
 
         <receiver
