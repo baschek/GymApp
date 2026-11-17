@@ -13,7 +13,7 @@ activityCompose = "1.10.1"
 lifecycle = "2.9.0"
 coreKtx = "1.17.0"
 junit = "4.13.2"
-robolectric = "4.16"
+robolectric = "4.18"
 androidxTestCore = "1.6.1"
 healthConnect = "1.1.0"
 
