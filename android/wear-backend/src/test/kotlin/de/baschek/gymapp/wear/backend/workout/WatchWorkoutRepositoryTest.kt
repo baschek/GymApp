@@ -4,6 +4,8 @@ import de.baschek.gymapp.core.model.*
 import de.baschek.gymapp.core.training.ActionOutcome
 import de.baschek.gymapp.core.training.RejectReason
 import de.baschek.gymapp.core.wear.events.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Rule
@@ -39,6 +41,27 @@ class WatchWorkoutRepositoryTest {
         assertTrue(restored.state.value.pendingEvents >= 4)
         assertEquals(1, restored.state.value.milestones.size)
     }
+    @Test fun `offline handoff publishes only the completed workout`() = runTest {
+        val sender = WatchWorkoutRepository.at(temporary.root.resolve("sender"), WorkoutProfile.PERSONAL, "phone")
+        sender.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2)
+        sender.startPlan("plan", "gym", WorkoutMode.NORMAL)
+        val exercise = sender.state.value.session!!.exercises.single()
+        for (set in exercise.sets) sender.logSet(exercise.id, set.id, WatchSetInput(20.0, 12.0, "one_two"))
+        val backlog = sender.state.value.outbox
+        assertTrue(backlog.size >= 3)
+        val receiver = WatchWorkoutRepository.at(temporary.root.resolve("receiver"), WorkoutProfile.PERSONAL, "watch")
+        val statuses = mutableListOf<String?>()
+        val collector = launch(Dispatchers.Unconfined) { receiver.state.collect { statuses.add(it.session?.status) } }
+        try {
+            val result = receiver.receiveBatch(backlog.reversed())
+            assertEquals(backlog.map { it.eventId }, result.acknowledgements)
+            assertEquals(backlog.size, result.appliedCount)
+            assertEquals(listOf(null, SessionStatus.COMPLETED), statuses)
+            assertEquals(0, receiver.receiveBatch(backlog).appliedCount)
+            assertEquals(backlog.map { it.eventId }, receiver.state.value.replica!!.receipts.map { it.eventId })
+        } finally { collector.cancel() }
+    }
+
     @Test fun `test profile stays local and remote events are rejected`() = runTest {
         val file = temporary.newFile("test.json").also { it.delete() }
         val repository = WatchWorkoutRepository.at(file, WorkoutProfile.TEST, "watch")

@@ -93,6 +93,35 @@ class WatchRepositoryTest {
         assertTrue(repo.observeMachineProfiles().first().isNotEmpty())
     }
 
+    private suspend fun orphanConflict(tombstone: Boolean) {
+        start()
+        repo.updateSession(sessionId) { set(it, 0, 30.0, "2026-01-01T00:01:00Z") }
+        val watch = finish(set(base, 0, 40.0, "2026-01-01T00:01:01Z"))
+        assertTrue(repo.importWatchEvent(event(base, watch)) is EventResult.Applied)
+        assertEquals(1, repo.observeWatchConflicts().first().size)
+        val dao = db.dao()
+        val row = dao.getDoc(Profile.PERSONAL, "session", sessionId)!!
+        if (tombstone) dao.upsertDoc(row.copy(deleted = true, data = "{}"))
+        else dao.deleteDoc(Profile.PERSONAL, "session", sessionId)
+    }
+
+    @Test fun choosingMineAfterDeletionDismissesStaleNotice() = runBlocking {
+        orphanConflict(tombstone = true)
+        assertTrue(repo.resolveWatchConflicts(sessionId, ConflictChoice.MINE))
+        assertTrue(repo.observeWatchConflicts().first().isEmpty())
+        assertTrue(db.dao().getDoc(Profile.PERSONAL, "session", sessionId)!!.deleted)
+        assertNull(db.dao().getSetting("watch_progression_pending:$sessionId"))
+    }
+
+    @Test fun startupRemovesLegacyConflictWithMissingSession() = runBlocking {
+        orphanConflict(tombstone = false)
+        val restarted = GymRepository(db)
+        restarted.cleanOrphanWatchConflicts()
+        assertTrue(restarted.observeWatchConflicts().first().isEmpty())
+        assertNull(db.dao().getSetting("watch_progression_pending:$sessionId"))
+        assertNull(restarted.getSession(sessionId))
+    }
+
     @Test fun finishUndoAndRefinishRecalculateWeightsAndMilestones() = runBlocking {
         start()
         val finished = finish(set(base, 0, 30.0, "2026-01-01T00:01:00Z"))
@@ -120,6 +149,24 @@ class WatchRepositoryTest {
         assertEquals(2, repo.observePhoneWatchEvents().first().size)
         repo.enableWatchCompanion()
         assertEquals(2, repo.observePhoneWatchEvents().first().size)
+    }
+
+    @Test fun phoneHandoffAppliesReversedChainOnceAndLeavesMissingPredecessorPending() = runBlocking {
+        val logged = set(base, 0, 30.0, "2026-01-01T00:01:00Z")
+        val first = event(base, logged)
+        // The predecessor establishes order even if clocks or callback order disagree.
+        val last = event(logged, finish(logged)).copy(predecessorEventId = first.eventId,
+            occurredAtMillis = first.occurredAtMillis + 1)
+        assertTrue(repo.importWatchEvents(listOf(last)).acknowledgements.isEmpty())
+        assertNull(repo.getSession(sessionId))
+        val result = repo.importWatchEvents(listOf(last, first))
+        assertEquals(listOf(first.eventId, last.eventId), result.acknowledgements)
+        assertEquals(last.eventId, result.lastLeader?.lastOperation?.eventId)
+        assertEquals(SessionStatus.COMPLETED, repo.getSession(sessionId)!!.status)
+        assertTrue(repo.lastSessionEditFromWatch(sessionId))
+        val milestones = repo.observeMilestones().first()
+        assertEquals(0, repo.importWatchEvents(listOf(first, last)).appliedCount)
+        assertEquals(milestones, repo.observeMilestones().first())
     }
 
     @Test fun testProfileCannotImportOrExportCatalog() = runBlocking {

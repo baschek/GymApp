@@ -63,7 +63,7 @@ import kotlinx.serialization.json.JsonObject
  * Transport must authenticate peers and never send TEST data. All instances for a file share a lock.
  */
 class WatchWorkoutRepository private constructor(
-    file: File, private val profile: WorkoutProfile, private val deviceId: String,
+    file: File, private val profile: WorkoutProfile, val deviceId: String,
     private val now: () -> Long = System::currentTimeMillis, private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
     private val file = file.canonicalFile
@@ -418,22 +418,35 @@ class WatchWorkoutRepository private constructor(
     }
     /** Acknowledge only IDs durably accepted by the receiver. */
     suspend fun acknowledge(eventIds: Set<String>) = locked { s -> discardDeletedWhenSafe(s.copy(outbox = s.outbox.filterNot { it.eventId in eventIds })) to Unit }
-    suspend fun receive(event: WorkoutEvent): EventResult = locked { s ->
-        if (profile != WorkoutProfile.PERSONAL || event.profile != profile) return@locked s to EventResult.Rejected("profile_local_only")
+    suspend fun receive(event: WorkoutEvent): EventResult = locked { s -> receive(s, event) }
+
+    /** One file commit and one observable state after reducing all received operations. */
+    suspend fun receiveBatch(events: List<WorkoutEvent>): WorkoutBatchResult = locked { initial ->
+        var state = initial
+        val results = applyWorkoutBatch(events) { event ->
+            val (next, result) = receive(state, event)
+            state = next
+            result
+        }
+        state to results
+    }
+
+    private fun receive(s: WatchWorkoutState, event: WorkoutEvent): Pair<WatchWorkoutState, EventResult> {
+        if (profile != WorkoutProfile.PERSONAL || event.profile != profile) return s to EventResult.Rejected("profile_local_only")
         val active = s.replica
         val archived = s.archivedReplicas[event.sessionId]
         val retained = active?.takeIf { it.sessionId == event.sessionId } ?: archived
         if (event.sessionId in s.deletedSessionIds && event.sessionId !in s.catalog.sessions && retained?.conflicts.isNullOrEmpty() && s.outbox.none { it.sessionId == event.sessionId }) {
             val replay = retained?.let { WorkoutEvents.apply(it, event) }
-            return@locked s to if (replay is EventResult.Replayed) replay else EventResult.Rejected("deleted_session")
+            return s to if (replay is EventResult.Replayed) replay else EventResult.Rejected("deleted_session")
         }
         val current = when {
             active?.sessionId == event.sessionId -> active
             archived != null -> archived
             active == null || s.session?.status == SessionStatus.COMPLETED -> ReplicaState(profile, event.sessionId, event.before)
-            else -> return@locked s to EventResult.Rejected("different_active_session")
+            else -> return s to EventResult.Rejected("different_active_session")
         }
-        when (val result = WorkoutEvents.apply(current, event)) {
+        return when (val result = WorkoutEvents.apply(current, event)) {
             is EventResult.Applied -> {
                 if (archived != null && active?.sessionId != event.sessionId) {
                     val decoded = decode<Session>(result.state.document)

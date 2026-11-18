@@ -4,6 +4,12 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Phone and watch resolve repeated disputes about the same set in one choice. The phone clears conflicts for deleted workouts on startup and reports a failed resolution.
+- The conflict notice and the Test profile banner clear the phone status bar. Settings and workout screens account for the space already taken by the banner.
+- On reconnect, both devices apply a pending workout batch before updating the visible session, focus and timer. Each event retains its original ID, predecessor and individual acknowledgement.
+
 ## [android-v2.8.0] - 2026-11-18
 
 Native Android app release (GitHub release `android-v2.8.0`) with phone APK

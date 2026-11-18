@@ -26,8 +26,8 @@ import de.baschek.gymapp.core.model.GymJson
     val conflictId: String, val path: List<String>, val candidateA: JsonElement?,
     val candidateB: JsonElement?, val chosen: JsonElement?,
 )
-private fun conflictKey(path: List<String>, a: OperationStamp?, b: OperationStamp): String {
-    val ids = listOf(a?.eventId ?: "initial", b.eventId).sorted()
+private fun conflictKey(path: List<String>, a: String?, b: String): String {
+    val ids = listOf(a ?: "initial", b).sorted()
     val material = JsonArray((ids + path).map { JsonPrimitive(it) }).toString()
     return MessageDigest.getInstance("SHA-256").digest(material.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 }
@@ -37,7 +37,7 @@ private fun conflictKey(path: List<String>, a: OperationStamp?, b: OperationStam
 @Serializable data class WorkoutConflict(
     val path: List<String>, val local: JsonElement?, val remote: JsonElement?,
     val localStamp: OperationStamp?, val remoteStamp: OperationStamp,
-    val conflictId: String = conflictKey(path, localStamp, remoteStamp),
+    val conflictId: String = conflictKey(path, localStamp?.eventId, remoteStamp.eventId),
 )
 @Serializable data class ReplicaState(
     val profile: WorkoutProfile, val sessionId: String, val document: JsonObject,
@@ -116,32 +116,59 @@ object WorkoutEvents {
     fun createResolution(state: ReplicaState, choice: ConflictChoice, eventId: String, deviceId: String, occurredAtMillis: Long): WorkoutEvent {
         require(validate(state) == null && state.conflicts.isNotEmpty())
         require(uuid(eventId) && id(deviceId) && occurredAtMillis >= 0)
-        val resolutions = state.conflicts.map { c ->
-            val chosen = if (choice == ConflictChoice.NEWEST && compare(c.remoteStamp, c.localStamp) > 0) c.remote else c.local
-            ConflictResolution(c.conflictId, c.path, c.local, c.remote, chosen)
+        // Apply the most recent remote candidate last for each path, independent of delivery order.
+        val resolutions = state.conflicts.sortedWith { a, b -> compare(a.remoteStamp, b.remoteStamp) }.map { c ->
+            val mine = getAt(state.document, c.path)
+            val chosen = if (choice == ConflictChoice.NEWEST && mine == c.local && compare(c.remoteStamp, c.localStamp) > 0) c.remote else mine
+            ConflictResolution(c.conflictId, c.path, mine, c.remote, chosen)
         }.distinctBy { it.conflictId }
         return WorkoutEvent(eventId, deviceId, occurredAtMillis, state.profile, state.sessionId,
             state.document, state.document, state.timer, state.focusExerciseId, resolutions)
     }
 
+    /** A device that made two edits before receiving the other device's edit only recorded the
+     * last dispute. Verify a superseded ID from its two source receipts before accepting it. */
+    private fun hasResolutionSources(state: ReplicaState, path: List<String>, choices: List<ConflictResolution>): Boolean {
+        val disputed = state.conflicts.filter { it.path == path }
+        val missing = choices.mapTo(mutableSetOf()) { it.conflictId }
+        missing.removeAll(disputed.map { it.conflictId }.toSet())
+        if (missing.isEmpty()) return true
+        val latest = disputed.find { it.conflictId == choices.last().conflictId } ?: return false
+        val anchors = listOfNotNull(latest.localStamp, latest.remoteStamp).map { it.eventId }
+            .filter { id -> state.receipts.any { it.eventId == id } }
+        for (receipt in state.receipts.asReversed()) {
+            for (anchor in anchors) missing.remove(conflictKey(path, anchor, receipt.eventId))
+            if (missing.isEmpty()) return true
+        }
+        return false
+    }
+
     private fun applyResolution(state: ReplicaState, event: WorkoutEvent, stamp: OperationStamp, fingerprint: String): EventResult {
         // Delivery may overtake either source event. Do not acknowledge until the conflict exists.
-        if (event.resolutions.any { r -> state.conflicts.none { it.conflictId == r.conflictId && it.path == r.path } }) return EventResult.Rejected("resolution_missing_conflict")
+        val byPath = event.resolutions.groupBy { it.path }
+        if (byPath.any { (path, choices) -> !hasResolutionSources(state, path, choices) })
+            return EventResult.Rejected("resolution_missing_conflict")
         var document: JsonElement = state.document
         var versions = state.versions
         val conflicts = state.conflicts.toMutableList()
-        for (resolution in event.resolutions) {
-            val old = conflicts.first { it.conflictId == resolution.conflictId && it.path == resolution.path }
-            conflicts.removeAll { it.conflictId == resolution.conflictId && it.path == resolution.path }
-            val current = getAt(document, resolution.path)
-            if (current == resolution.candidateA || current == resolution.candidateB) {
-                document = putAt(document, resolution.path, resolution.chosen)
-                // A missing parent cannot safely receive a value; retain the dispute.
-                if (getAt(document, resolution.path) != resolution.chosen) return EventResult.Rejected("resolution_missing_parent")
-                versions = versions.filterNot { it.path == resolution.path || it.path.size > resolution.path.size && it.path.take(resolution.path.size) == resolution.path } + PathVersion(resolution.path, stamp)
+        for ((path, choices) in byPath.entries.sortedBy { it.key.size }) {
+            val ids = choices.map { it.conflictId }.toSet()
+            val old = conflicts.first { it.conflictId in ids }
+            conflicts.removeAll { it.conflictId in ids }
+            val current = getAt(state.document, path)
+            val chosen = choices.last().chosen
+            // Compare against the original snapshot once. Applying a choice for this same set
+            // earlier in the loop is not a concurrent edit by the other device.
+            if (choices.any { current == it.candidateA || current == it.candidateB }) {
+                document = putAt(document, path, chosen)
+                // A chosen parent deletion also disposes of its child disputes. A parent
+                // removed independently on the receiver still needs reconciliation.
+                if (getAt(document, path) != chosen && getAt(state.document, path.dropLast(1)) == null &&
+                    getAt(event.before, path.dropLast(1)) != null) return EventResult.Rejected("resolution_missing_parent")
+                versions = versions.filterNot { it.path.take(path.size) == path } + PathVersion(path, stamp)
             } else {
-                val localStamp = versions.filter { resolution.path.take(it.path.size) == it.path }.maxByOrNull { it.path.size }?.stamp ?: old.localStamp
-                conflicts.add(WorkoutConflict(resolution.path, current, resolution.chosen, localStamp, stamp))
+                val localStamp = versions.filter { path.take(it.path.size) == it.path }.maxByOrNull { it.path.size }?.stamp ?: old.localStamp
+                conflicts.add(WorkoutConflict(path, current, chosen, localStamp, stamp))
             }
         }
         if (conflicts.size > MAX_CONFLICTS) return EventResult.Rejected("conflict_capacity")

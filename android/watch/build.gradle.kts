@@ -9,6 +9,7 @@ plugins {
 val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 android {
     sourceSets["main"].kotlin.srcDir("../navrec/src")
+    sourceSets["main"].kotlin.srcDir("../wear-transport/src")
     namespace = "de.baschek.gymapp.watch"
     compileSdk = 37
     defaultConfig {

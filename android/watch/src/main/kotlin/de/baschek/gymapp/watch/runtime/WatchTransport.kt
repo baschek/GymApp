@@ -1,5 +1,7 @@
 package de.baschek.gymapp.watch.runtime
 
+import de.baschek.gymapp.wear.transport.WorkoutDataItems
+import de.baschek.gymapp.wear.transport.WorkoutPublication
 import android.content.Context
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -42,6 +44,7 @@ object WatchTransport {
         RuntimeMonitor.state.update { it.copy(pendingCount = pending.size + HeartQueue(context).pending().size) }
         val client = Wearable.getDataClient(context)
         var failed = false
+        val publication = WorkoutPublication(pending)
         for (event in pending) {
           try {
             val hash = HeartTransfer.id(event.eventId)
@@ -52,6 +55,7 @@ object WatchTransport {
                 temp.outputStream().use { it.write(bytes); it.fd.sync() }
                 val request = PutDataMapRequest.create("/gymapp/event/v1/$hash")
                 ParcelFileDescriptor.open(temp, ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                    publication.mark(request.dataMap)
                     request.dataMap.putAsset("payload", Asset.createFromFd(fd))
                     request.dataMap.putString("id", hash)
                     request.dataMap.putString("attempt", java.util.UUID.randomUUID().toString())
@@ -92,8 +96,9 @@ object WatchTransport {
             }
             // One malformed or temporarily unavailable item must not block the remaining durable items.
             if (!eventsOnly) buffer.forEach { if (it.uri.path == "/gymapp/catalog/v1/current") attempt { process(context, it, DataEvent.TYPE_CHANGED, false) } }
+            attempt { receivePending(context) }
             buffer.forEach {
-                if (it.uri.path?.startsWith("/gymapp/event/v1/") == true || it.uri.path?.startsWith("/gymapp/event-ack/v1/") == true)
+                if (it.uri.path?.startsWith("/gymapp/event-ack/v1/") == true)
                     attempt { process(context, it, DataEvent.TYPE_CHANGED, false) }
             }
             if (!eventsOnly) buffer.forEach {
@@ -101,6 +106,16 @@ object WatchTransport {
                 if (it.uri.path?.startsWith("/gymapp/health-status/v1/") == true || it.uri.path == "/gymapp/health-settings/v1/current") attempt { process(context, it, DataEvent.TYPE_CHANGED, false) }
             }
         } finally { buffer.release() }
+    }
+
+    suspend fun receivePending(context: Context, changed: Set<Uri>? = null) = withContext(Dispatchers.IO) {
+        val repo = (context.applicationContext as WatchApplication).restoreRepository() ?: return@withContext
+        if (repo.state.value.profile != WorkoutProfile.PERSONAL) return@withContext
+        val events = WorkoutDataItems.ready(context, changed)
+        if (events.isEmpty()) return@withContext
+        val result = repo.receiveBatch(events)
+        if (result.acknowledgements.size < events.size) RuntimeMonitor.state.update { it.copy(connectionLabel = "Konflikt") }
+        for (id in result.acknowledgements) WorkoutDataItems.acknowledge(context, id)
     }
 
     private suspend fun process(context: Context, item: DataItem, eventType: Int, rescan: Boolean = true): Unit = withContext(Dispatchers.IO) {
@@ -165,22 +180,6 @@ object WatchTransport {
                         current.copy(exportLabel = exportLabel(summary.exportState)) else current
                 }
             }
-            "event" -> {
-                val incoming = json.decodeFromString<WorkoutEvent>(readAsset(context, item).decodeToString())
-                require(incoming.profile == WorkoutProfile.PERSONAL && HeartTransfer.id(incoming.eventId) == hash)
-                val repo = app.restoreRepository() ?: return@withContext
-                if (repo.state.value.profile != WorkoutProfile.PERSONAL) return@withContext
-                val result = repo.receive(incoming)
-                if (result is EventResult.Applied || result is EventResult.Replayed ||
-                    (result is EventResult.Rejected && EventRejections.shouldAcknowledge(result))) {
-                    run {
-                        val ack = PutDataMapRequest.create("/gymapp/event-ack/v1/$hash")
-                        ack.dataMap.putString("id", hash)
-                        ack.dataMap.putString("attempt", java.util.UUID.randomUUID().toString())
-                        Tasks.await(Wearable.getDataClient(context).putDataItem(ack.asPutDataRequest().setUrgent()))
-                    }
-                } else RuntimeMonitor.state.update { it.copy(connectionLabel = "Konflikt") }
-            }
             "event-ack" -> {
                 val repo = app.restoreRepository() ?: return@withContext
                 val matched = repo.state.value.outbox.filter { HeartTransfer.id(it.eventId) == hash }.map { it.eventId }.toSet()
@@ -195,7 +194,12 @@ object WatchTransport {
 class WatchDataListener : WearableListenerService() {
     override fun onDataChanged(events: DataEventBuffer) {
         // WearableListenerService invokes this on its worker thread; finish durable work before return.
+        val workoutChanged = mutableSetOf<Uri>()
         events.forEach { event ->
+            if (event.type == DataEvent.TYPE_CHANGED && event.dataItem.uri.path?.startsWith(WorkoutDataItems.PREFIX) == true) {
+                workoutChanged += event.dataItem.uri
+                return@forEach
+            }
             try {
                 runBlocking {
                     if (event.dataItem.uri.path?.startsWith("/gymapp/heart-ack/v1/") == true && event.type == DataEvent.TYPE_CHANGED)
@@ -206,5 +210,8 @@ class WatchDataListener : WearableListenerService() {
                 RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") }
             }
         }
+        if (workoutChanged.isNotEmpty()) try {
+            runBlocking { WatchTransport.receivePending(applicationContext, workoutChanged) }
+        } catch (_: Exception) { RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") } }
     }
 }

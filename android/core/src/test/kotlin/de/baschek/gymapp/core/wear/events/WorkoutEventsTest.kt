@@ -58,6 +58,27 @@ class WorkoutEventsTest {
         assertEquals("completed", set(newest, 1)["status"]!!.jsonPrimitive.content)
         assertTrue(newest.conflicts.isEmpty())
     }
+    @Test fun newestResolvesSeveralOfflineEditsOfTheSameSetInOneChoice() {
+        val phone = event(aId, doc(), doc(reps = 11))
+        val watch = event(bId, doc(), doc(reps = 12), 2)
+        val correction = event("00000000-0000-4000-8000-000000000004", watch.after, doc(reps = 13), 3)
+            .copy(predecessorEventId = watch.eventId)
+        val disputed = apply(apply(apply(start(), phone), watch), correction)
+        val peer = apply(apply(apply(start(), watch), correction), phone)
+        assertEquals(1, peer.conflicts.size)
+        assertEquals(2, disputed.conflicts.size)
+        for (choice in ConflictChoice.entries) {
+            val resolution = WorkoutEvents.createResolution(disputed, choice, "00000000-0000-4000-8000-000000000005", "phone", 4)
+            val final = apply(disputed, resolution)
+            assertTrue(final.conflicts.isEmpty(), choice.name)
+            val peerFinal = apply(peer, resolution)
+            assertEquals(final.document, peerFinal.document)
+            assertTrue(peerFinal.conflicts.isEmpty())
+            assertIs<EventResult.Rejected>(WorkoutEvents.apply(apply(apply(start(), phone), watch), resolution))
+            assertEquals(if (choice == ConflictChoice.MINE) 11 else 13, set(final, 0)["reps"]!!.jsonPrimitive.int)
+        }
+    }
+
     @Test fun resolutionPropagatesAndReplayIsIdempotent() {
         val base = doc(); val phone = event(aId, base, doc(first = "completed", reps = 10))
         val watch = event(bId, base, doc(first = "completed", reps = 12), 2)

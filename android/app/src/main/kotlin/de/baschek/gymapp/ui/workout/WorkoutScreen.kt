@@ -127,7 +127,7 @@ fun WorkoutScreen(sessionId: String, nav: Navigator) {
                 val increases by vm.celebrations.collectAsStateWithLifecycle()
                 val shown = increases
                 when {
-                    celebrated || !vm.sawActive || (shown != null && shown.isEmpty()) ->
+                    celebrated || l.finishedOnWatch || !vm.sawActive || (shown != null && shown.isEmpty()) ->
                         SummaryScreen(l.id, session, vm, onDone = { nav.resetTo(Routes.TODAY) })
                     shown == null -> Box(Modifier.fillMaxSize())
                     else -> WeightIncreaseCelebration(shown, onDone = { celebrated = true })

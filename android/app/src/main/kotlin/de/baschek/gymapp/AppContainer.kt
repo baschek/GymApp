@@ -43,6 +43,7 @@ class AppContainer(app: Application) {
     fun photoDir(): java.io.File = java.io.File(appContext.filesDir, "photos").apply { mkdirs() }
 
     init {
+        appScope.launch { repository.cleanOrphanWatchConflicts() }
         NavRecorder.install(app)
         appScope.launch { repository.observeActiveSession().collect { NavRecorder.workoutChanged(it?.id) } }
         Telemetry.install(repository, appScope)

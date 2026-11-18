@@ -13,6 +13,7 @@ val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 
 android {
     sourceSets["main"].kotlin.srcDir("../navrec/src")
+    sourceSets["main"].kotlin.srcDir("../wear-transport/src")
     namespace = "de.baschek.gymapp"
     compileSdk = 36
 
@@ -103,6 +104,8 @@ dependencies {
     implementation(libs.ktor.client.okhttp)
     implementation(libs.kotlinx.coroutines.android)
 
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
