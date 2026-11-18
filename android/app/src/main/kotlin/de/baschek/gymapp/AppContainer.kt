@@ -1,5 +1,6 @@
 package de.baschek.gymapp
 
+import de.baschek.gymapp.recorder.NavRecorder
 import android.app.Application
 import de.baschek.gymapp.core.api.createHttpClient
 import de.baschek.gymapp.health.AutomaticHealthExport
@@ -42,6 +43,8 @@ class AppContainer(app: Application) {
     fun photoDir(): java.io.File = java.io.File(appContext.filesDir, "photos").apply { mkdirs() }
 
     init {
+        NavRecorder.install(app)
+        appScope.launch { repository.observeActiveSession().collect { NavRecorder.workoutChanged(it?.id) } }
         Telemetry.install(repository, appScope)
         health.start(appScope)
         WatchCatalogPublisher(appContext, repository, prefs).start(appScope)

@@ -1,5 +1,6 @@
 package de.baschek.gymapp.watch
 
+import de.baschek.gymapp.watch.recorder.NavRecorder
 import android.os.Bundle
 import android.os.Build
 import android.content.pm.PackageManager
@@ -60,7 +61,10 @@ class MainActivity : ComponentActivity() {
                         requestNotificationPermission.launch("android.permission.POST_NOTIFICATIONS")
                     }
                 }
-                WatchRoot(current, runtime)
+                Box(Modifier.fillMaxSize()) {
+                    WatchRoot(current, runtime)
+                    de.baschek.gymapp.recorder.shared.RecorderOverlay(NavRecorder, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+                }
             }
         }
     }
