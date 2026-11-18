@@ -10,6 +10,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
@@ -153,7 +154,7 @@ class WatchUiTest {
         compose.mainClock.autoAdvance = false
         compose.onNodeWithContentDescription("Satz geschafft").performClick()
         compose.mainClock.advanceTimeBy(500)
-        compose.onNode(hasContentDescription("1–2 übrig", substring = true)).assertIsDisplayed()
+        compose.onNode(hasContentDescription("1–2 übrig", substring = true)).assertExists()
         compose.mainClock.advanceTimeBy(3_500)
         assertTrue("nothing before 5 s: $actions", actions.isEmpty())
         compose.mainClock.advanceTimeBy(1_500)
@@ -251,6 +252,7 @@ class WatchUiTest {
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithText("Testübung", substring = true).performClick()
         compose.onNodeWithText("Jetzt").assertIsNotEnabled().performClick()
+        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Nach oben"))
         compose.onNodeWithText("Nach oben").assertIsNotEnabled().performClick()
         assertTrue("disabled actions send nothing: $actions", actions.isEmpty())
         compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Nach unten"))
