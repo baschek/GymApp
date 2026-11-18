@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -199,7 +200,7 @@ private fun RestMain(ui: UiContext) {
     ScreenScaffold { _ ->
         BoxWithConstraints(Modifier.fillMaxSize()) {
             EdgeRing(if (state.restTotalSeconds > 0) (seconds.toFloat() / state.restTotalSeconds).coerceIn(0f, 1f) else 0f)
-            val rowCenter = maxHeight * 0.74f
+            val rowCenter = maxHeight * 0.75f
             val top = maxHeight * 0.10f
             val next = state.nextSet
             val nextText = when {
@@ -207,7 +208,9 @@ private fun RestMain(ui: UiContext) {
                 next == null -> ""
                 else -> next.valueText
             }
-            Column(Modifier.align(Alignment.TopCenter).padding(top = top).fillMaxWidth().padding(horizontal = maxWidth * 0.12f).height(rowCenter - 30.dp - top),
+            // Two 48-dp targets (countdown, suggestion) may need more than the slot: the content is allowed to overflow it.
+            Box(Modifier.align(Alignment.TopCenter).padding(top = top).fillMaxWidth().padding(horizontal = maxWidth * 0.12f).height(rowCenter - 30.dp - top), contentAlignment = Alignment.Center) {
+              Column(Modifier.wrapContentHeight(align = Alignment.CenterVertically, unbounded = true),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 // Countdown: tap opens the rest editor (+-15 s with bezel or buttons).
                 Column(Modifier.defaultMinSize(minWidth = 96.dp, minHeight = 48.dp).clickable { track("pause_aendern"); ui.openEditor(EditorKind.REST) }
@@ -235,6 +238,7 @@ private fun RestMain(ui: UiContext) {
                         }
                     }
                 }
+              }
             }
             val undo: (@Composable () -> Unit)? = if (ui.undoVisible && state.undoAvailable) {
                 { RoundButton("↶", "Rückgängig", primary = false, size = 48.dp) { ui.dispatch(WatchAction.Undo) } }
