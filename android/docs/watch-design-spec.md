@@ -37,7 +37,7 @@ Ablauf nach Start: Studio (Pflicht, Voreinstellung letztes Studio) → Modus (No
    ╭─── 17:42 ───╮
    │ Handy verb. │
    │  B – Beine  │
-   │ AI Lahnstein│
+   │  Studio A   │
    │ [ Start ▶ ] │
    │ Tagesworkout│
    │ Andere Pläne│
