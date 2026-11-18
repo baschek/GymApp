@@ -14,6 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import de.baschek.gymapp.watch.recorder.NavRecorder
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -180,7 +188,8 @@ internal fun SettingsScreen(ui: UiContext) {
     ListScreen("Einstellungen") {
         item { SwitchRow("Dauer am Rand", state.durationRingEnabled, "Ring im Training, eine Runde = 60 min") { ui.dispatch(WatchAction.SetDurationRing(it)) } }
         item { SwitchRow("Puls bei jedem Training aufzeichnen", state.heartAutoConsent == true) { ui.dispatch(WatchAction.SetHeartAuto(it)) } }
-        // The navigation recorder adds its switch "Navigation aufzeichnen (Test, nur diese Version)" here.
+        // Temporary navigation recorder (test only, see docs/navrec-removal.md).
+        item { RecorderSettings() }
         item { ListButton("Gesundheit") { ui.push(Route.HEALTH) } }
         item { ListButton("Verbindung", state.connection) { ui.push(Route.CONNECTION) } }
         item { InfoCard("Uhr-App-Update", state.updateStatus) }
@@ -312,6 +321,23 @@ internal fun AmbientScreen(state: WatchPresentation, phase: SetPhase) {
                     AmbientText(current?.let { "Satz ${it.number}/${it.total}" }.orEmpty())
                     Small(current?.let { setValue(it.weight, it.amount, it.unit, it.weightLabel) }.orEmpty(), color = Outline)
                 }
+            }
+        }
+    }
+}
+
+/** Switch and send button of the temporary navigation recorder; no values or note texts are ever recorded. */
+@Composable
+internal fun RecorderSettings() {
+    val recording by NavRecorder.recording.collectAsState()
+    val scope = rememberCoroutineScope()
+    var message by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        SwitchRow("Navigation aufzeichnen (Test, nur diese Version)", recording) { NavRecorder.setEnabled(it); message = "" }
+        ListButton("Aufzeichnung ans Handy senden", message, description = "Aufzeichnung senden") {
+            message = "Sende …"
+            scope.launch {
+                message = try { NavRecorder.export(); "Gesendet" } catch (e: Exception) { "Senden fehlgeschlagen, bitte erneut tippen" }
             }
         }
     }

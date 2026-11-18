@@ -24,6 +24,7 @@ import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.wear.backend.workout.WatchSetInput
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutRepository
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutState
+import de.baschek.gymapp.watch.recorder.NavRecorder
 import de.baschek.gymapp.watch.runtime.WatchRuntime
 import de.baschek.gymapp.watch.runtime.WatchRuntimeState
 import kotlinx.coroutines.delay
@@ -60,11 +61,15 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
     // Single hook for screen changes and taps (telemetry; the navigation recorder plugs in here).
     val observer = remember(runtime) {
         object : WatchNavObserver {
-            override fun onTap(screen: String, element: String) = runtime.trackInteraction(screen, element)
+            override fun onTap(screen: String, element: String) {
+                runtime.trackInteraction(screen, element)
+                NavRecorder.tap(recorderElement(element))
+            }
         }
     }
     WatchUi(presentation, observer = observer, onExit = { activity?.finish() }) { action ->
         runtime.trackInteraction("watch", action.javaClass.simpleName.lowercase(java.util.Locale.ROOT))
+        NavRecorder.action(action.javaClass.simpleName)
         error = null
         scope.launch {
             try {

@@ -11,6 +11,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -45,6 +46,7 @@ import de.baschek.gymapp.core.model.WorkoutMode
 import de.baschek.gymapp.core.training.EFFORT_PICK_TIMEOUT_MILLIS
 import de.baschek.gymapp.core.training.effortChoices
 import de.baschek.gymapp.core.training.resolveEffort
+import de.baschek.gymapp.watch.recorder.NavRecorder
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -196,9 +198,21 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
     val phase = WatchNavRules.phase(state, effort.pending != null)
     val latestPhase by rememberUpdatedState(phase)
     val latestObserver by rememberUpdatedState(observer)
+    val recording by NavRecorder.recording.collectAsState()
+    val latestState by rememberUpdatedState(state)
     fun go(target: NavState, cause: String) {
         val now = NavState.decode(navCode)
         if (target == now) return
+        // Recorder hook: the cause of an automatic change is recorded right before it happens.
+        if (recording && cause.startsWith("auto:") && cause != "auto:start") {
+            val s = latestState
+            NavRecorder.auto(when {
+                s.summary != null && !s.sessionActive -> "auto:summary"
+                !s.sessionActive -> "auto:session_end"
+                s.setupRemainingSeconds != null -> "auto:setup"
+                else -> "auto:remote_event"
+            })
+        }
         navCode = target.encode()
         latestObserver.onScreen(target.screen(latestPhase), cause)
     }
@@ -236,6 +250,9 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
         if (!draft.edited) { draft.weight = current?.weight; draft.amount = current?.amount ?: 0.0; draft.addOns = current?.selectedAddOns ?: emptySet() }
     }
     val selection = rememberSaveable(saver = Selection.Saver) { Selection() }
+    // Recorder hook: the visible screen (sub-views first, then the training page or phase), only while recording.
+    val visibleId = recorderScreen(nav, phase, selection.editor)
+    LaunchedEffect(visibleId, recording) { if (recording) NavRecorder.screen(visibleId) }
     val celebration = rememberSaveable { mutableIntStateOf(0) }
 
     // The picker belongs to one open set; if the set was logged elsewhere meanwhile, nothing is saved twice.

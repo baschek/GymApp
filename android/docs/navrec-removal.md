@@ -23,7 +23,9 @@ Alle Pfade in dieser Liste beginnen in `android/`, außer der ausdrücklich gena
 | `watch/src/main/kotlin/de/baschek/gymapp/watch/recorder/NavRecorder.kt` | Sendefunktion und Asset-Pfad `/gymapp/navrec/v1/<watch-Aufnahme>` löschen. |
 | `watch/src/main/kotlin/de/baschek/gymapp/watch/WatchApplication.kt` | `NavRecorder.install(this)` und `NavRecorder.workoutChanged(…)` im Repository-Collector entfernen. |
 | `watch/src/main/kotlin/de/baschek/gymapp/watch/MainActivity.kt` | `RecorderOverlay` und dessen umgebende Box bei `WatchRoot` entfernen. |
-| `watch/src/main/kotlin/de/baschek/gymapp/watch/ui/{WatchRoot,WatchUi}.kt` | Nach der UI-Integration die Recorder-Aufrufe für Tipp, Aktion, Bildschirm und automatische Ursache sowie Schalter-State, Schalter und „Aufzeichnung ans Handy senden“ entfernen. Die bisherige Interaktionstelemetrie wird weiterhin gebraucht. |
+| `watch/src/main/kotlin/de/baschek/gymapp/watch/ui/{WatchRoot,WatchUi}.kt` | Recorder-Aufrufe entfernen: in `WatchRoot` `NavRecorder.action(...)` im Dispatcher und `NavRecorder.tap(recorderElement(element))` im Beobachter; in `WatchUi` `recording`, den Block `NavRecorder.auto(...)` in `go(...)`, `visibleId` mit `LaunchedEffect(visibleId, recording)` und die zugehörigen Imports. Die bisherige Interaktionstelemetrie wird weiterhin gebraucht. |
+| `watch/src/main/kotlin/de/baschek/gymapp/watch/ui/WatchNav.kt` | Am Ende `recorderScreen`, `RECORDER_ELEMENTS` und `recorderElement` löschen. |
+| `watch/src/main/kotlin/de/baschek/gymapp/watch/ui/OtherScreens.kt` | `item { RecorderSettings() }` in `SettingsScreen` und die Funktion `RecorderSettings` (Schalter und „Aufzeichnung ans Handy senden“) löschen. |
 | `.gitignore` im Repository-Stamm | Eintrag `gymapp-navrec-*` entfernen. |
 | `docs/navrec-removal.md` | Dieses Dokument mit der Funktion entfernen. |
 

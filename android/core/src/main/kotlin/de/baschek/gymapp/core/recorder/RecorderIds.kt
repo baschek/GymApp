@@ -11,7 +11,8 @@ internal object RecorderIds {
         plan plan_editor plans progress rest select_day session settings setup spontaneous steigerung summary
         sync teilen today train train_center train_exercises train_left train_note train_pulse train_right
         train_sets training training_edit uebungen uebungen_detail verlauf verlauf_detail watch wear weights
-        workout ziele zusammenfassung
+        workout ziele zusammenfassung start_plans start_spontaneous start_gym start_mode start_pack sets add_exercise
+        pick pause exercise_done setup edit_set
     """)
     val elements = words("""
         accent_dunst accent_papier accent_salbei accent_sand add_addon add_exercise add_param add_photo add_set
@@ -34,7 +35,7 @@ internal object RecorderIds {
         system_notifications tab_history tab_more tab_plans tab_progress tab_today tap tap_next time_left_hide
         time_left_show timer_cancel timer_cancel_other timer_start toggle_addon toggle_archive toggle_day_pack
         toggle_pack undo unpair unskip_exercise value_type vibration view warmup_insert warmup_open weight
-        weight_step weight_type
+        weight_step weight_type delete_set edit_rest open_phone open_health open_connection minus15 toggle_setting
     """)
     val actions = words("""
         AddExercise AddSet ChangeRest CheckUpdate CorrectSet DeleteSet Finish FinishSetup Focus InstallUpdate

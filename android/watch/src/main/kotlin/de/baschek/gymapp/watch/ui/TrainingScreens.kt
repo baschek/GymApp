@@ -251,7 +251,7 @@ private fun RestMain(ui: UiContext) {
 private fun RestMore(ui: UiContext) {
     val current = ui.state.current
     ListScreen("Pause", tag = "rest-more") {
-        item { ListButton("+15 s") { ui.dispatch(WatchAction.ChangeRest(15)) } }
+        item { ListButton("+15 s", description = "Plus 15 s") { ui.dispatch(WatchAction.ChangeRest(15)) } }
         item { ListButton("−15 s", description = "Minus 15 s") { ui.dispatch(WatchAction.ChangeRest(-15)) } }
         item { ListButton("Rückgängig", "Letzten Satz", enabled = ui.state.undoAvailable) { ui.dispatch(WatchAction.Undo) } }
         item { ListButton("Noch ein Satz", current?.exerciseName.orEmpty(), enabled = current != null) { current?.let { ui.dispatch(WatchAction.AddSet(it.exerciseId)) } } }

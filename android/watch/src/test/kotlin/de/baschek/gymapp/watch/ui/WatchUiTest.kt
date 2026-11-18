@@ -312,6 +312,16 @@ class WatchUiTest {
         assertEquals(listOf(WatchAction.SetDurationRing(true), WatchAction.InstallUpdate), actions)
     }
 
+    @Test fun settingsOfferTheTemporaryRecorderSwitchAndSendButton() {
+        compose.setContent { WatchUi(WatchPresentation()) {} }
+        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Einstellungen"))
+        compose.onNodeWithText("Einstellungen").performClick()
+        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Navigation aufzeichnen (Test, nur diese Version)"))
+        compose.onNodeWithText("Navigation aufzeichnen (Test, nur diese Version)").assertIsDisplayed()
+        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Aufzeichnung ans Handy senden"))
+        compose.onNodeWithText("Aufzeichnung ans Handy senden").assertIsDisplayed()
+    }
+
     @Test fun endingTheTrainingAsksFirst() {
         val actions = mutableListOf<WatchAction>()
         compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise)) { actions.add(it) } }

@@ -120,3 +120,57 @@ fun elementName(label: String): String {
         .replace(Regex("[^a-z]+"), "_").trim('_')
     return folded.take(48).trimEnd('_').ifEmpty { "tap" }
 }
+
+/*
+ * Mapping to the fixed identifiers of the temporary navigation recorder (core/recorder/RecorderIds; removal list in
+ * docs/navrec-removal.md). Only names, never values.
+ */
+
+/** Visible screen for the recorder: sub-views (overlays) first, then the training page, else the route name. */
+fun recorderScreen(state: NavState, phase: SetPhase, editorKind: String = ""): String = when {
+    state.top == Route.EDITOR -> when (editorKind) {
+        EditorKind.AMOUNT.name, EditorKind.SET_AMOUNT.name -> "editor_amount"
+        EditorKind.REST.name -> "editor_rest"
+        else -> "editor_weight"
+    }
+    state.top == Route.SET_EDIT -> "edit_set"
+    state.top == Route.NOTE -> "train_note"
+    state.top != Route.TRAINING -> state.top.screen
+    state.page == TrainingPage.LEFT -> "train_left"
+    state.page == TrainingPage.RIGHT -> "train_right"
+    else -> when (phase) {
+        SetPhase.EFFORT -> "pick"
+        SetPhase.REST -> "pause"
+        SetPhase.DONE -> "exercise_done"
+        SetPhase.SETUP -> "setup"
+        SetPhase.SET, SetPhase.EMPTY -> "train_center"
+    }
+}
+
+private val RECORDER_ELEMENTS = mapOf(
+    "satz_geschafft" to "log_set", "stopp_und_speichern" to "log_set", "zeit_starten" to "timer_start",
+    "weiter" to "skip_rest", "rueckgaengig" to "undo", "fertig" to "done", "loeschen" to "delete_set",
+    "wert_verringern" to "step", "wert_erhoehen" to "step", "gewicht_aendern" to "edit_weight",
+    "wdh_aendern" to "edit_reps", "sek_aendern" to "edit_reps", "m_aendern" to "edit_reps", "pause_aendern" to "edit_rest",
+    "vorschlag_uebernehmen" to "hint_apply", "naechste_uebung" to "next", "noch_ein_satz" to "add_set",
+    "satz_hinzufuegen" to "add_set", "aufwaermsatz" to "warmup_insert", "notiz" to "note_open",
+    "satz_ueberspringen" to "skip", "uebung_hinzufuegen" to "add_exercise", "training_beenden" to "finish_open",
+    "beenden" to "finish_confirm", "abbrechen" to "finish_cancel", "auf_handy_oeffnen" to "open_phone",
+    "gesundheit" to "open_health", "verbindung" to "open_connection", "einstellungen" to "open_settings",
+    "neueste" to "conflict_newest", "meine" to "conflict_mine", "erneut" to "retry", "start" to "start_session",
+    "fortsetzen" to "resume", "los" to "start", "workout_laden" to "start_day_workout", "plus_s" to "rest_plus",
+    "minus_s" to "minus15", "puls_starten" to "enable", "jetzt" to "resume_exercise", "ueberspringen" to "skip_exercise",
+    "wieder_aufnehmen" to "unskip_exercise", "nach_oben" to "move_up", "nach_unten" to "move_down",
+    "nach_update_suchen" to "check_update", "update_installieren" to "install_update",
+    "am_limit" to "effort", "aufzeichnung_senden" to "navrec_export", "dauer_am_rand" to "toggle_setting",
+)
+
+/** Stable recorder identifier of a tapped element ([elementName] of its description); unknown ones become "tap". */
+fun recorderElement(element: String): String = RECORDER_ELEMENTS[element] ?: when {
+    element.startsWith("navigation_aufzeichnen") -> "navrec_switch"
+    element.startsWith("zusatzgewicht") -> "toggle_addon"
+    element.startsWith("anhaengen") -> "note"
+    element.contains("uebrig") || element.contains("locker") -> "effort"
+    element.startsWith("puls") -> "toggle_setting"
+    else -> "tap"
+}

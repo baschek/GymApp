@@ -80,4 +80,18 @@ class WatchNavRulesTest {
         assertEquals("c", suggestPlanId(listOf("a", "b", "c"), history))
         assertEquals("g2", lastGymId(history))
     }
+
+    @Test fun recorderUsesFixedIdentifiersOnly() {
+        assertEquals("train_center", recorderScreen(training, SetPhase.SET))
+        assertEquals("train_left", recorderScreen(training.copy(page = TrainingPage.LEFT), SetPhase.SET))
+        assertEquals("train_right", recorderScreen(training.copy(page = TrainingPage.RIGHT), SetPhase.SET))
+        assertEquals("pause", recorderScreen(training, SetPhase.REST))
+        assertEquals("editor_weight", recorderScreen(NavState(listOf(Route.TRAINING, Route.EDITOR)), SetPhase.SET, EditorKind.WEIGHT.name))
+        assertEquals("editor_rest", recorderScreen(NavState(listOf(Route.TRAINING, Route.EDITOR)), SetPhase.REST, EditorKind.REST.name))
+        assertEquals("settings", recorderScreen(NavState(listOf(Route.TRAINING, Route.SETTINGS)), SetPhase.SET))
+        assertEquals("log_set", recorderElement(elementName("Satz geschafft")))
+        assertEquals("skip_rest", recorderElement(elementName("Weiter")))
+        assertEquals("effort", recorderElement(elementName("1–2 übrig")))
+        assertEquals("tap", recorderElement(elementName("Etwas ganz Neues")))
+    }
 }
