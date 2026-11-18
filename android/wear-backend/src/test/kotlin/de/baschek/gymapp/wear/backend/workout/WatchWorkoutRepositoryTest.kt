@@ -1,6 +1,7 @@
 package de.baschek.gymapp.wear.backend.workout
 
 import de.baschek.gymapp.core.model.*
+import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.training.ActionOutcome
 import de.baschek.gymapp.core.training.RejectReason
 import de.baschek.gymapp.core.wear.events.*
