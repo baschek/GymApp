@@ -4,6 +4,29 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.8.0] - 2026-11-18
+
+Native Android app release (GitHub release `android-v2.8.0`) with phone APK
+`gymapp-2.8.0.apk` and watch APK `gymapp-watch-2.8.0.apk`. Roll out the TESS
+server change (progression amendment H) first.
+
+### Added
+
+- Watch: redesign after the design spec (`android/docs/watch-design-spec.md`) on Wear Material 3: time on every screen, three pages (exercises, set, training) with page indicator, start flow gym → mode → packing list, set screen with target range and tap-to-edit editor, effort picker after each set (5 s, preselection marked as automatic), clean rest screen with "Als Nächstes" preview, machine setup and one-tap weight suggestion, exercise-finished and device-setup screens, notes with quick chips and voice/keyboard, ambient mode after the guidelines, weight-increase scene and summary; new app icon matching the phone
+- Earlier progression (phone, watch and server): one strong set with entered reserve proves a higher working weight (e.g. 180 kg × 10 after always 170 kg), in-workout next-step suggestion, start one step lower after two failed sessions in a row; new optional set field `effort_source` (sync protocol amendment H)
+- Heart rate on the watch starts automatically after one-time consent, with a clear status and the real error reason
+- Temporary navigation recorder on phone and watch (off by default, only in this version) to analyse real navigation; export as ZIP via the share sheet
+
+### Fixed
+
+- Watch: views no longer jump on their own; navigation changes only on real events, typed values survive remote updates
+- Next exercise after a jump is the first open exercise, identical on phone and watch
+- "Aktion nicht möglich" removed: no-op actions are ignored, real rejections name the reason for 3 s
+
+### Validation
+
+- CI: core, app, wear-backend and watch tests, lint and assemble green; on-device checks of spec section P still open
+
 ## [android-v2.7.0] - 2026-11-17
 
 Native Android app release (GitHub release `android-v2.7.0`) with phone APK
