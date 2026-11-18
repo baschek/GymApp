@@ -4,6 +4,11 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.9.0] - 2026-11-18
+
+Native Android app release (GitHub release `android-v2.9.0`) with phone APK
+`gymapp-2.9.0.apk` and watch APK `gymapp-watch-2.9.0.apk`. Update phone and watch together.
+
 ### Fixed
 
 - Phone and watch recover incomplete workout transfers, retry pending changes promptly, and process workout events independently. Server pulls preserve active workouts with local changes or a watch replica. The watch shows how many changes are still pending.
