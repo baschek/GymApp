@@ -4,6 +4,11 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.9.1] - 2026-11-19
+
+Native Android app release (GitHub release `android-v2.9.1`) with phone APK
+`gymapp-2.9.1.apk` and watch APK `gymapp-watch-2.9.1.apk`. Update phone and watch together.
+
 ### Fixed
 
 - Timed exercises (Farmer's Hold, plank): the stopwatch is now the big main action "Zeit starten" in the pinned bottom area of the set screen instead of a small button below the input block. While it runs the time is shown large (mm:ss) next to the target, and "Stopp und Satz speichern" saves the measured time as seconds. The seconds wheel stays for manual values, and a set can be saved without measuring.
