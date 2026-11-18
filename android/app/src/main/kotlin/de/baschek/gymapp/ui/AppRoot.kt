@@ -5,8 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -33,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.GymApplication
 import de.baschek.gymapp.data.Profile
+import de.baschek.gymapp.ui.components.LocalScreenTopInsets
 import de.baschek.gymapp.ui.components.GymBottomBar
 import de.baschek.gymapp.ui.components.bottomBarSpace
 import de.baschek.gymapp.ui.history.HistoryScreen
@@ -78,13 +82,16 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {},
     LaunchedEffect(route, recording) { if (recording) NavRecorder.screen(Routes.kind(route)) }
     val inWorkout = Routes.kind(route) == "workout"
     val test = profile == Profile.TEST
+    val conflicts by remember(container.repository) { container.repository.observeWatchConflicts() }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val conflict = conflicts.firstOrNull()?.takeUnless { test }
     val show: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
 
     CompositionLocalProvider(LocalSnack provides show, LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
-        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        NoticeColumn(test, conflict != null) {
             if (test) TestBar()
-            WatchConflictNotice()
-            Box(Modifier.weight(1f).fillMaxWidth().then(if (test) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)) {
+            if (conflict != null) WatchConflictNotice(conflict, container.repository::resolveWatchConflicts)
+            Box(Modifier.weight(1f).fillMaxWidth()) {
                 when (Routes.kind(route)) {
                     Routes.TODAY -> HomeScreen(nav, onOpenWorkout = { nav.push(Routes.workout(it)) })
                     Routes.PLANS -> PlansScreen(nav)
@@ -120,11 +127,27 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {},
     }
 }
 
+/** A top notice owns the status bar inset for all its children, including the screen below. */
+@Composable
+internal fun NoticeColumn(test: Boolean, hasConflict: Boolean, statusBars: WindowInsets = WindowInsets.statusBars,
+    content: @Composable ColumnScope.() -> Unit) {
+    val hasNotice = test || hasConflict
+    val screenInsets = statusBars.union(WindowInsets.displayCutout)
+    // ScreenList and workout screens use explicit padding values, which ignore modifier consumption.
+    CompositionLocalProvider(LocalScreenTopInsets provides if (hasNotice) screenInsets.exclude(statusBars) else screenInsets) {
+        val colors = MaterialTheme.colorScheme
+        val barColor = if (test) colors.tertiaryContainer else colors.errorContainer
+        Column(Modifier.fillMaxSize()
+            .then(if (hasNotice) Modifier.background(barColor).windowInsetsPadding(statusBars) else Modifier)
+            .background(colors.background), content = content)
+    }
+}
+
 /** Marks the local-only test profile on every screen (the only use of `tertiary`). */
 @Composable
 private fun TestBar() {
     val cs = MaterialTheme.colorScheme
-    Box(Modifier.fillMaxWidth().background(cs.tertiaryContainer).windowInsetsPadding(WindowInsets.statusBars)) {
+    Box(Modifier.fillMaxWidth().background(cs.tertiaryContainer)) {
         Text(
             "TESTPROFIL · NUR LOKAL", Modifier.fillMaxWidth().padding(vertical = 4.dp), textAlign = TextAlign.Center,
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp), color = cs.tertiary,

@@ -49,7 +49,7 @@ import java.time.ZoneId
 sealed interface SessionLoad {
     data object Loading : SessionLoad
     data object Missing : SessionLoad
-    data class Ready(val id: String, val session: Session) : SessionLoad
+    data class Ready(val id: String, val session: Session, val finishedOnWatch: Boolean) : SessionLoad
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -63,7 +63,10 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
     val sync: StateFlow<SyncUi> = SyncUiSource(c, viewModelScope).state
 
     val load: StateFlow<SessionLoad> = sessionFlow
-        .map { if (it == null) SessionLoad.Missing else SessionLoad.Ready(it.id, it.value) }
+        .map { stored ->
+            if (stored == null) SessionLoad.Missing else SessionLoad.Ready(stored.id, stored.value,
+                stored.value.status == SessionStatus.COMPLETED && repo.lastSessionEditFromWatch(stored.id))
+        }
         .state(SessionLoad.Loading)
 
     /** Levels, add-ons and setup values per exercise id from the machine profiles of the session's gym. */

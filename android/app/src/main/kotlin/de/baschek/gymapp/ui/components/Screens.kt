@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,9 +33,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.baschek.gymapp.ui.theme.Spacing
 
+internal val LocalScreenTopInsets = compositionLocalOf<WindowInsets?> { null }
+
 /** Top padding that keeps content clear of the status bar and the camera cut-out. */
 @Composable
-fun topInset(): Dp = WindowInsets.statusBars.union(WindowInsets.displayCutout).asPaddingValues().calculateTopPadding()
+fun topInset(): Dp = (LocalScreenTopInsets.current ?: WindowInsets.statusBars.union(WindowInsets.displayCutout))
+    .asPaddingValues().calculateTopPadding()
 
 @Composable
 fun bottomInset(): Dp = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

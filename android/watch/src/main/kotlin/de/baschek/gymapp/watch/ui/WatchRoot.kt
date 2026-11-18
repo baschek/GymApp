@@ -243,6 +243,6 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         bpm = rt.bpm.takeIf { heartMatches }, pulseSamples = if (heartMatches) rt.pulseSamples.map { it.timeMillis to it.bpm } else emptyList(), pulsePermission = rt.permissionGranted, recording = if (heartMatches) rt.recordingLabel else "Puls nicht aufgezeichnet", export = rt.exportLabel, phoneLeads = rt.phoneLeads, ambient = rt.ambient,
         durationRing = session?.startedAt?.let { runCatching { ((now - java.time.Instant.parse(it).toEpochMilli()).coerceAtLeast(0L) % 3600000L) / 3600000f }.getOrNull() },
         testProfile = s.profile == WorkoutProfile.TEST, setupRemainingSeconds = s.timer?.takeIf { it.phase == "MACHINE_SETUP" }?.let { (45 - ((now - it.startedAtMillis).coerceAtLeast(0) / 1000).toInt()).coerceAtLeast(0) }, timedElapsedSeconds = s.timer?.takeIf { it.phase == "SET" }?.let { ((now - it.startedAtMillis).coerceAtLeast(0) / 1000).toInt() }, summary = summary,
-        celebrations = s.milestones.values.filter { it.sessionId == s.sessionId && it.previousWeightKg != null }.map { WatchCelebration(it.exerciseName.orEmpty(), "${it.previousWeightKg} kg", "${it.newWeightKg} kg") },
+        celebrations = if (s.lastDeviceId != repository.deviceId) emptyList() else s.milestones.values.filter { it.sessionId == s.sessionId && it.previousWeightKg != null }.map { WatchCelebration(it.exerciseName.orEmpty(), "${it.previousWeightKg} kg", "${it.newWeightKg} kg") },
     )
 }

@@ -19,6 +19,8 @@ import de.baschek.gymapp.core.training.describeAdjustment
 import de.baschek.gymapp.core.training.revertAdjustment
 import kotlinx.serialization.builtins.ListSerializer
 import de.baschek.gymapp.core.wear.events.ConflictChoice
+import de.baschek.gymapp.core.wear.events.WorkoutBatchResult
+import de.baschek.gymapp.core.wear.events.applyWorkoutBatch
 import de.baschek.gymapp.core.wear.events.EventResult
 import de.baschek.gymapp.core.wear.events.ReplicaState
 import de.baschek.gymapp.core.wear.events.WorkoutEvent
@@ -311,13 +313,24 @@ class GymRepository(
         dao.observeDocs(Profile.PERSONAL, Entity.DAY_WORKOUT),
     ) { Unit }.combine(activeProfile) { _, _ -> Unit }
 
-    /** Atomically merge a watch operation, its receipt, the document and the sync outbox. */
+    /** Room observers see one committed session snapshot, including timer and progression. */
+    suspend fun importWatchEvents(events: List<WorkoutEvent>): WorkoutBatchResult = db.withTransaction {
+        if (currentProfile() != Profile.PERSONAL) return@withTransaction WorkoutBatchResult(emptyList(), 0, null)
+        pruneWatchReplicas(keep = events.mapTo(mutableSetOf()) { it.sessionId })
+        applyWorkoutBatch(events) { applyWatchEvent(it, fromPhone = false) }
+    }
+
     suspend fun importWatchEvent(event: WorkoutEvent, fromPhone: Boolean = false): EventResult = db.withTransaction {
-        if (event.profile != WorkoutProfile.PERSONAL || currentProfile() != Profile.PERSONAL)
-            return@withTransaction EventResult.Rejected("local_only")
-        pruneWatchReplicas(keep = event.sessionId)
+        if (currentProfile() != Profile.PERSONAL) return@withTransaction EventResult.Rejected("local_only")
+        pruneWatchReplicas(keep = setOf(event.sessionId))
+        applyWatchEvent(event, fromPhone)
+    }
+
+    /** Called inside the same transaction as the rest of the batch or the local resolution. */
+    private suspend fun applyWatchEvent(event: WorkoutEvent, fromPhone: Boolean): EventResult {
+        if (event.profile != WorkoutProfile.PERSONAL) return EventResult.Rejected("local_only")
         val currentRow = dao.getDoc(Profile.PERSONAL, Entity.SESSION, event.sessionId)
-        if (currentRow?.deleted == true) return@withTransaction EventResult.Rejected("deleted_session")
+        if (currentRow?.deleted == true) return EventResult.Rejected("deleted_session")
         val currentRaw = currentRow?.let { parseObject(it.data) }
         val key = "watch_replica:${event.sessionId}"
         val stored = dao.getSetting(key)?.let { GymJson.decodeFromString(ReplicaState.serializer(), it) }
@@ -326,16 +339,16 @@ class GymRepository(
         val applied = WorkoutEvents.apply(initial, event)
         if (applied is EventResult.Replayed) {
             dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
-            return@withTransaction applied
+            return applied
         }
-        if (applied !is EventResult.Applied) return@withTransaction applied
+        if (applied !is EventResult.Applied) return applied
         val typed = runCatching { DocumentCodec.decode(Session.serializer(), applied.state.document) }.getOrNull()
-            ?: return@withTransaction EventResult.Rejected("invalid_session")
+            ?: return EventResult.Rejected("invalid_session")
         if (typed.gymId.isNullOrBlank() || typed.status !in setOf(SessionStatus.ACTIVE, SessionStatus.COMPLETED))
-            return@withTransaction EventResult.Rejected("invalid_session")
+            return EventResult.Rejected("invalid_session")
         val otherActive = dao.getActiveSession(Profile.PERSONAL)
         if (typed.status == SessionStatus.ACTIVE && otherActive != null && otherActive.id != event.sessionId)
-            return@withTransaction EventResult.Rejected("other_active_session")
+            return EventResult.Rejected("other_active_session")
         dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
         val before = currentRow?.toStored(Session.serializer())?.value
         val history = allSessions(Profile.PERSONAL)
@@ -346,12 +359,12 @@ class GymRepository(
             dao.putSetting(SettingEntity(pendingProgressionKey, "1"))
         } else if (typed.status == SessionStatus.COMPLETED &&
             (before?.status != SessionStatus.COMPLETED || dao.getSetting(pendingProgressionKey) != null)) {
+            val ended = typed.completedAt ?: return EventResult.Rejected("missing_finish_time")
+            val duration = typed.durationSeconds ?: return EventResult.Rejected("missing_duration")
             if (dao.getSetting(pendingProgressionKey) != null && before?.status == SessionStatus.COMPLETED) {
                 dao.getDocs(Profile.PERSONAL, Entity.MILESTONE).mapNotNull { it.toStored(Milestone.serializer()) }
                     .filter { it.value.sessionId == event.sessionId }.forEach { deleteDocument(Entity.MILESTONE, it.id) }
             }
-            val ended = typed.completedAt ?: return@withTransaction EventResult.Rejected("missing_finish_time")
-            val duration = typed.durationSeconds ?: return@withTransaction EventResult.Rejected("missing_duration")
             val finished = coreFinishSession(event.sessionId, typed, SetStatus.SKIPPED_OTHER, ended, duration,
                 newId, history.filter { it.first != event.sessionId }, manualBaselines(Profile.PERSONAL))
             merged = DocumentCodec.encodeMerged(Session.serializer(), finished.session, merged)
@@ -404,7 +417,29 @@ class GymRepository(
             }
         }
         dao.putSetting(SettingEntity(key, GymJson.encodeToString(ReplicaState.serializer(), finalState)))
-        EventResult.Applied(finalState)
+        return EventResult.Applied(finalState)
+    }
+
+    /** Upgrade existing installations even when neither device sends another event. */
+    suspend fun cleanOrphanWatchConflicts() = db.withTransaction { pruneWatchReplicas(orphansOnly = true) }
+
+    private suspend fun clearOrphanWatchConflict(row: SettingEntity, id: String, hasOutgoing: Boolean) {
+        // Keep receipts while an outgoing operation still depends on this replica.
+        if (!hasOutgoing) dao.deleteSetting(row.name)
+        else {
+            val state = runCatching { GymJson.decodeFromString(ReplicaState.serializer(), row.value) }.getOrNull()
+            if (state != null && state.conflicts.isNotEmpty()) dao.putSetting(row.copy(
+                value = GymJson.encodeToString(ReplicaState.serializer(), state.copy(conflicts = emptyList()))))
+        }
+        dao.deleteSetting("watch_progression_pending:$id")
+    }
+
+    /** Used when opening the summary so a remote finish does not start local celebration screens. */
+    suspend fun lastSessionEditFromWatch(sessionId: String): Boolean = db.withTransaction {
+        if (currentProfile() != Profile.PERSONAL) return@withTransaction false
+        val stored = dao.getSetting("watch_replica:$sessionId") ?: return@withTransaction false
+        val device = GymJson.decodeFromString(ReplicaState.serializer(), stored).lastOperation?.deviceId
+        device != null && device != dao.getSetting("watch_phone_device_id")
     }
 
     fun observeWatchConflicts(): Flow<List<ReplicaState>> = combine(
@@ -419,18 +454,21 @@ class GymRepository(
     suspend fun resolveWatchConflicts(sessionId: String, choice: ConflictChoice): Boolean = db.withTransaction {
         if (currentProfile() != Profile.PERSONAL) return@withTransaction false
         val key = "watch_replica:$sessionId"
-        val state = dao.getSetting(key)?.let { GymJson.decodeFromString(ReplicaState.serializer(), it) }
-            ?: return@withTransaction false
-        if (state.conflicts.isEmpty()) return@withTransaction false
+        val stored = dao.getSetting(key) ?: return@withTransaction true
+        val state = GymJson.decodeFromString(ReplicaState.serializer(), stored)
+        if (state.conflicts.isEmpty()) return@withTransaction true
         val raw = dao.getDoc(Profile.PERSONAL, Entity.SESSION, sessionId)?.takeIf { !it.deleted }?.let { parseObject(it.data) }
-            ?: return@withTransaction false
+            ?: run {
+                clearOrphanWatchConflict(SettingEntity(key, stored), sessionId, pendingPhoneEventFor(sessionId) != null)
+                return@withTransaction true
+            }
         val deviceKey = "watch_phone_device_id"
         val device = dao.getSetting(deviceKey) ?: newId().also { dao.putSetting(SettingEntity(deviceKey, it)) }
         val preceding = if (dao.getSetting("watch_peer_event_protocol") == "2") pendingPhoneEventFor(sessionId) else null
         val stamp = maxOf(clock().toEpochMilli(), (state.lastOperation?.occurredAtMillis ?: -1L) + 1L)
         val event = WorkoutEvents.createResolution(state.copy(document = raw), choice, newId(), device, stamp)
             .copy(predecessorEventId = preceding?.eventId)
-        val result = importWatchEvent(event, fromPhone = true)
+        val result = applyWatchEvent(event, fromPhone = true)
         if (result !is EventResult.Applied) return@withTransaction false
         dao.putSetting(SettingEntity("watch_outgoing:${event.occurredAtMillis.toString().padStart(19, '0')}:${event.eventId}",
             GymJson.encodeToString(WorkoutEvent.serializer(), event)))
@@ -473,9 +511,9 @@ class GymRepository(
 
     /**
      * Drops replica states of sessions that are no longer active, have no unresolved conflicts, no
-     * deferred progression and no unacknowledged phone event. [keep] is the session being handled now.
+     * deferred progression and no unacknowledged phone event. [keep] contains sessions in the current delivery.
      */
-    private suspend fun pruneWatchReplicas(keep: String? = null) {
+    private suspend fun pruneWatchReplicas(keep: Set<String> = emptySet(), orphansOnly: Boolean = false) {
         val replicas = dao.getSettingsPrefix("watch_replica:")
         if (replicas.isEmpty()) return
         val pending = dao.getSettingsPrefix("watch_outgoing:").mapNotNull {
@@ -483,12 +521,16 @@ class GymRepository(
         }.toSet()
         for (row in replicas) {
             val id = row.name.removePrefix("watch_replica:")
-            if (id == keep || id in pending || dao.getSetting("watch_progression_pending:$id") != null) continue
+            if (id in keep) continue
+            val doc = dao.getDoc(Profile.PERSONAL, Entity.SESSION, id)
+            if (doc == null || doc.deleted) {
+                clearOrphanWatchConflict(row, id, id in pending)
+                continue
+            }
+            if (orphansOnly || id in pending || dao.getSetting("watch_progression_pending:$id") != null) continue
             val state = runCatching { GymJson.decodeFromString(ReplicaState.serializer(), row.value) }.getOrNull()
             if (state != null && state.conflicts.isNotEmpty()) continue
-            val doc = dao.getDoc(Profile.PERSONAL, Entity.SESSION, id)?.takeIf { !it.deleted }
-            val status = doc?.let { runCatching { (parseObject(it.data)["status"] as? kotlinx.serialization.json.JsonPrimitive)?.content }.getOrNull() }
-            if (status == SessionStatus.ACTIVE) continue
+            if (doc.status == SessionStatus.ACTIVE) continue
             dao.deleteSetting(row.name)
         }
     }
