@@ -3,6 +3,7 @@ package de.baschek.gymapp.core.recorder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
@@ -39,6 +40,32 @@ class RecordingTest {
         assertFalse(session.event(NavEvent.AUTO, null, "auto:rest_end", 1, 2100)!!.capture)
         assertTrue(screen("rest", 2_000)!!.capture)
         assertNull(screen("rest", 9_000))
+    }
+
+    @Test fun watchSpacingAndImageBudgetLimitShotsButNotEvents() {
+        val session = Recording("watch", 0, shotIntervalMs = 5_000, maxShots = 2)
+        fun screen(name: String, elapsed: Long) = session.event(NavEvent.SCREEN, name, "", 1, elapsed)
+        assertTrue(screen("home", 0)!!.capture)
+        assertFalse(screen("train", 4_999)!!.capture)
+        assertTrue(screen("rest", 5_000)!!.capture)
+        assertFalse(screen("pause", 10_000)!!.capture) // the budget of two is used up
+        assertNotNull(session.event(NavEvent.TAP, null, "next", 1, 11_000))
+        assertEquals(5, session.eventCount)
+    }
+
+    @Test fun disallowedShotsConsumeNeitherIntervalNorBudget() {
+        val session = Recording("watch", 0, shotIntervalMs = 5_000, maxShots = 1)
+        assertFalse(session.event(NavEvent.SCREEN, "home", "", 1, 0, allowShot = false)!!.capture)
+        assertTrue(session.event(NavEvent.SCREEN, "train", "", 1, 1, allowShot = true)!!.capture)
+        assertFalse(session.event(NavEvent.SCREEN, "rest", "", 1, 9_000)!!.capture)
+    }
+
+    @Test fun lastScreenIsKnownForTheNextSessionOnlyOnceSeen() {
+        val session = Recording("phone", 0)
+        assertNull(session.screen)
+        session.event(NavEvent.SCREEN, "training", "", 1, 1)
+        assertEquals("training", session.screen)
+        assertEquals(60_000L, session.remainingMs(Recording.LIMIT_MS - 60_000))
     }
 
     @Test fun deadlineIncludesSleepAndIgnoresWallClockChanges() {

@@ -41,6 +41,7 @@ class WatchApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         NavRecorder.install(this)
+        NavRecorder.start()
         de.baschek.gymapp.watch.update.WatchUpdater.initialize(applicationContext)
         workoutInbox.start(scope)
         restoreJob = scope.launch {

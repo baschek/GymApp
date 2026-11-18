@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -188,7 +187,7 @@ internal fun SettingsScreen(ui: UiContext) {
     ListScreen("Einstellungen") {
         item { SwitchRow("Dauer am Rand", state.durationRingEnabled, "Ring im Training, eine Runde = 60 min") { ui.dispatch(WatchAction.SetDurationRing(it)) } }
         item { SwitchRow("Puls bei jedem Training aufzeichnen", state.heartAutoConsent == true) { ui.dispatch(WatchAction.SetHeartAuto(it)) } }
-        // Temporary navigation recorder (test only, see docs/navrec-removal.md).
+        // The navigation recorder always runs; only its send button lives here (see docs/navrec.md).
         item { RecorderSettings() }
         item { ListButton("Gesundheit") { ui.push(Route.HEALTH) } }
         item { ListButton("Verbindung", state.connection) { ui.push(Route.CONNECTION) } }
@@ -326,19 +325,17 @@ internal fun AmbientScreen(state: WatchPresentation, phase: SetPhase) {
     }
 }
 
-/** Switch and send button of the temporary navigation recorder; no values or note texts are ever recorded. */
+/** Send button of the always-on navigation recorder; no values or note texts are ever recorded. */
 @Composable
 internal fun RecorderSettings() {
-    val recording by NavRecorder.recording.collectAsState()
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SwitchRow("Navigation aufzeichnen (Test, nur diese Version)", recording) { NavRecorder.setEnabled(it); message = "" }
-        ListButton("Aufzeichnung ans Handy senden", message, description = "Aufzeichnung senden") {
-            message = "Sende …"
-            scope.launch {
-                message = try { NavRecorder.export(); "Gesendet" } catch (e: Exception) { "Senden fehlgeschlagen, bitte erneut tippen" }
-            }
+    ListButton("Aufzeichnung ans Handy senden", message, description = "Aufzeichnung senden") {
+        message = "Sende …"
+        scope.launch {
+            message = try {
+                if (NavRecorder.export() > 0) "Gesendet" else "Nichts Neues zu senden"
+            } catch (e: Exception) { "Senden fehlgeschlagen, bitte erneut tippen" }
         }
     }
 }

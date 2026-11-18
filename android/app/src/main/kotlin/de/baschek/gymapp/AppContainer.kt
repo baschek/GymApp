@@ -73,6 +73,7 @@ class AppContainer(app: Application) {
     init {
         appScope.launch { repository.cleanOrphanWatchConflicts() }
         NavRecorder.install(app)
+        NavRecorder.start()
         appScope.launch { repository.observeActiveSession().collect { NavRecorder.workoutChanged(it?.id) } }
         Telemetry.install(repository, appScope)
         health.start(appScope)

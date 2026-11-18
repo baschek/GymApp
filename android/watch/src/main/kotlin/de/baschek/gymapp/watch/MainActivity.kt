@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
                 }
                 Box(Modifier.fillMaxSize()) {
                     WatchRoot(current, runtime)
-                    de.baschek.gymapp.recorder.shared.RecorderOverlay(NavRecorder, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+                    de.baschek.gymapp.recorder.shared.RecorderOverlay(NavRecorder)
                 }
             }
         }
