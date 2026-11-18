@@ -75,6 +75,7 @@ class AutomaticHealthCompletionObserverTest {
         val repo = de.baschek.gymapp.data.GymRepository(db)
         val consent = HealthExportConsent(context)
         consent.revoke()
+        context.getSharedPreferences("health_export_receipts", Context.MODE_PRIVATE).edit().clear().commit()
         consent.setEnabled(true, 1767225600000L)
         val id = UUID.randomUUID().toString()
         val active = Session(status = SessionStatus.ACTIVE, gymId = "gym", startedAt = "2026-01-01T00:00:00Z")

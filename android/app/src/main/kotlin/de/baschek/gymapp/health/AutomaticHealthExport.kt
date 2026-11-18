@@ -41,10 +41,13 @@ class AutomaticHealthExport(
                     if (foreground) scope.launch { reconcileIfForeground() }
                 }
             }
-            deleteScheduled.removeAll(sessions.map { it.id }.toSet())
-            for (id in deletedExports(sessions.map { it.id }.toSet())) {
-                if (deleteScheduled.add(id)) scheduleDelete(id)
-            }
+            // Delete detection must never stop export scheduling: it runs last and its failures are swallowed.
+            runCatching {
+                deleteScheduled.removeAll(sessions.map { it.id }.toSet())
+                for (id in deletedExports(sessions.map { it.id }.toSet())) {
+                    if (deleteScheduled.add(id) && runCatching { scheduleDelete(id) }.isFailure) deleteScheduled.remove(id)
+                }
+            }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         }
     }
 
