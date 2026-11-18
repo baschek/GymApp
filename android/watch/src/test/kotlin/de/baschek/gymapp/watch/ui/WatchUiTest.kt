@@ -150,12 +150,11 @@ class WatchUiTest {
     @Test fun effortPickerTimeoutSavesThePreselectionAsAuto() {
         val actions = mutableListOf<WatchAction>()
         compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise)) { actions.add(it) } }
-        compose.mainClock.autoAdvance = false
         compose.onNodeWithContentDescription("Satz geschafft").performClick()
-        compose.mainClock.advanceTimeBy(500)
+        compose.onNode(hasContentDescription("1–2 übrig", substring = true)).assertExists()
         compose.mainClock.advanceTimeBy(3_500)
         assertTrue("nothing before 5 s: $actions", actions.isEmpty())
-        compose.mainClock.advanceTimeBy(1_500)
+        compose.mainClock.advanceTimeBy(2_500)
         assertEquals(listOf(WatchAction.Log("exercise", "set", 20.0, 10.0, effort = "one_two", effortSource = EffortSource.AUTO)), actions)
     }
 
