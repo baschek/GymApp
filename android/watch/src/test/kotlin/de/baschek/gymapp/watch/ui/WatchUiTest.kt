@@ -317,12 +317,11 @@ class WatchUiTest {
         assertEquals(listOf(WatchAction.SetDurationRing(true), WatchAction.InstallUpdate), actions)
     }
 
-    @Test fun settingsOfferTheTemporaryRecorderSwitchAndSendButton() {
+    @Test fun settingsOfferOnlyTheRecorderSendButtonBecauseRecordingIsAlwaysOn() {
         compose.setContent { WatchUi(WatchPresentation()) {} }
         compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Einstellungen"))
         compose.onNodeWithText("Einstellungen").performClick()
-        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Navigation aufzeichnen (Test, nur diese Version)"))
-        compose.onNodeWithText("Navigation aufzeichnen (Test, nur diese Version)").assertIsDisplayed()
+        compose.onAllNodesWithText("Navigation aufzeichnen", substring = true).assertCountEquals(0)
         compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Aufzeichnung ans Handy senden"))
         compose.onNodeWithText("Aufzeichnung ans Handy senden").assertIsDisplayed()
     }
