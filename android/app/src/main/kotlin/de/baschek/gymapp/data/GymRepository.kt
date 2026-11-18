@@ -8,6 +8,7 @@ import de.baschek.gymapp.core.model.DayWorkout
 import de.baschek.gymapp.core.model.DayWorkoutStatus
 import de.baschek.gymapp.core.model.SOURCE_DAY_WORKOUT
 import de.baschek.gymapp.core.training.asPlan
+import de.baschek.gymapp.core.training.targetFor
 import de.baschek.gymapp.core.training.isExpired
 import de.baschek.gymapp.core.training.markDismissed
 import de.baschek.gymapp.core.training.markExpired
@@ -748,16 +749,18 @@ class GymRepository(
         suggestion: StartSuggestion?,
     ): SessionExercise {
         val count = pe.modeSets.forMode(mode)
+        val measurementType = exercise?.measurementType ?: "load_reps"
         return SessionExercise(
             id = newId(),
             sourcePlanExerciseId = pe.id,
             exerciseId = pe.exerciseId,
             name = exercise?.name ?: pe.exerciseId,
             order = order,
-            measurementType = exercise?.measurementType ?: "load_reps",
+            measurementType = measurementType,
             loadDirection = exercise?.loadDirection ?: "higher",
             loadBasis = exercise?.loadBasis ?: "stack",
-            target = pe.target,
+            // a hold is measured in seconds whatever the plan says: only then the stopwatch is offered
+            target = targetFor(measurementType, pe.target),
             restSeconds = pe.restSeconds,
             supersetGroup = pe.supersetGroup,
             plannedSets = count,

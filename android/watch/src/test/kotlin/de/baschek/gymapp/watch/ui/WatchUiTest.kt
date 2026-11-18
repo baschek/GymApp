@@ -199,6 +199,13 @@ class WatchUiTest {
         assertEquals(31.0, (actions.single() as WatchAction.Log).amount, 0.001)
     }
 
+    @Test fun durationSetOffersTheStartButtonBeforeTheTimeRuns() {
+        val actions = mutableListOf<WatchAction>()
+        compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise.copy(amount = 60.0, unit = "Sek.", isDuration = true), timedElapsedSeconds = null)) { actions.add(it) } }
+        compose.onNodeWithContentDescription("Zeit starten").assertIsDisplayed().performClick()
+        assertEquals(listOf<WatchAction>(WatchAction.StartSetTimer), actions)
+    }
+
     @Test fun suggestionRowTakesOverTheSuggestedWeight() {
         val actions = mutableListOf<WatchAction>()
         val preview = SetPreview("exercise", "Testübung", "set", 2, 3, false, 20.0, 10.0, "reps", "20 kg × 8–12", "Ziel 8–12", false, "", null, "20 → 25 kg ▲")

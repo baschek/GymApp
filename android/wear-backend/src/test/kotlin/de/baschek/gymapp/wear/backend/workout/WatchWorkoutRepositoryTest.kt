@@ -251,4 +251,30 @@ class WatchWorkoutRepositoryTest {
         r.setHeartAutoConsent(true)
         assertEquals(true, WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch").state.value.heartAutoConsent)
     }
+    private fun holdCatalog(planTarget: Target) = WatchCatalog(profile = WorkoutProfile.PERSONAL,
+        gyms = mapOf("gym" to raw(Gym(name = "Synthetic"))),
+        exercises = mapOf("hold" to raw(Exercise(name = "Synthetic Hold", measurementType = MeasurementType.LOAD_DURATION, loadBasis = LoadBasis.PER_HAND))),
+        plans = mapOf("plan" to raw(Plan(name = "Plan", exercises = listOf(PlanExercise(id = "p1", exerciseId = "hold", modeSets = ModeSets(2, 2, 2), target = planTarget))))))
+
+    @Test fun `a hold from a plan with a reps target is measured in seconds and the stopwatch time is saved`() = runTest {
+        var clock = 1767261600000L
+        val r = WatchWorkoutRepository.at(temporary.newFile("hold.json").also { it.delete() }, WorkoutProfile.PERSONAL, "watch", now = { clock })
+        r.replaceCatalog(holdCatalog(Target(Metric.REPS, 8.0, 12.0, 1.0, 2.0))); assertNotNull(r.startPlan("plan", "gym", WorkoutMode.NORMAL))
+        val ex = r.state.value.session!!.exercises.single()
+        assertEquals(Metric.SECONDS, ex.target.metric)
+        assertTrue(r.startSetTimer().changed)
+        clock += 62000
+        assertTrue(r.logSet(ex.id, ex.sets[0].id, WatchSetInput(16.0, 62.0, "one_two")).changed)
+        val set = r.state.value.session!!.exercises.single().sets[0]
+        assertEquals(62, set.seconds); assertNull(set.reps); assertEquals(62, set.setDurationSeconds)
+    }
+
+    @Test fun `a seconds target of the plan is kept and an exercise added during the workout gets seconds`() = runTest {
+        val r = WatchWorkoutRepository.at(temporary.newFile("hold2.json").also { it.delete() }, WorkoutProfile.PERSONAL, "watch")
+        r.replaceCatalog(holdCatalog(Target(Metric.SECONDS, 60.0, 90.0, 1.0, 2.0))); r.startPlan("plan", "gym", WorkoutMode.NORMAL)
+        assertEquals(60.0, r.state.value.session!!.exercises.single().target.min, 0.0)
+        assertTrue(r.addExercise("hold").changed)
+        val added = r.state.value.session!!.exercises.last()
+        assertEquals(Metric.SECONDS, added.target.metric)
+    }
 }

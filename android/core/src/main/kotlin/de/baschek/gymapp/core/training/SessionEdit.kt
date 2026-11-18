@@ -104,7 +104,7 @@ fun addExercise(
 fun templateFor(exerciseId: String, name: String, measurementType: String, loadDirection: String, loadBasis: String, rest: Int = 90): SessionExercise =
     SessionExercise(
         exerciseId = exerciseId, name = name, measurementType = measurementType, loadDirection = loadDirection,
-        loadBasis = loadBasis, target = Target("reps", 8.0, 12.0, 1.0, 2.0), restSeconds = rest,
+        loadBasis = loadBasis, target = defaultTargetFor(measurementType), restSeconds = rest,
     )
 
 /** A warm-up proposal: about half of the working weight on the nearest level, 12 reps. */

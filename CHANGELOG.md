@@ -4,6 +4,12 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Timed exercises (Farmer's Hold, plank): the stopwatch is now the big main action "Zeit starten" in the pinned bottom area of the set screen instead of a small button below the input block. While it runs the time is shown large (mm:ss) next to the target, and "Stopp und Satz speichern" saves the measured time as seconds. The seconds wheel stays for manual values, and a set can be saved without measuring.
+- Timed exercises are always measured in seconds, whatever the plan says: an exercise created in the plan editor, added during the workout or by the assistant, or taken from a plan with a rep target had the metric "reps", so phone and watch offered no stopwatch. The plan editor shows and edits seconds targets in 5 s steps up to 10 minutes (it said "Wdh." and stopped at 60).
+- During a measurement the notification shows the running time instead of the planned value.
+
 ## [android-v2.9.0] - 2026-11-18
 
 Native Android app release (GitHub release `android-v2.9.0`) with phone APK

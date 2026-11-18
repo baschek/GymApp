@@ -184,10 +184,11 @@ class WatchWorkoutRepository private constructor(
             val levels = machine?.let { weightCandidates(it.effectiveWeights(), it.effectiveAddons()) }?.takeIf { it.isNotEmpty() }
             val suggestion = suggestStartWeight(pe.exerciseId, gymId, history, infos, levels, machine?.workingWeightKg, pe.currentWeightKg ?: pe.startingWeightKg)
             val n = pe.modeSets.forMode(mode)
+            val measurementType = ex?.measurementType ?: MeasurementType.LOAD_REPS
             SessionExercise(id = newId(), sourcePlanExerciseId = pe.id, exerciseId = pe.exerciseId, name = ex?.name ?: pe.exerciseId,
-                order = i + 1, measurementType = ex?.measurementType ?: MeasurementType.LOAD_REPS,
+                order = i + 1, measurementType = measurementType,
                 loadDirection = ex?.loadDirection ?: LoadDirection.HIGHER, loadBasis = ex?.loadBasis ?: LoadBasis.STACK,
-                target = pe.target, restSeconds = pe.restSeconds, supersetGroup = pe.supersetGroup, plannedSets = n,
+                target = targetFor(measurementType, pe.target), restSeconds = pe.restSeconds, supersetGroup = pe.supersetGroup, plannedSets = n,
                 suggestedWeightKg = suggestion?.weightKg, suggestionReason = suggestion?.reason, suggestionSourceGymId = suggestion?.sourceGymId,
                 sets = (1..n).map { SetLog(id = newId(), order = it, setType = SetType.WORKING, status = SetStatus.PENDING) })
         }
@@ -214,7 +215,7 @@ class WatchWorkoutRepository private constructor(
     suspend fun startSpontaneous(exerciseId: String, gymId: String, mode: String = WorkoutMode.NORMAL): String? = locked { s ->
         val ex = decode<Exercise>(s.catalog.exercises[exerciseId]) ?: return@locked s to null
         val pe = PlanExercise(id = newId(), exerciseId = exerciseId, order = 1, modeSets = ModeSets(1, 1, 1),
-            target = if (ex.measurementType == MeasurementType.LOAD_DURATION || ex.measurementType == MeasurementType.DURATION_ONLY) Target(metric = Metric.SECONDS) else Target(Metric.REPS, 8.0, 12.0, 1.0, 2.0))
+            target = defaultTargetFor(ex.measurementType))
         start(s, Plan(name = "Spontan", exercises = listOf(pe)), null, gymId, mode)
     }
 

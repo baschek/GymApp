@@ -7,8 +7,8 @@ import de.baschek.gymapp.core.model.Exercise
 import de.baschek.gymapp.core.model.Plan
 import de.baschek.gymapp.core.model.PlanExercise
 import de.baschek.gymapp.core.model.Session
-import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.training.DefaultModeSets
+import de.baschek.gymapp.core.training.defaultTargetFor
 import de.baschek.gymapp.data.Stored
 import de.baschek.gymapp.ui.SyncUi
 import de.baschek.gymapp.ui.SyncUiSource
@@ -108,14 +108,14 @@ class PlanEditorViewModel(private val c: AppContainer, private val planId: Strin
         }
     }
 
-    fun add(exerciseId: String, onAdded: (String) -> Unit) {
+    fun add(exerciseId: String, measurementType: String, onAdded: (String) -> Unit) {
         val id = UUID.randomUUID().toString()
         viewModelScope.launch {
             repo.updatePlan(planId) { p ->
                 p.copy(
                     exercises = p.exercises + PlanExercise(
                         id = id, exerciseId = exerciseId, order = p.exercises.size + 1, modeSets = DefaultModeSets,
-                        target = Target("reps", 8.0, 12.0, 1.0, 2.0), restSeconds = 90,
+                        target = defaultTargetFor(measurementType), restSeconds = 90,
                     ),
                 )
             }
