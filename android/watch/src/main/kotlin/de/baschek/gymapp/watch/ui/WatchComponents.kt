@@ -1,6 +1,8 @@
 package de.baschek.gymapp.watch.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -8,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,19 +19,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
@@ -47,6 +55,7 @@ import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.FilledIconButton
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.ListHeader
 import androidx.wear.compose.material3.ScreenScaffold
@@ -55,6 +64,7 @@ import androidx.wear.compose.material3.Text
 import de.baschek.gymapp.watch.R
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /*
  * Tokens and building blocks of the watch UI: pure black, paper accent (selectable like the phone), status always
@@ -94,16 +104,53 @@ internal fun listPadding(): PaddingValues {
     return PaddingValues(start = width * 0.052f, end = width * 0.052f, top = height * 0.14f, bottom = height * 0.22f)
 }
 
+/** [marquee]: one line that scrolls when it does not fit (rest and setup pages), instead of an ellipsis. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun Small(text: String, modifier: Modifier = Modifier, color: Color = Muted, size: Int = 12, maxLines: Int = 2) {
-    if (text.isNotBlank()) Text(text, modifier = modifier, color = color, fontFamily = Hanken, fontSize = size.sp, lineHeight = (size + 3).sp,
+internal fun Small(text: String, modifier: Modifier = Modifier, color: Color = Muted, size: Int = 12, maxLines: Int = 2, marquee: Boolean = false) {
+    if (text.isBlank()) return
+    if (marquee) Text(text, modifier = modifier.basicMarquee(), color = color, fontFamily = Hanken, fontSize = size.sp, lineHeight = (size + 3).sp,
+        textAlign = TextAlign.Center, maxLines = 1, softWrap = false, overflow = TextOverflow.Clip, style = noPadding)
+    else Text(text, modifier = modifier, color = color, fontFamily = Hanken, fontSize = size.sp, lineHeight = (size + 3).sp,
         textAlign = TextAlign.Center, maxLines = maxLines, overflow = TextOverflow.Ellipsis, style = noPadding)
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun Title(text: String, modifier: Modifier = Modifier, size: Int = 18, color: Color = Paper, maxLines: Int = 2) {
-    Text(text, modifier = modifier, color = color, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = size.sp, lineHeight = (size + 2).sp,
+internal fun Title(text: String, modifier: Modifier = Modifier, size: Int = 18, color: Color = Paper, maxLines: Int = 2, marquee: Boolean = false) {
+    if (marquee) Text(text, modifier = modifier.basicMarquee(), color = color, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = size.sp, lineHeight = (size + 2).sp,
+        maxLines = 1, softWrap = false, overflow = TextOverflow.Clip, textAlign = TextAlign.Center, style = noPadding)
+    else Text(text, modifier = modifier, color = color, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = size.sp, lineHeight = (size + 2).sp,
         maxLines = maxLines, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, style = noPadding)
+}
+
+/** Font sizes (sp) an exercise name steps down through before an ellipsis is the last resort. */
+private val FIT_SIZES = intArrayOf(15, 13, 11)
+
+/**
+ * Exercise title for a round screen: wraps to at most [maxLines] lines and shrinks stepwise (15, 13, 11 sp) until the name
+ * fits; only at the smallest size an ellipsis cuts it. [onLines] reports whether the name needs more than one line.
+ */
+@Composable
+internal fun FitTitle(text: String, modifier: Modifier = Modifier, maxLines: Int = 2, color: Color = Paper, onLines: (Int) -> Unit = {}) {
+    var step by remember(text, maxLines) { mutableIntStateOf(0) }
+    val size = FIT_SIZES[step]
+    Text(text, modifier = modifier, color = color, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = size.sp, lineHeight = (size + 2).sp,
+        maxLines = maxLines, softWrap = true, overflow = if (step == FIT_SIZES.lastIndex) TextOverflow.Ellipsis else TextOverflow.Clip,
+        textAlign = TextAlign.Center, style = noPadding,
+        onTextLayout = { layout ->
+            if (layout.hasVisualOverflow && step < FIT_SIZES.lastIndex) step++
+            else onLines(layout.lineCount)
+        })
+}
+
+/**
+ * Width of the chord of a round screen as a fraction of its diameter, [y] being the distance from the top edge as a
+ * fraction of the height (0.11 gives 0.63, 0.5 gives 1.0). Text placed with its top edge at [y] must not be wider.
+ */
+internal fun chordFraction(y: Float): Float {
+    val t = y.coerceIn(0f, 1f)
+    return 2f * sqrt(t * (1f - t))
 }
 
 /** Grey outline text for the always-on display (spec M). */
@@ -113,9 +160,12 @@ internal fun AmbientText(text: String, size: Int = 20) {
         textAlign = TextAlign.Center, maxLines = 2, style = TextStyle(drawStyle = Stroke(width = 1f)))
 }
 
-/** A round button (check, "Weiter", undo); never the wide edge button (spec A8). */
+/**
+ * A round button (check, "Weiter", undo); never the wide edge button (spec A8). With [icon] a monochrome vector is drawn
+ * in the content colour instead of the [symbol] text (emoji fonts must not colour it); [description] stays the label.
+ */
 @Composable
-internal fun RoundButton(symbol: String, description: String, modifier: Modifier = Modifier, primary: Boolean = true, size: Dp = 56.dp, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun RoundButton(symbol: String, description: String, modifier: Modifier = Modifier, primary: Boolean = true, size: Dp = 56.dp, enabled: Boolean = true, @DrawableRes icon: Int? = null, onClick: () -> Unit) {
     val track = LocalInteraction.current
     val accent = LocalAccent.current
     FilledIconButton(
@@ -127,7 +177,8 @@ internal fun RoundButton(symbol: String, description: String, modifier: Modifier
             contentColor = if (primary) accent.onColor else Paper,
         ),
     ) {
-        Text(symbol, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = if (symbol.length > 2) 13.sp else 22.sp,
+        if (icon != null) Icon(painterResource(icon), contentDescription = null, modifier = Modifier.size(if (size >= 56.dp) 26.dp else 22.dp))
+        else Text(symbol, fontFamily = Hanken, fontWeight = FontWeight.Bold, fontSize = if (symbol.length > 2) 13.sp else 22.sp,
             maxLines = 1, textAlign = TextAlign.Center)
     }
 }
@@ -179,10 +230,13 @@ internal fun SwitchRow(text: String, checked: Boolean, detail: String = "", onCh
 
 /** A read-only fact (label above, value below). */
 @Composable
-internal fun InfoCard(label: String, value: String, valueColor: Color = Paper) {
+internal fun InfoCard(label: String, value: String, valueColor: Color = Paper, @DrawableRes valueIcon: Int? = null) {
     Column(Modifier.fillMaxWidth().background(Surface, RoundedCornerShape(16.dp)).padding(horizontal = 14.dp, vertical = 8.dp)) {
         Text(label, color = Muted, fontFamily = Hanken, fontSize = 11.sp)
-        Text(value, color = valueColor, fontFamily = Hanken, fontSize = 14.sp, lineHeight = 18.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (valueIcon != null) Icon(painterResource(valueIcon), contentDescription = null, tint = valueColor, modifier = Modifier.padding(end = 4.dp).size(14.dp))
+            Text(value, color = valueColor, fontFamily = Hanken, fontSize = 14.sp, lineHeight = 18.sp)
+        }
     }
 }
 
@@ -266,23 +320,6 @@ internal fun PulseCurve(samples: List<Pair<Long, Int?>>) {
                 previous = point
             }
         }
-    }
-}
-
-/** Monochrome heart silhouette; it does not depend on the device's emoji font. */
-@Composable
-internal fun HeartIcon(color: Color = Muted, size: Dp = 14.dp) {
-    Canvas(Modifier.size(size)) {
-        val w = this.size.width; val h = this.size.height
-        val heart = Path().apply {
-            moveTo(w * .5f, h * .88f)
-            cubicTo(w * .42f, h * .8f, w * .08f, h * .56f, w * .08f, h * .32f)
-            cubicTo(w * .08f, h * .09f, w * .34f, h * .03f, w * .5f, h * .24f)
-            cubicTo(w * .66f, h * .03f, w * .92f, h * .09f, w * .92f, h * .32f)
-            cubicTo(w * .92f, h * .56f, w * .58f, h * .8f, w * .5f, h * .88f)
-            close()
-        }
-        drawPath(heart, color)
     }
 }
 
