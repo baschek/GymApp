@@ -40,13 +40,28 @@ class HealthExportConsent(context: Context) {
     }
 }
 
-/** Stores only a successful version marker, never health measurements. */
+/**
+ * Stores only a successful version marker, never health measurements. A plain list of session ids
+ * (no measurements) lets later code find exports whose session has been deleted.
+ */
 internal class HealthExportReceipts(context: Context) {
     private val prefs = context.getSharedPreferences("health_export_receipts", Context.MODE_PRIVATE)
     fun isCurrent(id: String, recording: HeartRecording): Boolean = prefs.getString(key(id), null) == signature(recording)
-    fun record(id: String, recording: HeartRecording) { prefs.edit().putString(key(id), signature(recording)).apply() }
-    private fun signature(recording: HeartRecording) = "${recording.version}:${recording.startMillis}:${recording.endMillis}"
+    fun record(id: String, recording: HeartRecording) {
+        prefs.edit().putString(key(id), signature(recording)).putStringSet(IDS, ids() + id).apply()
+    }
+    /** True when this session was exported at least once (any format version). */
+    fun has(id: String): Boolean = prefs.contains(key(id))
+    /** Session ids with a receipt, as far as they were indexed. */
+    fun exportedIds(): Set<String> = ids()
+    /** Adds receipts written before the index existed. */
+    fun adopt(id: String) { if (has(id) && id !in ids()) prefs.edit().putStringSet(IDS, ids() + id).apply() }
+    fun clear(id: String) { prefs.edit().remove(key(id)).putStringSet(IDS, ids() - id).apply() }
+    private fun ids(): Set<String> = prefs.getStringSet(IDS, emptySet()).orEmpty().toSet()
+    // The format tag makes receipts of older export formats stale, so those sessions are exported again.
+    private fun signature(recording: HeartRecording) = "$FORMAT:${recording.version}:${recording.startMillis}:${recording.endMillis}"
     private fun key(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    private companion object { const val IDS = "exported_session_ids"; const val FORMAT = "f2" }
 }
 
 internal suspend fun recordingForCompleted(context: Context, id: String, session: Session): HeartRecording? {
@@ -76,7 +91,7 @@ class HealthExportWorker(context: Context, params: WorkerParameters) : Coroutine
             return Result.success()
         }
         if (!HealthExportConsent(applicationContext).allows(session)) return Result.success()
-        val result = exporter.export(id, RecordingProfile.PERSONAL, recording.version, true, automatic = true)
+        val result = exporter.export(id, RecordingProfile.PERSONAL, recording.version, true, automatic = true, title = session.planName)
         if (result == HealthExportResult.Exported) HealthExportReceipts(applicationContext).record(id, recording)
         publishHealthStatus(applicationContext, id, recording.version, result.watchStatus())
         return when (result) {
@@ -95,6 +110,40 @@ class HealthExportWorker(context: Context, params: WorkerParameters) : Coroutine
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
                 .setInputData(workDataOf("session" to id)).build()
             WorkManager.getInstance(context).enqueueUniqueWork("health-export-$name", ExistingWorkPolicy.REPLACE, request)
+        }
+        fun cancelAll(context: Context) { WorkManager.getInstance(context).cancelAllWorkByTag(TAG) }
+    }
+}
+
+/** Removes the Health Connect copy of a deleted session; retried by WorkManager until it succeeds. */
+class HealthExportDeleteWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val id = inputData.getString("session") ?: return Result.failure()
+        val app = applicationContext as? GymApplication ?: return Result.success()
+        val repository = app.container.repository
+        if (repository.currentProfile() != Profile.PERSONAL) return Result.success()
+        // The session came back (restored or re-synced): keep its export.
+        if (repository.getSession(id) != null) return Result.success()
+        if (!HealthExportConsent(applicationContext).enabled()) return Result.success()
+        if (!HealthExportReceipts(applicationContext).has(id)) return Result.success()
+        return when (HealthConnectExporter(applicationContext).deleteExported(id)) {
+            HealthDeleteResult.Deleted -> Result.success()
+            // The receipt stays, so the next app start or foreground reconciliation tries again.
+            HealthDeleteResult.ConsentRequired, is HealthDeleteResult.PermissionRequired -> Result.success()
+            HealthDeleteResult.Failed, is HealthDeleteResult.NotAvailable ->
+                if (runAttemptCount < 4) Result.retry() else Result.failure()
+        }
+    }
+    companion object {
+        private const val TAG = "automatic-health-delete"
+        fun enqueue(context: Context, id: String) {
+            if (!HealthExportConsent(context).enabled()) return
+            val name = MessageDigest.getInstance("SHA-256").digest(id.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            val request = OneTimeWorkRequestBuilder<HealthExportDeleteWorker>().addTag(TAG)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.MINUTES)
+                .setInputData(workDataOf("session" to id)).build()
+            // KEEP: a running or waiting retry chain must not be reset by repeated triggers.
+            WorkManager.getInstance(context).enqueueUniqueWork("health-delete-$name", ExistingWorkPolicy.KEEP, request)
         }
         fun cancelAll(context: Context) { WorkManager.getInstance(context).cancelAllWorkByTag(TAG) }
     }

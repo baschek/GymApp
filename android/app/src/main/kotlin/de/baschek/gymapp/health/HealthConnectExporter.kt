@@ -22,6 +22,7 @@ import de.baschek.gymapp.core.health.HeartRecording
 import de.baschek.gymapp.core.health.RecordingProfile
 import de.baschek.gymapp.core.health.SampleQuality
 import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +44,16 @@ sealed interface HealthExportResult {
     data object Exported : HealthExportResult
     /** A retry with the exact same recording/version is safe. */
     data object Failed : HealthExportResult
+}
+
+sealed interface HealthDeleteResult {
+    data object ConsentRequired : HealthDeleteResult
+    data class NotAvailable(val availability: HealthAvailability) : HealthDeleteResult
+    data class PermissionRequired(val missing: Set<String>) : HealthDeleteResult
+    /** Records are gone from Health Connect (or never existed) and the local receipt is cleared. */
+    data object Deleted : HealthDeleteResult
+    /** Retrying is safe: deleting by client id is idempotent. */
+    data object Failed : HealthDeleteResult
 }
 
 /** Phone-only export; callers must obtain explicit consent for each initiated export. */
@@ -73,7 +84,7 @@ class HealthConnectExporter(private val context: Context) {
     }
 
     /** Loads the current local version; expectedVersion protects an out-of-date consent screen. */
-    suspend fun export(sessionId: String, profile: RecordingProfile, expectedVersion: Long, userConsented: Boolean, automatic: Boolean = false): HealthExportResult {
+    suspend fun export(sessionId: String, profile: RecordingProfile, expectedVersion: Long, userConsented: Boolean, automatic: Boolean = false, title: String? = null): HealthExportResult {
         if (profile == RecordingProfile.TEST) return HealthExportResult.LocalOnly
         if (!userConsented) return HealthExportResult.ConsentRequired
         return withContext(Dispatchers.IO) { healthStoreMutex.withLock {
@@ -87,7 +98,7 @@ class HealthConnectExporter(private val context: Context) {
                 val client = HealthConnectClient.getOrCreate(context)
                 val missing = requiredPermissions - client.permissionController.getGrantedPermissions()
                 if (missing.isNotEmpty()) return@withLock HealthExportResult.PermissionRequired(missing)
-                exportCurrent(context, recording, object : ExportWriter {
+                exportCurrent(context, recording, writer = object : ExportWriter {
                     override suspend fun write(records: List<Record>) { client.insertRecords(records) }
                     override suspend fun ownHeartRecords(start: Long, end: Long): List<OwnedHeart> {
                         val found = mutableListOf<OwnedHeart>()
@@ -107,7 +118,7 @@ class HealthConnectExporter(private val context: Context) {
                     override suspend fun deleteHeart(ids: List<String>) {
                         client.deleteRecords(HeartRateRecord::class, ids, emptyList())
                     }
-                })
+                }, title = title)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -116,28 +127,90 @@ class HealthConnectExporter(private val context: Context) {
         } }
     }
 
+    /**
+     * Removes the exercise session and all heart-rate chunks this app exported for [sessionId]
+     * (by client record id) and clears the local receipt and checkpoint. Idempotent.
+     */
+    suspend fun deleteExported(sessionId: String, profile: RecordingProfile = RecordingProfile.PERSONAL): HealthDeleteResult {
+        if (profile != RecordingProfile.PERSONAL) return HealthDeleteResult.ConsentRequired
+        return withContext(Dispatchers.IO) { healthStoreMutex.withLock {
+            try {
+                if (!HealthExportConsent(context).enabled()) return@withLock HealthDeleteResult.ConsentRequired
+                val available = availability()
+                if (available != HealthAvailability.Available) return@withLock HealthDeleteResult.NotAvailable(available)
+                val client = HealthConnectClient.getOrCreate(context)
+                val missing = requiredPermissions - client.permissionController.getGrantedPermissions()
+                if (missing.isNotEmpty()) return@withLock HealthDeleteResult.PermissionRequired(missing)
+                deleteExportedCurrent(context, sessionId, object : ExportDeleter {
+                    override suspend fun delete(exerciseClientIds: List<String>, heartClientIds: List<String>) {
+                        client.deleteRecords(ExerciseSessionRecord::class, emptyList(), exerciseClientIds)
+                        heartClientIds.chunked(HEART_DELETE_CHUNK).forEach {
+                            client.deleteRecords(HeartRateRecord::class, emptyList(), it)
+                        }
+                    }
+                })
+                HealthDeleteResult.Deleted
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                HealthDeleteResult.Failed
+            }
+        } }
+    }
 }
 
+private const val HEART_DELETE_CHUNK = 200
+
+/** Bumps the exercise record version so Health Connect replaces records written with older metadata. */
+internal const val EXERCISE_FORMAT_VERSION_OFFSET = 1_000_000L
+
 /** Stable identifiers plus monotonic versions make a repeated insert idempotent. */
-internal fun recordsFor(recording: HeartRecording): List<Record> {
+internal fun recordsFor(
+    recording: HeartRecording, title: String? = null, zone: ZoneId = ZoneId.systemDefault(),
+): List<Record> {
     val id = stableId(recording.sessionId)
     val start = Instant.ofEpochMilli(recording.startMillis)
     val end = Instant.ofEpochMilli(recording.endMillis)
-    val result = mutableListOf<Record>(ExerciseSessionRecord(
-        startTime = start, startZoneOffset = null, endTime = end, endZoneOffset = null,
-        metadata = Metadata.unknownRecordingMethod("gymapp-exercise-$id", recording.version),
-        exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING,
-    ))
     val samples = recording.samples.filter { it.quality == SampleQuality.RELIABLE }
+    val device = Device(if (samples.isEmpty()) Device.TYPE_PHONE else Device.TYPE_WATCH)
+    val result = mutableListOf<Record>(ExerciseSessionRecord(
+        startTime = start, startZoneOffset = zone.rules.getOffset(start),
+        endTime = end, endZoneOffset = zone.rules.getOffset(end),
+        metadata = Metadata.activelyRecorded(device, exerciseClientId(id), recording.version + EXERCISE_FORMAT_VERSION_OFFSET),
+        exerciseType = ExerciseSessionRecord.EXERCISE_TYPE_STRENGTH_TRAINING,
+        title = title?.trim()?.takeIf { it.isNotEmpty() }?.take(100),
+    ))
     samples.chunked(1000).forEachIndexed { index, chunk ->
+        val chunkStart = Instant.ofEpochMilli(chunk.first().timeMillis)
+        val chunkEnd = Instant.ofEpochMilli(chunk.last().timeMillis).plusMillis(1)
         result += HeartRateRecord(
-            startTime = Instant.ofEpochMilli(chunk.first().timeMillis), startZoneOffset = null,
-            endTime = Instant.ofEpochMilli(chunk.last().timeMillis).plusMillis(1), endZoneOffset = null,
+            startTime = chunkStart, startZoneOffset = zone.rules.getOffset(chunkStart),
+            endTime = chunkEnd, endZoneOffset = zone.rules.getOffset(chunkEnd),
             samples = chunk.map { HeartRateRecord.Sample(Instant.ofEpochMilli(it.timeMillis), it.bpm.toLong()) },
             metadata = Metadata.activelyRecorded(Device(Device.TYPE_WATCH), "gymapp-heart-$id-$index", recording.version),
         )
     }
     return result
+}
+
+private fun exerciseClientId(stableId: String) = "gymapp-exercise-$stableId"
+
+/** Client ids written for [sessionId]: the exercise record and every possible heart chunk (plus the legacy single id). */
+internal fun exportedClientIds(sessionId: String): Pair<List<String>, List<String>> {
+    val id = stableId(sessionId)
+    return listOf(exerciseClientId(id)) to ((0 until 100).map { "gymapp-heart-$id-$it" } + "gymapp-heart-$id")
+}
+
+internal interface ExportDeleter {
+    suspend fun delete(exerciseClientIds: List<String>, heartClientIds: List<String>)
+}
+
+/** Call under healthStoreMutex. Clears receipt and checkpoint only after Health Connect accepted the delete. */
+internal suspend fun deleteExportedCurrent(context: Context, sessionId: String, deleter: ExportDeleter) {
+    val (exercise, heart) = exportedClientIds(sessionId)
+    deleter.delete(exercise, heart)
+    AtomicFile(File(File(context.noBackupFilesDir, "heart-export-checkpoints"), stableId(sessionId))).delete()
+    HealthExportReceipts(context).clear(sessionId)
 }
 
 private fun stableId(sessionId: String) = UUID.nameUUIDFromBytes(sessionId.toByteArray(Charsets.UTF_8)).toString()
@@ -155,6 +228,7 @@ internal suspend fun exportCurrent(
     context: Context, recording: HeartRecording, writer: ExportWriter,
     restrictedHistory: Boolean = android.os.Build.VERSION.SDK_INT <= 33,
     nowMillis: Long = System.currentTimeMillis(),
+    title: String? = null,
 ): HealthExportResult {
     require(recording.profile == RecordingProfile.PERSONAL)
     val directory = File(context.noBackupFilesDir, "heart-export-checkpoints")
@@ -205,7 +279,7 @@ internal suspend fun exportCurrent(
         checkpoint.failWrite(stream)
         throw e
     }
-    val records = recordsFor(recording)
+    val records = recordsFor(recording, title)
     records.chunked(10).forEach { writer.write(it) }
     val count = records.size - 1
     val id = stableId(recording.sessionId)

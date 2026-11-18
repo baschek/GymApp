@@ -15,9 +15,11 @@ class AutomaticHealthExport(
     private val context: Context,
     private val repository: GymRepository,
     private val schedule: (String) -> Unit = { HealthExportWorker.enqueue(context, it) },
+    private val scheduleDelete: (String) -> Unit = { HealthExportDeleteWorker.enqueue(context, it) },
 ) {
     private val foregroundMutex = Mutex()
     private val seen = mutableMapOf<String, String>()
+    private val deleteScheduled = mutableSetOf<String>()
     @Volatile private var foreground = false
 
     fun start(scope: CoroutineScope) = scope.launch {
@@ -39,6 +41,10 @@ class AutomaticHealthExport(
                     if (foreground) scope.launch { reconcileIfForeground() }
                 }
             }
+            deleteScheduled.removeAll(sessions.map { it.id }.toSet())
+            for (id in deletedExports(sessions.map { it.id }.toSet())) {
+                if (deleteScheduled.add(id)) scheduleDelete(id)
+            }
         }
     }
 
@@ -55,6 +61,13 @@ class AutomaticHealthExport(
         if (foreground) scope.launch { reconcileIfForeground() }
     }
 
+    /** Exported sessions that no longer exist (tombstone, snapshot removal or local delete). Personal profile only. */
+    private suspend fun deletedExports(completedIds: Set<String>): List<String> {
+        val receipts = HealthExportReceipts(context)
+        completedIds.forEach { receipts.adopt(it) }
+        return receipts.exportedIds().filter { it !in completedIds && repository.getSession(it) == null }
+    }
+
     private suspend fun reconcileIfForeground() = foregroundMutex.withLock {
         if (!foreground || !HealthExportConsent(context).enabled() || repository.currentProfile() != Profile.PERSONAL) return@withLock
         val sessions = repository.observeCompletedSessions().first()
@@ -65,9 +78,14 @@ class AutomaticHealthExport(
             val recording = recordingForCompleted(context, stored.id, stored.value) ?: continue
             if (HealthExportReceipts(context).isCurrent(stored.id, recording)) continue
             if (!HealthExportConsent(context).allows(stored.value)) continue
-            val result = exporter.export(stored.id, RecordingProfile.PERSONAL, recording.version, true, automatic = true)
+            val result = exporter.export(stored.id, RecordingProfile.PERSONAL, recording.version, true, automatic = true, title = stored.value.planName)
             if (result == HealthExportResult.Exported) HealthExportReceipts(context).record(stored.id, recording)
             publishHealthStatus(context, stored.id, recording.version, result.watchStatus())
+        }
+        // Fallback when the background delete could not run: delete in the foreground.
+        for (id in deletedExports(sessions.map { it.id }.toSet())) {
+            if (!foreground || repository.currentProfile() != Profile.PERSONAL || !HealthExportConsent(context).enabled()) break
+            exporter.deleteExported(id)
         }
     }
 }
