@@ -32,9 +32,25 @@ class WatchHandoffUiTest {
     )
     private val workout = WatchPresentation(sessionId = "test-workout", sessionActive = true, current = set, navigationKey = "initial")
 
+    /**
+     * With the clock paused a state write (the test's own or one made by an effect) only reaches the composition once
+     * the apply notifications are flushed and a frame follows; a single frame right after the write is not enough, so
+     * the effect that starts the quiet window began late or, for the write at its end, never became visible. Every
+     * step therefore ends with a few flush-and-frame rounds (3 x 16 ms, small against the 450 ms window).
+     */
+    private fun pump() = repeat(3) {
+        compose.waitForIdle()
+        compose.mainClock.advanceTimeByFrame()
+    }
+
     private fun emit(change: () -> Unit) {
         compose.runOnIdle(change)
-        compose.mainClock.advanceTimeByFrame()
+        pump()
+    }
+
+    private fun advance(millis: Long) {
+        compose.mainClock.advanceTimeBy(millis)
+        pump()
     }
 
     @Test fun phoneBurstShowsOnlyTheFinalPhaseAfterTheQuietWindow() {
@@ -51,18 +67,19 @@ class WatchHandoffUiTest {
         compose.mainClock.autoAdvance = false
 
         emit { state = workout.copy(phoneLeads = true, navigationKey = "done", current = set.copy(setId = ""), exerciseFinished = true) }
-        compose.mainClock.advanceTimeBy(80)
+        advance(80)
         compose.onNodeWithContentDescription("Satz geschafft").assertIsDisplayed()
         emit { state = workout.copy(phoneLeads = true, navigationKey = "next", current = set.copy(setId = "set-two", number = 2)) }
-        compose.mainClock.advanceTimeBy(80)
+        advance(80)
         compose.onNodeWithText("Satz 1 von 3").assertIsDisplayed()
         emit { state = state.copy(navigationKey = "rest", restRemainingSeconds = 60, restTotalSeconds = 90) }
-        compose.mainClock.advanceTimeBy(368)
+        advance(250)
         compose.onNodeWithContentDescription("Satz geschafft").assertIsDisplayed()
+        assertTrue("no phase change inside the quiet window: $phases", phases.isEmpty())
 
         // Remaining seconds are not an event and do not restart the quiet window.
         emit { state = state.copy(restRemainingSeconds = 59) }
-        compose.mainClock.advanceTimeBy(224)
+        advance(250)
         assertEquals(listOf("training_rest"), phases)
         compose.onNodeWithContentDescription("Weiter").assertIsDisplayed()
     }
@@ -81,14 +98,14 @@ class WatchHandoffUiTest {
         compose.mainClock.autoAdvance = false
 
         emit { state = workout.copy(phoneLeads = true, navigationKey = "phone-rest", restRemainingSeconds = 60) }
-        compose.mainClock.advanceTimeBy(80)
+        advance(80)
         compose.onNodeWithTag("training-left").assertIsDisplayed()
         assertTrue(events.isEmpty())
 
         emit { state = workout.copy(navigationKey = "watch-setup", setupRemainingSeconds = 40) }
-        compose.mainClock.advanceTimeBy(80)
+        advance(80)
         assertEquals(listOf("training_setup"), events)
-        compose.mainClock.advanceTimeBy(600)
+        advance(600)
         compose.onNodeWithText("Gerät einstellen").assertIsDisplayed()
         assertEquals(listOf("training_setup"), events)
     }
@@ -103,14 +120,14 @@ class WatchHandoffUiTest {
         compose.mainClock.autoAdvance = false
 
         emit { state = workout.copy(phoneLeads = true, navigationKey = "other-set", current = set.copy(setId = "set-two", number = 2)) }
-        compose.mainClock.advanceTimeBy(600)
+        advance(600)
         compose.onNodeWithText("Gesamt 25 kg").assertIsDisplayed()
         compose.onNodeWithContentDescription("Fertig").performClick()
-        compose.mainClock.advanceTimeBy(600)
+        advance(600)
         compose.onNodeWithText("Satz 2 von 3").assertIsDisplayed()
 
         emit { state = workout.copy(phoneLeads = true, navigationKey = "reopened", current = set.copy(weight = 15.0)) }
-        compose.mainClock.advanceTimeBy(600)
+        advance(600)
         compose.mainClock.autoAdvance = true
         compose.onNodeWithContentDescription("Satz geschafft").performClick()
         compose.onNodeWithContentDescription("1–2 übrig", substring = true).performClick()
