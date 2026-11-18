@@ -1,5 +1,6 @@
 package de.baschek.gymapp.data
 
+import android.util.Log
 import androidx.room.withTransaction
 import de.baschek.gymapp.core.model.AdjustmentStatus
 import de.baschek.gymapp.core.model.BodyWeight
@@ -21,6 +22,8 @@ import kotlinx.serialization.builtins.ListSerializer
 import de.baschek.gymapp.core.wear.events.ConflictChoice
 import de.baschek.gymapp.core.wear.events.WorkoutBatchResult
 import de.baschek.gymapp.core.wear.events.applyWorkoutBatch
+import de.baschek.gymapp.core.wear.events.EventReceipt
+import de.baschek.gymapp.core.wear.events.EventRejections
 import de.baschek.gymapp.core.wear.events.EventResult
 import de.baschek.gymapp.core.wear.events.ReplicaState
 import de.baschek.gymapp.core.wear.events.WorkoutEvent
@@ -78,6 +81,7 @@ import de.baschek.gymapp.data.db.OutboxEntity
 import de.baschek.gymapp.data.db.SettingEntity
 import de.baschek.gymapp.data.db.TelemetryEntity
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -113,6 +117,9 @@ data class AdjustmentNotice(val id: String, val text: String)
 
 /** The goal document plus its last change time. */
 data class GoalState(val goal: Goal, val updatedAt: String?)
+
+private val watchReceiptSerializer = ListSerializer(EventReceipt.serializer())
+private const val FINISHED_WATCH_RECEIPT_HISTORY = 20
 
 /**
  * The ONLY access path to the database. ViewModels, workers and services talk
@@ -313,21 +320,52 @@ class GymRepository(
         dao.observeDocs(Profile.PERSONAL, Entity.DAY_WORKOUT),
     ) { Unit }.combine(activeProfile) { _, _ -> Unit }
 
-    /** Room observers see one committed session snapshot, including timer and progression. */
-    suspend fun importWatchEvents(events: List<WorkoutEvent>): WorkoutBatchResult = db.withTransaction {
-        if (currentProfile() != Profile.PERSONAL) return@withTransaction WorkoutBatchResult(emptyList(), 0, null)
-        pruneWatchReplicas(keep = events.mapTo(mutableSetOf()) { it.sessionId })
-        applyWorkoutBatch(events) { applyWatchEvent(it, fromPhone = false) }
+    /** Each operation, including its timer and progression, commits independently. */
+    suspend fun importWatchEvents(events: List<WorkoutEvent>): WorkoutBatchResult {
+        val personal = db.withTransaction {
+            if (currentProfile() != Profile.PERSONAL) return@withTransaction false
+            pruneWatchReplicas(keep = events.mapTo(mutableSetOf()) { it.sessionId })
+            true
+        }
+        if (!personal) return WorkoutBatchResult(emptyList(), 0, null)
+        return applyWorkoutBatch(events) { event ->
+            try {
+                db.withTransaction { receiveWatchEvent(event, fromPhone = false) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w("WorkoutEvents", "Watch event will be retried after ${error.javaClass.simpleName}")
+                EventResult.Rejected("event_failed")
+            }
+        }
     }
 
     suspend fun importWatchEvent(event: WorkoutEvent, fromPhone: Boolean = false): EventResult = db.withTransaction {
         if (currentProfile() != Profile.PERSONAL) return@withTransaction EventResult.Rejected("local_only")
         pruneWatchReplicas(keep = setOf(event.sessionId))
-        applyWatchEvent(event, fromPhone)
+        receiveWatchEvent(event, fromPhone)
     }
 
-    /** Called inside the same transaction as the rest of the batch or the local resolution. */
-    private suspend fun applyWatchEvent(event: WorkoutEvent, fromPhone: Boolean): EventResult {
+    private suspend fun receiveWatchEvent(event: WorkoutEvent, fromPhone: Boolean): EventResult {
+        if (currentProfile() != Profile.PERSONAL || event.profile != WorkoutProfile.PERSONAL)
+            return EventResult.Rejected("local_only")
+        fun receiptKey(id: String) = EventRejections.receiptKey(event.sessionId, id)?.let { "watch_rejected:$it" }
+        val key = receiptKey(event.eventId)
+        key?.let { dao.getSetting(it) }?.let { return EventResult.Rejected(it) }
+        val predecessorKey = event.predecessorEventId?.let(::receiptKey)
+        val result = applyWatchEvent(event, fromPhone, predecessorKey != null && dao.getSetting(predecessorKey) != null)
+        if (result is EventResult.Rejected && EventRejections.shouldAcknowledge(result)) {
+            if (key != null) {
+                dao.putSetting(SettingEntity(key, result.reason))
+                dao.trimSettingHistory("watch_rejected:*", WorkoutEvents.MAX_RECEIPTS)
+            }
+            Log.w("WorkoutEvents", "Watch event rejected permanently: ${result.reason}")
+        }
+        return result
+    }
+
+    /** Called inside the transaction for the incoming operation or the local resolution. */
+    private suspend fun applyWatchEvent(event: WorkoutEvent, fromPhone: Boolean, predecessorWasRejected: Boolean = false): EventResult {
         if (event.profile != WorkoutProfile.PERSONAL) return EventResult.Rejected("local_only")
         val currentRow = dao.getDoc(Profile.PERSONAL, Entity.SESSION, event.sessionId)
         if (currentRow?.deleted == true) return EventResult.Rejected("deleted_session")
@@ -335,8 +373,9 @@ class GymRepository(
         val key = "watch_replica:${event.sessionId}"
         val stored = dao.getSetting(key)?.let { GymJson.decodeFromString(ReplicaState.serializer(), it) }
         val initial = stored?.copy(document = currentRaw ?: stored.document)
-            ?: ReplicaState(WorkoutProfile.PERSONAL, event.sessionId, currentRaw ?: event.before)
-        val applied = WorkoutEvents.apply(initial, event)
+            ?: ReplicaState(WorkoutProfile.PERSONAL, event.sessionId, currentRaw ?: event.before,
+                receipts = if (currentRaw == null) emptyList() else archivedWatchReceipts(event.sessionId))
+        val applied = WorkoutEvents.apply(initial, event, predecessorWasRejected)
         if (applied is EventResult.Replayed) {
             dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
             return applied
@@ -349,7 +388,6 @@ class GymRepository(
         val otherActive = dao.getActiveSession(Profile.PERSONAL)
         if (typed.status == SessionStatus.ACTIVE && otherActive != null && otherActive.id != event.sessionId)
             return EventResult.Rejected("other_active_session")
-        dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
         val before = currentRow?.toStored(Session.serializer())?.value
         val history = allSessions(Profile.PERSONAL)
         var merged = applied.state.document
@@ -417,6 +455,7 @@ class GymRepository(
             }
         }
         dao.putSetting(SettingEntity(key, GymJson.encodeToString(ReplicaState.serializer(), finalState)))
+        dao.putSetting(SettingEntity("watch_companion_enabled", "1"))
         return EventResult.Applied(finalState)
     }
 
@@ -509,6 +548,10 @@ class GymRepository(
         return active(before) || active(after) || dao.getSetting("watch_replica:$sessionId") != null
     }
 
+    private suspend fun archivedWatchReceipts(sessionId: String): List<EventReceipt> =
+        dao.getSetting("watch_receipts:$sessionId")
+            ?.let { GymJson.decodeFromString(watchReceiptSerializer, it) }.orEmpty()
+
     /**
      * Drops replica states of sessions that are no longer active, have no unresolved conflicts, no
      * deferred progression and no unacknowledged phone event. [keep] contains sessions in the current delivery.
@@ -531,6 +574,11 @@ class GymRepository(
             val state = runCatching { GymJson.decodeFromString(ReplicaState.serializer(), row.value) }.getOrNull()
             if (state != null && state.conflicts.isNotEmpty()) continue
             if (doc.status == SessionStatus.ACTIVE) continue
+            // A peer may have enqueued a successor just before its predecessor was acknowledged.
+            if (state != null && state.receipts.isNotEmpty()) {
+                dao.putSetting(SettingEntity("watch_receipts:$id", GymJson.encodeToString(watchReceiptSerializer, state.receipts)))
+                dao.trimSettingHistory("watch_receipts:*", FINISHED_WATCH_RECEIPT_HISTORY)
+            }
             dao.deleteSetting(row.name)
         }
     }

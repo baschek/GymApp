@@ -12,31 +12,27 @@ import android.view.PixelCopy
 import android.view.View
 import android.view.Window
 import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.node.RootForTest
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.getOrNull
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.dp
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.get
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 
+/** Hooks the screen capture into the window. It draws nothing: the recorder is always on and silent. */
 @Composable
-fun RecorderOverlay(recorder: DeviceRecorder, modifier: Modifier = Modifier) {
+fun RecorderOverlay(recorder: DeviceRecorder) {
     LifecycleResumeEffect(recorder) {
         recorder.checkDeadline()
         onPauseOrDispose { }
@@ -63,10 +59,6 @@ fun RecorderOverlay(recorder: DeviceRecorder, modifier: Modifier = Modifier) {
         }
         recorder.screenshot = capture
         onDispose { if (recorder.screenshot === capture) recorder.screenshot = null }
-    }
-    androidx.compose.foundation.Canvas(modifier.size(9.dp).semantics { contentDescription = "Navigationsaufzeichnung aktiv" }) {
-        drawCircle(androidx.compose.ui.graphics.Color.White)
-        drawCircle(androidx.compose.ui.graphics.Color.Red, radius = size.minDimension / 3)
     }
 }
 

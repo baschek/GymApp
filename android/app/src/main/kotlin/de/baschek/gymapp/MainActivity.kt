@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { container.health.onForeground() }
+                launch { container.workoutInbox.catchUpWhileVisible() }
                 // Opening the app during a workout: fetch assistant adjustments and push the running session now
                 // (the service syncs periodically on top of this).
                 launch { if (repository.getActiveSession() != null) container.syncManager.runSync() }

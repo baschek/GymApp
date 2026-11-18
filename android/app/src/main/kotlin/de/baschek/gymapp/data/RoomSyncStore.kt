@@ -3,6 +3,7 @@ package de.baschek.gymapp.data
 import androidx.room.withTransaction
 import de.baschek.gymapp.core.model.DocKey
 import de.baschek.gymapp.core.model.Document
+import de.baschek.gymapp.core.model.Entity
 import de.baschek.gymapp.core.model.GymJson
 import de.baschek.gymapp.core.model.IndexColumns
 import de.baschek.gymapp.core.model.TelemetryCount
@@ -83,7 +84,10 @@ internal class RoomSyncStore(private val db: GymDatabase) : SyncStore {
     }
 
     override suspend fun applyRemote(docs: List<Document>) = db.withTransaction {
+        // The sync engine samples pending keys before this transaction. A watch edit can land after that read.
+        val protected = protectedActiveSessionKeys()
         for (d in docs) {
+            if (d.key in protected) continue
             val local = dao.getDoc(profile, d.entity, d.id)
             if (local == null && d.deleted) continue
             if (local == null || (local.rev ?: Long.MIN_VALUE) < d.rev) dao.upsertDoc(d.toEntity(profile))
@@ -91,14 +95,18 @@ internal class RoomSyncStore(private val db: GymDatabase) : SyncStore {
     }
 
     override suspend fun applySnapshot(docs: List<Document>, rev: Long, keep: Set<DocKey>) = db.withTransaction {
+        val localKeys = keep + protectedActiveSessionKeys()
         val incoming = docs.map { it.key }.toSet()
         for (row in dao.syncedKeys(profile)) {
             val key = DocKey(row.entity, row.id)
-            if (key !in incoming && key !in keep) dao.deleteDoc(profile, row.entity, row.id)
+            if (key !in incoming && key !in localKeys) dao.deleteDoc(profile, row.entity, row.id)
         }
-        dao.upsertDocs(docs.filter { it.key !in keep }.map { it.toEntity(profile) })
+        dao.upsertDocs(docs.filter { it.key !in localKeys }.map { it.toEntity(profile) })
         dao.putSetting(SettingEntity(SettingKeys.SYNC_CURSOR, rev.toString()))
     }
+
+    private suspend fun protectedActiveSessionKeys(): Set<DocKey> =
+        dao.activeSessionsWithLocalChanges(profile).mapTo(mutableSetOf()) { DocKey(Entity.SESSION, it) }
 }
 
 @Serializable

@@ -11,12 +11,14 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -28,9 +30,12 @@ import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
+import de.baschek.gymapp.core.health.PulseState
+import de.baschek.gymapp.core.health.PulseStatus
 import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.training.SetPreview
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -312,12 +317,11 @@ class WatchUiTest {
         assertEquals(listOf(WatchAction.SetDurationRing(true), WatchAction.InstallUpdate), actions)
     }
 
-    @Test fun settingsOfferTheTemporaryRecorderSwitchAndSendButton() {
+    @Test fun settingsOfferOnlyTheRecorderSendButtonBecauseRecordingIsAlwaysOn() {
         compose.setContent { WatchUi(WatchPresentation()) {} }
         compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Einstellungen"))
         compose.onNodeWithText("Einstellungen").performClick()
-        compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Navigation aufzeichnen (Test, nur diese Version)"))
-        compose.onNodeWithText("Navigation aufzeichnen (Test, nur diese Version)").assertIsDisplayed()
+        compose.onAllNodesWithText("Navigation aufzeichnen", substring = true).assertCountEquals(0)
         compose.onNodeWithTag("watch-list").performScrollToNode(hasText("Aufzeichnung ans Handy senden"))
         compose.onNodeWithText("Aufzeichnung ans Handy senden").assertIsDisplayed()
     }
@@ -347,5 +351,57 @@ class WatchUiTest {
         assertTrue(screens.toString(), screens.contains("training_set/auto:start"))
         assertTrue(screens.toString(), screens.contains("editor/user:tap"))
         assertTrue(taps.toString(), taps.contains("training_set" to "gewicht_aendern"))
+    }
+
+    private val pulseOff = PulseStatus(PulseState.OFF, "Puls aus", "Puls wird nicht aufgezeichnet.", canStart = true, askConsent = false)
+
+    @Test fun headerNeverSaysPulseOffAndPulseButtonIsAnIcon() {
+        val actions = mutableListOf<WatchAction>()
+        compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise, pulse = pulseOff)) { actions.add(it) } }
+        compose.waitForIdle()
+        compose.onAllNodesWithText("Puls aus", substring = true).assertCountEquals(0)
+        // The heart is a vector icon: no text node with the (emoji-rendered) glyph, the button keeps its description.
+        compose.onAllNodesWithText("\u2665", substring = true).assertCountEquals(0)
+        compose.onNodeWithContentDescription("Puls starten").assertIsDisplayed().performClick()
+        assertEquals(listOf(WatchAction.StartRecording), actions)
+    }
+
+    @Test fun headerPulseTextIsShortAndOnlyWhileMeasuring() {
+        val measuring = PulseStatus(PulseState.MEASURING, "\u2665 123", null, canStart = false, askConsent = false)
+        val base = WatchPresentation(sessionActive = true, current = exercise, bpm = 123)
+        assertEquals("123 bpm", headerPulse(base.copy(pulse = measuring)))
+        assertEquals("123 bpm", headerPulse(base))
+        assertNull(headerPulse(base.copy(pulse = pulseOff)))
+        assertNull(headerPulse(base.copy(ambient = true)))
+        assertNull(headerPulse(base.copy(sessionActive = false)))
+        assertNull(headerPulse(base.copy(bpm = null)))
+    }
+
+    /** The title lies completely inside the inscribed circle, below the curved time and above the round button. */
+    private fun assertTitleRoundSafe(name: String) {
+        compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise.copy(exerciseName = name))) {} }
+        compose.waitForIdle()
+        val screen = compose.onRoot().fetchSemanticsNode().boundsInRoot
+        val radius = minOf(screen.width, screen.height) / 2f
+        val title = compose.onNodeWithTag("set-title").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+        for (x in listOf(title.left, title.right)) for (y in listOf(title.top, title.bottom)) {
+            val dx = x - screen.center.x; val dy = y - screen.center.y
+            assertTrue("title corner ($x, $y) of \"$name\" outside the circle, bounds $title in $screen", dx * dx + dy * dy <= radius * radius)
+        }
+        assertTrue("title of \"$name\" reaches into the time text area: $title", title.top >= screen.height * 0.12f)
+        val button = compose.onNodeWithContentDescription("Satz geschafft").fetchSemanticsNode().boundsInRoot
+        assertTrue("title of \"$name\" overlaps the button: $title vs $button", title.bottom <= button.top)
+        assertInsideRound(compose.onNodeWithContentDescription("Satz geschafft"))
+    }
+
+    @Test fun longExerciseNameStaysInsideTheCircle() = assertTitleRoundSafe("Schr\u00e4gbank-Kurzhantel-Seitheben einarmig")
+    @Test fun fortyCharacterNameStaysInsideTheCircle() = assertTitleRoundSafe("Abc".repeat(13) + "d")
+    @Test fun legPressNameStaysInsideTheCircle() = assertTitleRoundSafe("45\u00b0-Beinpresse")
+    @Test @Config(qualifiers = "w216dp-h216dp-round") fun longNameStaysInsideTheLargerCircle() = assertTitleRoundSafe("45\u00b0-Beinpresse mit Fu\u00dfplatte hoch")
+
+    @Test fun chordFractionMatchesTheCircle() {
+        assertEquals(1f, chordFraction(0.5f), 1e-4f)
+        assertEquals(0.626f, chordFraction(0.11f), 1e-3f)
+        assertEquals(0f, chordFraction(0f), 1e-6f)
     }
 }

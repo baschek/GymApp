@@ -14,12 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import de.baschek.gymapp.watch.R
 import de.baschek.gymapp.watch.recorder.NavRecorder
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -53,7 +53,7 @@ internal fun HomeScreen(ui: UiContext) {
     val plan = state.homePlan
     ListScreen(if (state.sessionActive) "Training läuft" else "GymApp") {
         // Connection line, always visible and in words (spec C1, L).
-        item { ListButton(state.connection, if (state.pendingCount > 0) "${state.pendingCount} offen" else "", description = "Verbindung") { ui.push(Route.CONNECTION) } }
+        item { ListButton(state.connection, state.pendingChangesLabel.orEmpty(), description = "Verbindung") { ui.push(Route.CONNECTION) } }
         if (state.sessionActive) {
             item { ListButton("Fortsetzen", current?.let { "${it.exerciseName} · Satz ${it.number}/${it.total} · ${setValue(it.weight, it.amount, it.unit, it.weightLabel)}" }.orEmpty(), selected = true) { ui.reset(Route.TRAINING) } }
         } else {
@@ -188,7 +188,7 @@ internal fun SettingsScreen(ui: UiContext) {
     ListScreen("Einstellungen") {
         item { SwitchRow("Dauer am Rand", state.durationRingEnabled, "Ring im Training, eine Runde = 60 min") { ui.dispatch(WatchAction.SetDurationRing(it)) } }
         item { SwitchRow("Puls bei jedem Training aufzeichnen", state.heartAutoConsent == true) { ui.dispatch(WatchAction.SetHeartAuto(it)) } }
-        // Temporary navigation recorder (test only, see docs/navrec-removal.md).
+        // The navigation recorder always runs; only its send button lives here (see docs/navrec.md).
         item { RecorderSettings() }
         item { ListButton("Gesundheit") { ui.push(Route.HEALTH) } }
         item { ListButton("Verbindung", state.connection) { ui.push(Route.CONNECTION) } }
@@ -204,7 +204,11 @@ internal fun HealthScreen(ui: UiContext) {
     val state = ui.state
     val pulse = state.pulse
     ListScreen("Gesundheit") {
-        item { InfoCard("Puls", pulse?.let { p -> listOfNotNull(p.label, p.detail).joinToString(" · ") } ?: if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "♥ ${state.bpm}") }
+        val measuring = state.bpm != null && (pulse?.state == PulseState.MEASURING || pulse == null && state.pulsePermission)
+        item {
+            if (measuring) InfoCard("Puls", "${state.bpm} bpm", valueIcon = R.drawable.ic_favorite)
+            else InfoCard("Puls", pulse?.let { p -> listOfNotNull(p.label, p.detail).joinToString(" · ") } ?: if (!state.pulsePermission) "Erlaubnis fehlt" else "Kein Messwert")
+        }
         if (pulse?.state == PulseState.MEASURING || (pulse == null && state.bpm != null)) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PulseCurve(state.pulseSamples) } }
         if (state.sessionActive && (pulse?.canStart ?: true)) item {
             ListButton(if (pulse?.state == PulseState.PERMISSION_MISSING || !state.pulsePermission) "Erlauben und starten" else "Puls starten", selected = true) { ui.dispatch(WatchAction.StartRecording) }
@@ -224,7 +228,7 @@ internal fun HealthScreen(ui: UiContext) {
 internal fun ConnectionScreen(ui: UiContext) {
     val state = ui.state
     ListScreen("Verbindung") {
-        item { InfoCard(state.connection, if (state.pendingCount > 0) "${state.pendingCount} Änderungen offen" else "Keine Änderungen offen") }
+        item { InfoCard(state.connection, state.pendingChangesLabel ?: "Keine Änderungen offen") }
         if (state.testProfile) item { InfoCard("Testprofil", "Daten werden nicht synchronisiert und nicht exportiert.", Warning) }
         state.conflict?.let { message ->
             // Conflicts never block the training (spec L).
@@ -272,7 +276,7 @@ internal fun SummaryScreen(ui: UiContext) {
             item { InfoCard("Dauer", s.duration) }
             item { InfoCard("Puls Ø / max", s.pulse) }
         }
-        item { InfoCard("Sync", state.connection + if (state.pendingCount > 0) " · ${state.pendingCount} offen" else " · alles übertragen") }
+        item { InfoCard(state.connection, state.pendingChangesLabel ?: "Alles übertragen") }
         item { InfoCard("Gesundheit", if (state.testProfile) "Testprofil: kein Export" else state.export) }
         if (state.undoAvailable) item { ListButton("Rückgängig", "Training wieder öffnen") { ui.dispatch(WatchAction.Undo) } }
         item { ListButton("Fertig", selected = true) { ui.celebration.intValue = 0; ui.reset(Route.HOME) } }
@@ -326,19 +330,17 @@ internal fun AmbientScreen(state: WatchPresentation, phase: SetPhase) {
     }
 }
 
-/** Switch and send button of the temporary navigation recorder; no values or note texts are ever recorded. */
+/** Send button of the always-on navigation recorder; no values or note texts are ever recorded. */
 @Composable
 internal fun RecorderSettings() {
-    val recording by NavRecorder.recording.collectAsState()
     val scope = rememberCoroutineScope()
     var message by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        SwitchRow("Navigation aufzeichnen (Test, nur diese Version)", recording) { NavRecorder.setEnabled(it); message = "" }
-        ListButton("Aufzeichnung ans Handy senden", message, description = "Aufzeichnung senden") {
-            message = "Sende …"
-            scope.launch {
-                message = try { NavRecorder.export(); "Gesendet" } catch (e: Exception) { "Senden fehlgeschlagen, bitte erneut tippen" }
-            }
+    ListButton("Aufzeichnung ans Handy senden", message, description = "Aufzeichnung senden") {
+        message = "Sende …"
+        scope.launch {
+            message = try {
+                if (NavRecorder.export() > 0) "Gesendet" else "Nichts Neues zu senden"
+            } catch (e: Exception) { "Senden fehlgeschlagen, bitte erneut tippen" }
         }
     }
 }

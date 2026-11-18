@@ -10,6 +10,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object NavRecorder : DeviceRecorder("phone") {
+    /** Deletes all recordings except the one being written; returns how many sessions were removed. */
+    suspend fun deleteAll(): Int = deleteClosed()
+
+    /** Shares phone and received watch sessions as one ZIP. The current session keeps recording. */
     suspend fun export(context: Context = appContext) {
         val archive = snapshot { sessions ->
             if (sessions.isEmpty()) throw NoSuchElementException()

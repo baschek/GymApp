@@ -1,49 +1,38 @@
 package de.baschek.gymapp.wear
 
-import de.baschek.gymapp.wear.transport.WorkoutPublication
 import android.content.Context
-import com.google.android.gms.tasks.Tasks
-import com.google.android.gms.wearable.PutDataMapRequest
-import com.google.android.gms.wearable.Wearable
-import de.baschek.gymapp.core.model.GymJson
+import de.baschek.gymapp.core.wear.events.WorkoutPublicationGate
+import de.baschek.gymapp.core.wear.events.afterWorkoutQuietWindow
 import de.baschek.gymapp.data.GymRepository
+import de.baschek.gymapp.wear.transport.WorkoutDataItems
 import de.baschek.gymapp.wear.transport.workoutHash
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CancellationException
 
 internal fun transferHash(id: String): String = workoutHash(id)
 
-/** Queue lives in Room, not in a transient callback; DataItems persist until acknowledged. */
-class PhoneEventPublisher(private val context: Context, private val repository: GymRepository) {
+/** Queue lives in Room, and DataItems persist until acknowledged. */
+internal class PhoneEventPublisher(private val context: Context, private val repository: GymRepository) {
+    private val publication = WorkoutPublicationGate()
+    private val events = repository.observePhoneWatchEvents()
+
     fun start(scope: CoroutineScope) = scope.launch {
-        publishWhileActive(repository.observePhoneWatchEvents()) { events ->
-              withContext(Dispatchers.IO) {
-                val publication = WorkoutPublication(events)
-                for (event in events) {
-                    try {
-                        val id = transferHash(event.eventId)
-                        val bytes = GymJson.encodeToString(de.baschek.gymapp.core.wear.events.WorkoutEvent.serializer(), event).toByteArray(Charsets.UTF_8)
-                        require(bytes.size <= 2 * 1024 * 1024)
-                        withTransferAsset(context, bytes) { asset ->
-                            val request = PutDataMapRequest.create("/gymapp/event/v1/$id").apply {
-                                publication.mark(dataMap)
-                                dataMap.putString("id", id)
-                                dataMap.putLong("attempt", System.currentTimeMillis())
-                                dataMap.putAsset("payload", asset)
-                            }.asPutDataRequest().setUrgent()
-                            Tasks.await(Wearable.getDataClient(context).putDataItem(request), 30, TimeUnit.SECONDS)
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // Keep the durable outbox for a later attempt.
-                    }
+        publishWhileActive(events.afterWorkoutQuietWindow()) { snapshot ->
+            if (snapshot.isNotEmpty()) withContext(Dispatchers.IO) {
+                publication.publish(read = { events.first() }) { latest ->
+                    // The ticker may arrive while another edit is still inside the quiet window.
+                    if (latest == snapshot) WorkoutDataItems.publish(context, latest)
                 }
-              }
+            }
         }
+    }
+
+    suspend fun acknowledge(localNode: String, hash: String) = publication.acknowledge {
+        events.first().firstOrNull { transferHash(it.eventId) == hash }
+            ?.let { repository.acknowledgePhoneWatchEvent(it.eventId) }
+        WorkoutDataItems.deleteLocal(context, localNode, WorkoutDataItems.PREFIX, hash)
     }
 }

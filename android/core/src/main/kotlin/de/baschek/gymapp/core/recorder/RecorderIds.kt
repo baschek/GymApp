@@ -1,6 +1,6 @@
 package de.baschek.gymapp.core.recorder
 
-/** The recorder accepts only navigation identifiers. Unknown inputs retain the event, never its payload. */
+/** The always-on recorder accepts only navigation identifiers. Unknown inputs retain the event, never its payload. */
 internal object RecorderIds {
     private fun words(ids: String) = ids.trim().split(Regex("""\s+""")).toSet()
 
@@ -23,7 +23,7 @@ internal object RecorderIds {
         filter_group filter_gym finish finish_cancel finish_confirm finish_open hint_apply hint_close hint_open
         install_update jump_chip jump_row keep_mine keep_newest keep_screen_on live_update live_update_later
         live_update_settings log_set mark_reviewed missing_back month_next month_prev move_down move_up muscle
-        muscle_row navrec_export navrec_switch next next_open note note_open note_save notice_seen notif_allow
+        muscle_row navrec_delete navrec_export next next_open note note_open note_save notice_seen notif_allow
         notif_cancel notif_later notif_settings number_cancel number_ok open_conflict open_exercise
         open_exercises open_goals open_list open_machine open_plan open_session open_settings pair period
         pick_exercise pick_gym plans_collapse plans_expand plus15 profile remove_addon remove_exercise

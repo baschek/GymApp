@@ -4,6 +4,22 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.9.0] - 2026-11-18
+
+Native Android app release (GitHub release `android-v2.9.0`) with phone APK
+`gymapp-2.9.0.apk` and watch APK `gymapp-watch-2.9.0.apk`. Update phone and watch together.
+
+### Fixed
+
+- Phone and watch recover incomplete workout transfers, retry pending changes promptly, and process workout events independently. Server pulls preserve active workouts with local changes or a watch replica. The watch shows how many changes are still pending.
+- During live handoff, the watch waits for a burst of phone edits to settle before changing the workout view and keeps edits in progress.
+- Health Connect: deleting a personal workout also removes its exported exercise session and heart-rate records. Exercise records now carry the recording device, the plan name as title and time-zone offsets, so earlier exports are replaced once.
+- Watch: the header shows only the time and, while recording, the pulse; long exercise names stay inside the round display (two lines, smaller font); round buttons use monochrome icons instead of text symbols, including a clean heart for the pulse.
+
+### Changed
+
+- The navigation recorder is always on for phone and watch, without a switch. It starts a new recording per workout and after 3 h, keeps the newest 20 recordings for at most 14 days (phone 100 MB, watch 20 MB), takes no watch screenshots in ambient mode, and can be shared or deleted in the settings. Masking is unchanged.
+
 ## [android-v2.8.1] - 2026-11-18
 
 Native Android app release (GitHub release `android-v2.8.1`) with phone APK

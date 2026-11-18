@@ -65,7 +65,16 @@ data class WatchPresentation(
     val dayGyms: Map<String, String> = emptyMap(),
     /** Modes with their estimated duration per "plan:<id>" / "day:<id>"; missing keys show the modes without duration. */
     val modeOptions: Map<String, List<WatchOption>> = emptyMap(),
-)
+    /** Identity of the workout owning the set drafts. */
+    val sessionId: String? = null,
+) {
+    internal val pendingChangesLabel: String?
+        get() = when (pendingCount) {
+            0 -> null
+            1 -> "1 Änderung nicht übertragen"
+            else -> "$pendingCount Änderungen nicht übertragen"
+        }
+}
 
 /** Events are handled by the local-first repository; UI never fabricates training data. */
 sealed interface WatchAction {

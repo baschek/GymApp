@@ -23,6 +23,7 @@ import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.health.HealthAvailability
 import de.baschek.gymapp.health.HealthConnectExporter
 import de.baschek.gymapp.health.HealthExportConsent
+import de.baschek.gymapp.health.HealthExportDeleteWorker
 import de.baschek.gymapp.health.HealthExportWorker
 import de.baschek.gymapp.health.publishHealthSettings
 import de.baschek.gymapp.telemetry.Telemetry
@@ -94,7 +95,7 @@ fun HealthExportSettings(profile: String) {
                 if (enabled) SoftButton("Automatischen Export ausschalten", onClick = {
                     Telemetry.track("health", "disable")
                     scope.launch {
-                        HealthExportWorker.cancelAll(context); consent.revoke(); enabled = false
+                        HealthExportWorker.cancelAll(context); HealthExportDeleteWorker.cancelAll(context); consent.revoke(); enabled = false
                         refresh(); publishHealthSettings(context)
                     }
                 }, modifier = Modifier.padding(top = 8.dp).fillMaxWidth())

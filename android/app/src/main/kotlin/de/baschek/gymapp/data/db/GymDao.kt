@@ -49,6 +49,14 @@ interface GymDao {
     @Query("SELECT entity, id FROM documents WHERE profile = :profile AND rev IS NOT NULL")
     suspend fun syncedKeys(profile: String): List<DocKeyRow>
 
+    @Query("""
+        SELECT d.id FROM documents AS d
+        WHERE d.profile = :profile AND d.entity = 'session' AND d.status = 'active' AND d.deleted = 0
+        AND (EXISTS (SELECT 1 FROM outbox AS o WHERE o.entity = d.entity AND o.id = d.id)
+          OR EXISTS (SELECT 1 FROM settings AS s WHERE s.name = 'watch_replica:' || d.id))
+    """)
+    suspend fun activeSessionsWithLocalChanges(profile: String): List<String>
+
     @Query("SELECT COUNT(*) FROM outbox")
     fun observeOutboxCount(): Flow<Int>
 
@@ -101,6 +109,13 @@ interface GymDao {
 
     @Query("DELETE FROM settings WHERE name LIKE 'watch_outgoing:%:' || :eventId")
     suspend fun deleteWatchOutgoing(eventId: String)
+
+    @Query("""
+        DELETE FROM settings WHERE name IN (
+            SELECT name FROM settings WHERE name GLOB :pattern ORDER BY rowid DESC LIMIT -1 OFFSET :keep
+        )
+    """)
+    suspend fun trimSettingHistory(pattern: String, keep: Int)
 
     @Query("DELETE FROM settings WHERE name LIKE :prefix || '%'")
     suspend fun deleteSettingsWithPrefix(prefix: String)

@@ -29,6 +29,8 @@ class WatchRecordingListener : WearableListenerService() {
                 val asset = DataMapItem.fromDataItem(item).dataMap.getAsset("payload") ?: continue
                 val response = Tasks.await(client.getFdForAsset(asset), 60, TimeUnit.SECONDS)
                 requireNotNull(response.inputStream).use { receiveRecording(File(filesDir, "navrec"), name, it) }
+                NavRecorder.install(this)
+                NavRecorder.prune()
                 Tasks.await(client.deleteDataItems(item.uri), 30, TimeUnit.SECONDS)
             } catch (_: Exception) {
                 Log.w("NavRecorder", "Watch recording transfer incomplete")

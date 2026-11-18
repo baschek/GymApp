@@ -2,6 +2,7 @@ package de.baschek.gymapp.wear.backend.workout
 
 import android.content.Context
 import android.util.AtomicFile
+import android.util.Log
 import de.baschek.gymapp.core.model.*
 import de.baschek.gymapp.core.progression.*
 import de.baschek.gymapp.core.stats.PackState
@@ -12,6 +13,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.time.Instant
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +50,8 @@ import kotlinx.serialization.json.JsonObject
     val deletedSessionIds: Set<String> = emptySet(),
     /** "Puls bei jedem Training aufzeichnen" (spec J): null until the one-time question is answered. */
     val heartAutoConsent: Boolean? = null,
+    /** Terminal delivery results survive a restart, even for sessions that never got a replica. */
+    val rejectedEvents: Map<String, String> = emptyMap(),
 ) {
     val sessionId: String? get() = replica?.sessionId
     val session: Session? get() = replica?.document?.let { runCatching { DocumentCodec.decode(Session.serializer(), it) }.getOrNull() }
@@ -99,7 +103,8 @@ class WatchWorkoutRepository private constructor(
         val result = try { GymJson.decodeFromString(WatchWorkoutState.serializer(), bytes.toString(Charsets.UTF_8)) }
             catch (e: Exception) { throw IOException("Invalid workout cache", e) }
         if (result.profile != profile || result.catalog.profile != profile || result.replica?.profile?.let { it != profile } == true ||
-            result.outbox.any { it.profile != profile } || (profile == WorkoutProfile.TEST && result.outbox.isNotEmpty()) ||
+            result.outbox.any { it.profile != profile } ||
+            (profile == WorkoutProfile.TEST && (result.outbox.isNotEmpty() || result.rejectedEvents.isNotEmpty())) ||
             result.replica?.let { WorkoutEvents.validate(it) != null } == true ||
             result.archivedReplicas.any { (id, replica) -> replica.sessionId != id || replica.profile != profile || WorkoutEvents.validate(replica) != null }) throw IOException("Invalid workout profile or replica")
         return result
@@ -416,7 +421,7 @@ class WatchWorkoutRepository private constructor(
         val recent = rest.sortedByDescending { it.value.lastOperation?.occurredAtMillis ?: Long.MIN_VALUE }.take(MAX_ARCHIVED_REPLICAS)
         return (needed + recent).associate { it.key to it.value }
     }
-    /** Acknowledge only IDs durably accepted by the receiver. */
+    /** Acknowledge IDs durably handled by the receiver. */
     suspend fun acknowledge(eventIds: Set<String>) = locked { s -> discardDeletedWhenSafe(s.copy(outbox = s.outbox.filterNot { it.eventId in eventIds })) to Unit }
     suspend fun receive(event: WorkoutEvent): EventResult = locked { s -> receive(s, event) }
 
@@ -424,15 +429,35 @@ class WatchWorkoutRepository private constructor(
     suspend fun receiveBatch(events: List<WorkoutEvent>): WorkoutBatchResult = locked { initial ->
         var state = initial
         val results = applyWorkoutBatch(events) { event ->
-            val (next, result) = receive(state, event)
-            state = next
-            result
+            try {
+                val (next, result) = receive(state, event)
+                state = next
+                result
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w("WorkoutEvents", "Phone event will be retried after ${error.javaClass.simpleName}")
+                EventResult.Rejected("event_failed")
+            }
         }
         state to results
     }
 
     private fun receive(s: WatchWorkoutState, event: WorkoutEvent): Pair<WatchWorkoutState, EventResult> {
         if (profile != WorkoutProfile.PERSONAL || event.profile != profile) return s to EventResult.Rejected("profile_local_only")
+        val key = EventRejections.receiptKey(event.sessionId, event.eventId)
+        key?.let { s.rejectedEvents[it] }?.let { return s to EventResult.Rejected(it) }
+        val predecessorKey = event.predecessorEventId?.let { EventRejections.receiptKey(event.sessionId, it) }
+        val (next, result) = reduceIncoming(s, event, predecessorKey != null && predecessorKey in s.rejectedEvents)
+        if (result !is EventResult.Rejected || !EventRejections.shouldAcknowledge(result)) return next to result
+        Log.w("WorkoutEvents", "Phone event rejected permanently: ${result.reason}")
+        if (key == null) return s to result
+        val receipts = s.rejectedEvents
+        val retained = if (receipts.size >= WorkoutEvents.MAX_RECEIPTS) receipts - receipts.keys.first() else receipts
+        return s.copy(rejectedEvents = retained + (key to result.reason)) to result
+    }
+
+    private fun reduceIncoming(s: WatchWorkoutState, event: WorkoutEvent, predecessorWasRejected: Boolean): Pair<WatchWorkoutState, EventResult> {
         val active = s.replica
         val archived = s.archivedReplicas[event.sessionId]
         val retained = active?.takeIf { it.sessionId == event.sessionId } ?: archived
@@ -446,11 +471,13 @@ class WatchWorkoutRepository private constructor(
             active == null || s.session?.status == SessionStatus.COMPLETED -> ReplicaState(profile, event.sessionId, event.before)
             else -> return s to EventResult.Rejected("different_active_session")
         }
-        return when (val result = WorkoutEvents.apply(current, event)) {
+        return when (val result = WorkoutEvents.apply(current, event, predecessorWasRejected)) {
             is EventResult.Applied -> {
+                val decoded = decode<Session>(result.state.document)
+                if (decoded == null || decoded.gymId.isNullOrBlank() || decoded.status !in setOf(SessionStatus.ACTIVE, SessionStatus.COMPLETED))
+                    return s to EventResult.Rejected("invalid_session")
                 if (archived != null && active?.sessionId != event.sessionId) {
-                    val decoded = decode<Session>(result.state.document)
-                    val catalog = if (decoded?.status == SessionStatus.COMPLETED) s.catalog.copy(sessions = s.catalog.sessions + (event.sessionId to result.state.document)) else s.catalog
+                    val catalog = if (decoded.status == SessionStatus.COMPLETED) s.catalog.copy(sessions = s.catalog.sessions + (event.sessionId to result.state.document)) else s.catalog
                     s.copy(archivedReplicas = pruneArchived(s.archivedReplicas + (event.sessionId to result.state), s.outbox), catalog = catalog) to result
                 } else {
                     val old = if (active != null && active.sessionId != event.sessionId) s.archivedReplicas + (active.sessionId to active) else s.archivedReplicas

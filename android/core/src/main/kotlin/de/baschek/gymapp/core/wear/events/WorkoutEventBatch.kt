@@ -8,10 +8,10 @@ data class WorkoutBatchResult(
     val lastLeader: ReplicaState?,
 )
 
-/** Fold a durable delivery inside the receiver's transaction. Never retain intermediate replicas. */
+/** Fold a delivery in causal order. The receiver persists accepted events and terminal rejections. */
 inline fun applyWorkoutBatch(events: List<WorkoutEvent>, apply: (WorkoutEvent) -> EventResult): WorkoutBatchResult {
     val ids = events.mapTo(mutableSetOf()) { it.eventId }
-    val waiting = events.groupBy { it.predecessorEventId }.toMutableMap()
+    val waiting = events.groupBy { event -> event.predecessorEventId?.takeUnless { it == event.eventId } }.toMutableMap()
     val ready = PriorityQueue(compareBy(WorkoutEvent::occurredAtMillis, WorkoutEvent::deviceId, WorkoutEvent::eventId))
     // An external predecessor can already have a receipt. The reducer checks it as usual.
     for (predecessor in waiting.keys.filter { it !in ids }) ready.addAll(waiting.remove(predecessor).orEmpty())

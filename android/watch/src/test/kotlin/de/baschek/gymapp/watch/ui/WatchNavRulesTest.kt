@@ -93,5 +93,7 @@ class WatchNavRulesTest {
         assertEquals("skip_rest", recorderElement(elementName("Weiter")))
         assertEquals("effort", recorderElement(elementName("1–2 übrig")))
         assertEquals("tap", recorderElement(elementName("Etwas ganz Neues")))
+        assertEquals("navrec_export", recorderElement(elementName("Aufzeichnung senden")))
+        assertEquals("tap", recorderElement(elementName("Navigation aufzeichnen")))
     }
 }

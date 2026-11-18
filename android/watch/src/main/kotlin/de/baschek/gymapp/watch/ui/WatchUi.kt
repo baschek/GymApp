@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -41,6 +42,7 @@ import androidx.wear.compose.material3.TimeText
 import androidx.wear.compose.material3.curvedText
 import androidx.wear.compose.material3.timeTextCurvedText
 import androidx.wear.compose.material3.timeTextSeparator
+import de.baschek.gymapp.core.health.PulseState
 import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.model.WorkoutMode
 import de.baschek.gymapp.core.training.EFFORT_PICK_TIMEOUT_MILLIS
@@ -48,7 +50,10 @@ import de.baschek.gymapp.core.training.effortChoices
 import de.baschek.gymapp.core.training.resolveEffort
 import de.baschek.gymapp.watch.recorder.NavRecorder
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlin.math.abs
+
+private const val PHONE_HANDOFF_QUIET_MILLIS = 450L
 
 /** Draft values of the open set; survive remote prefill updates once edited (spec A4) and activity re-creation. */
 @Stable
@@ -60,11 +65,34 @@ internal class Draft(weight: Double?, amount: Double, addOns: Set<Int>, edited: 
 
     fun total(current: WatchCurrentSet): Double? = weight?.plus(addOns.sumOf { current.addOns.getOrElse(it) { 0.0 } })
     fun addOnValues(current: WatchCurrentSet): List<Double> = addOns.sorted().mapNotNull { current.addOns.getOrNull(it) }
+}
+
+/** Edits stay attached to their own set if the phone moves the workout to another set or back again. */
+private class WorkoutDrafts {
+    private val bySet = mutableMapOf<Pair<String, String>, Draft>()
+
+    fun forSet(current: WatchCurrentSet?): Draft {
+        fun fresh() = Draft(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns.orEmpty(), false)
+        if (current == null || current.setId.isEmpty()) return fresh()
+        return bySet.getOrPut(current.exerciseId to current.setId) { fresh() }
+    }
 
     companion object {
-        val Saver = listSaver<Draft, Any>(
-            save = { listOf(it.weight ?: Double.NaN, it.amount, it.addOns.joinToString(","), it.edited) },
-            restore = { Draft((it[0] as Double).takeUnless(Double::isNaN), it[1] as Double, (it[2] as String).split(',').mapNotNull(String::toIntOrNull).toSet(), it[3] as Boolean) },
+        val Saver = listSaver<WorkoutDrafts, Any>(
+            save = { drafts ->
+                drafts.bySet.entries.filter { it.value.edited }.flatMap { (set, draft) ->
+                    listOf(set.first, set.second, draft.weight ?: Double.NaN, draft.amount, draft.addOns.joinToString(","))
+                }
+            },
+            restore = { saved ->
+                WorkoutDrafts().apply {
+                    saved.chunked(5).forEach { row ->
+                        val addOns = (row[4] as String).split(',').mapNotNull(String::toIntOrNull).toSet()
+                        bySet[(row[0] as String) to (row[1] as String)] =
+                            Draft((row[2] as Double).takeUnless(Double::isNaN), row[3] as Double, addOns, true)
+                    }
+                }
+            },
         )
     }
 }
@@ -190,16 +218,24 @@ internal class UiContext(
  */
 @Composable
 fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObserver.None, onExit: () -> Unit = {}, dispatch: (WatchAction) -> Unit) {
-    val finished = state.summary != null && !state.sessionActive
+    // Hold phase, set details and the navigation event together so the current page always describes the same set.
+    val incomingTarget = state.handoffTarget()
+    var settled by remember(state.testProfile) { mutableStateOf(state) }
+    val waitingForPhone = state.phoneLeads && incomingTarget != settled.handoffTarget()
+    val workout = if (waitingForPhone) settled else state
+    val latestIncoming by rememberUpdatedState(state)
+    SideEffect { if (!waitingForPhone) settled = state }
+
+    val finished = workout.summary != null && !workout.sessionActive
     var navCode by rememberSaveable { mutableStateOf("") }
     var seenEvent by rememberSaveable { mutableStateOf<String?>(null) }
-    val nav = NavState.decode(navCode) ?: WatchNavRules.afterEvent(null, state.sessionActive, finished, state.celebrations.isNotEmpty())
+    val nav = NavState.decode(navCode) ?: WatchNavRules.afterEvent(null, workout.sessionActive, finished, workout.celebrations.isNotEmpty())
     val effort = remember { EffortState() }
-    val phase = WatchNavRules.phase(state, effort.pending != null)
+    val phase = WatchNavRules.phase(workout, effort.pending != null)
     val latestPhase by rememberUpdatedState(phase)
     val latestObserver by rememberUpdatedState(observer)
     val recording by NavRecorder.recording.collectAsState()
-    val latestState by rememberUpdatedState(state)
+    val latestState by rememberUpdatedState(workout)
     fun go(target: NavState, cause: String) {
         val now = NavState.decode(navCode)
         if (target == now) return
@@ -219,12 +255,12 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
 
     // Automatic screen changes only on real events, never on the per-second countdowns; restored state (re-creation,
     // notification tap) is kept because the event was already seen (spec A4, B).
-    val eventKey = "${state.navigationKey}#${state.sessionActive}#$finished"
+    val eventKey = workout.eventKey()
     LaunchedEffect(eventKey) {
         if (seenEvent == eventKey && navCode.isNotEmpty()) return@LaunchedEffect
         val first = seenEvent == null
         seenEvent = eventKey
-        go(WatchNavRules.afterEvent(NavState.decode(navCode), state.sessionActive, finished, state.celebrations.isNotEmpty()), if (first) "auto:start" else "auto:event")
+        go(WatchNavRules.afterEvent(NavState.decode(navCode), workout.sessionActive, finished, workout.celebrations.isNotEmpty()), if (first) "auto:start" else "auto:event")
     }
 
     val pager = rememberPagerState(initialPage = nav.page, pageCount = { TrainingPage.COUNT })
@@ -241,15 +277,28 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
     }
     LaunchedEffect(phase) { val now = NavState.decode(navCode); if (now?.top == Route.TRAINING && now.page == TrainingPage.MIDDLE) latestObserver.onScreen(now.screen(phase), "auto:phase") }
 
-    val current = state.current
-    val draft = rememberSaveable(current?.exerciseId, current?.setId, saver = Draft.Saver) {
-        Draft(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns ?: emptySet(), false)
+    val current = workout.current
+    val drafts = rememberSaveable(workout.sessionId, workout.sessionActive, workout.testProfile, saver = WorkoutDrafts.Saver) { WorkoutDrafts() }
+    val draft = remember(drafts, current?.exerciseId, current?.setId) {
+        drafts.forSet(current)
     }
     // A remote update of the prefill (phone, assistant) only replaces values the person has not edited (spec A4).
-    LaunchedEffect(current?.weight, current?.amount, current?.selectedAddOns) {
+    LaunchedEffect(draft, current?.weight, current?.amount, current?.selectedAddOns) {
         if (!draft.edited) { draft.weight = current?.weight; draft.amount = current?.amount ?: 0.0; draft.addOns = current?.selectedAddOns ?: emptySet() }
     }
     val selection = rememberSaveable(saver = Selection.Saver) { Selection() }
+    val editingDraft by rememberUpdatedState(
+        draft.edited && nav.top == Route.EDITOR &&
+            (selection.editor == EditorKind.WEIGHT.name || selection.editor == EditorKind.AMOUNT.name),
+    )
+    LaunchedEffect(incomingTarget, waitingForPhone) {
+        if (waitingForPhone) {
+            delay(PHONE_HANDOFF_QUIET_MILLIS)
+            // Keep the editor and its set visible until the wearer closes it.
+            snapshotFlow { editingDraft }.first { !it }
+            settled = latestIncoming
+        }
+    }
     // Recorder hook: the visible screen (sub-views first, then the training page or phase), only while recording.
     val visibleId = recorderScreen(nav, phase, selection.editor)
     LaunchedEffect(visibleId, recording) { if (recording) NavRecorder.screen(visibleId) }
@@ -260,11 +309,11 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
 
     // Undo appears for 6.5 s after a set, left of "Weiter" (spec F).
     var undoVisible by remember { mutableStateOf(false) }
-    LaunchedEffect(state.navigationKey, state.restRemainingSeconds != null) {
-        if (state.restRemainingSeconds != null && state.undoAvailable) { undoVisible = true; delay(6_500); undoVisible = false } else undoVisible = false
+    LaunchedEffect(workout.navigationKey, workout.restRemainingSeconds != null) {
+        if (workout.restRemainingSeconds != null && workout.undoAvailable) { undoVisible = true; delay(6_500); undoVisible = false } else undoVisible = false
     }
 
-    val ui = UiContext(state, dispatch, nav, phase, pager, draft, selection, effort, undoVisible, celebration, ::go)
+    val ui = UiContext(workout, dispatch, nav, phase, pager, draft, selection, effort, undoVisible, celebration, ::go)
     LaunchedEffect(effort.pending, effort.interaction.intValue) {
         if (effort.pending != null) { delay(EFFORT_PICK_TIMEOUT_MILLIS); ui.commitEffort(if (effort.userMoved) effort.selected else null) }
     }
@@ -281,13 +330,19 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
     CompositionLocalProvider(LocalAccent provides accent, LocalInteraction provides tap) {
         MaterialTheme(colorScheme = ColorScheme(primary = accent.color, onPrimary = accent.onColor)) {
             AppScaffold(timeText = { WatchTimeText(state) }, containerColor = Color.Black) {
-                if (state.ambient && state.sessionActive) AmbientScreen(state, phase)
+                if (state.ambient && workout.sessionActive) AmbientScreen(workout, phase)
                 else SwipeNavHost(nav, onBack = { back("user:swipe") }, onExit = onExit) { route -> RouteContent(route, ui) }
                 ErrorBanner(state.error)
             }
         }
     }
 }
+
+private fun WatchPresentation.eventKey() = "$navigationKey#$sessionActive#${summary != null && !sessionActive}"
+
+private data class HandoffTarget(val event: String, val phase: SetPhase, val exerciseId: String?, val setId: String?)
+
+private fun WatchPresentation.handoffTarget() = HandoffTarget(eventKey(), WatchNavRules.phase(this, false), current?.exerciseId, current?.setId)
 
 /** Equivalent of SwipeDismissableNavHost for the saveable back stack: the edge swipe closes the top sub-view. */
 @Composable
@@ -339,19 +394,27 @@ private fun RouteContent(route: Route, ui: UiContext) {
     }
 }
 
-/** Time on every screen (spec A7); during a workout the pulse, in the test profile a permanent "Testprofil" (spec L). */
+/**
+ * Time on every screen (spec A7). Kept short so it sits calmly on the curve: the time, while a heart-rate recording
+ * delivers readings a short "123 bpm", and in the test profile a short "Test" (spec L). "Puls aus" is not shown here;
+ * the pulse button and the health page carry that state.
+ */
 @Composable
 private fun WatchTimeText(state: WatchPresentation) {
-    val pulse = when {
-        !state.sessionActive -> null
-        state.ambient -> "♥ –"
-        else -> state.pulse?.label ?: state.bpm?.let { "♥ $it" } ?: "Puls aus"
-    }
+    val pulse = headerPulse(state)
     TimeText { time ->
         timeTextCurvedText(time)
         if (pulse != null) { timeTextSeparator(); curvedText(pulse, color = Muted) }
-        if (state.testProfile) { timeTextSeparator(); curvedText("Testprofil", color = Warning) }
+        if (state.testProfile) { timeTextSeparator(); curvedText("Test", color = Warning) }
     }
+}
+
+/** "123 bpm" while a reading of the running workout's recording exists (not in ambient mode), else nothing. */
+internal fun headerPulse(state: WatchPresentation): String? {
+    val bpm = state.bpm ?: return null
+    if (!state.sessionActive || state.ambient) return null
+    val measuring = state.pulse?.state?.let { it == PulseState.MEASURING } ?: true
+    return if (measuring) "$bpm bpm" else null
 }
 
 /** Real rejections name their reason and disappear after 3 s (WatchRoot); no-ops stay silent (spec L). */

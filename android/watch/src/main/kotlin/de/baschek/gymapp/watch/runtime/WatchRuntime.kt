@@ -23,7 +23,6 @@ data class WatchRuntimeState(
     val heartError: String? = null,
     val exportLabel: String = "Gesundheitsexport ausstehend",
     val ambient: Boolean = false,
-    val phoneLeads: Boolean = false,
     val phoneHealthEnabled: Boolean? = null,
     val phoneHealthBackground: Boolean? = null,
 )

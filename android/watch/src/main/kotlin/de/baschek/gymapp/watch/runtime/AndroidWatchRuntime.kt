@@ -66,11 +66,10 @@ class AndroidWatchRuntime(private val app: WatchApplication, private val request
             try {
                 val nodes = Tasks.await(Wearable.getNodeClient(app).connectedNodes)
                 RuntimeMonitor.state.update { it.copy(connectionLabel = if (nodes.isEmpty()) "Nur Uhr" else "Synchronisiere …") }
-                val repository = app.repository.value
-                if (repository?.state?.value?.profile == de.baschek.gymapp.core.wear.events.WorkoutProfile.PERSONAL) WatchTransport.sendHello(app)
-                if (repository != null) WatchTransport.sendPending(app, repository.state.value.outbox)
+                WatchTransport.sendHello(app)
+                WatchTransport.sendPending(app)
                 HeartTransfer.retry(app)
-                RuntimeMonitor.state.update { it.copy(connectionLabel = if (nodes.isEmpty()) "Nur Uhr" else "Handy verbunden", pendingCount = (repository?.state?.value?.pendingEvents ?: 0) + HeartQueue(app).pending().size) }
+                RuntimeMonitor.state.update { it.copy(connectionLabel = if (nodes.isEmpty()) "Nur Uhr" else "Handy verbunden", pendingCount = (app.repository.value?.state?.value?.pendingEvents ?: 0) + HeartQueue(app).pending().size) }
             } catch (_: Exception) { RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") } }
         }
     }

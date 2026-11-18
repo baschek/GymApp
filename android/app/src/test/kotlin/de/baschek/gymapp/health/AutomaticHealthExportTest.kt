@@ -75,6 +75,7 @@ class AutomaticHealthCompletionObserverTest {
         val repo = de.baschek.gymapp.data.GymRepository(db)
         val consent = HealthExportConsent(context)
         consent.revoke()
+        context.getSharedPreferences("health_export_receipts", Context.MODE_PRIVATE).edit().clear().commit()
         consent.setEnabled(true, 1767225600000L)
         val id = UUID.randomUUID().toString()
         val active = Session(status = SessionStatus.ACTIVE, gymId = "gym", startedAt = "2026-01-01T00:00:00Z")
@@ -82,7 +83,7 @@ class AutomaticHealthCompletionObserverTest {
             "2026-01-01T00:00:00Z", false, "server", de.baschek.gymapp.core.model.GymJson.encodeToJsonElement(Session.serializer(), active).let { it as kotlinx.serialization.json.JsonObject })))
         val scheduled = java.util.Collections.synchronizedList(mutableListOf<String>())
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
-        val job = AutomaticHealthExport(context, repo) { scheduled.add(it) }.start(scope)
+        val job = AutomaticHealthExport(context, repo, schedule = { scheduled.add(it) }, scheduleDelete = {}).start(scope)
         try {
             repo.updateSession(id) { it.copy(status = SessionStatus.COMPLETED, completedAt = "2026-01-01T01:00:00Z", durationSeconds = 3600) }
             kotlinx.coroutines.withTimeout(5000) { while (scheduled.isEmpty()) kotlinx.coroutines.delay(20) }

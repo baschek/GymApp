@@ -9,6 +9,7 @@ class GymApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.workoutInbox.start(container.appScope)
         container.scheduler.schedulePeriodic()
         // Sync on app start; the worker does nothing while the app is not paired.
         container.scheduler.requestSync()
