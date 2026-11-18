@@ -4,6 +4,11 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.8.1] - 2026-11-18
+
+Native Android app release (GitHub release `android-v2.8.1`) with phone APK
+`gymapp-2.8.1.apk` and watch APK `gymapp-watch-2.8.1.apk`. Update phone and watch together.
+
 ### Fixed
 
 - Phone and watch resolve repeated disputes about the same set in one choice. The phone clears conflicts for deleted workouts on startup and reports a failed resolution.
