@@ -62,6 +62,23 @@ class WatchWorkoutRepositoryTest {
         } finally { collector.cancel() }
     }
 
+    @Test fun `rejected predecessor remains acknowledged when the successor arrives after restart`() = runTest {
+        val sender = WatchWorkoutRepository.at(temporary.root.resolve("sender"), WorkoutProfile.PERSONAL, "phone")
+        sender.replaceCatalog(catalog(WorkoutProfile.PERSONAL), 2)
+        sender.startPlan("plan", "gym", WorkoutMode.NORMAL)
+        val exercise = sender.state.value.session!!.exercises.single()
+        sender.logSet(exercise.id, exercise.sets.first().id, WatchSetInput(20.0, 12.0, "one_two"))
+        val (head, tail) = sender.state.value.outbox
+        val file = temporary.root.resolve("receiver")
+        val receiver = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch")
+        assertEquals(listOf(head.eventId), receiver.receiveBatch(listOf(head.copy(deviceId = ""))).acknowledgements)
+        assertNull(receiver.state.value.session)
+
+        val restarted = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch")
+        assertEquals(listOf(tail.eventId), restarted.receiveBatch(listOf(tail)).acknowledgements)
+        assertEquals(SetStatus.COMPLETED, restarted.state.value.session!!.exercises.single().sets.first().status)
+    }
+
     @Test fun `test profile stays local and remote events are rejected`() = runTest {
         val file = temporary.newFile("test.json").also { it.delete() }
         val repository = WatchWorkoutRepository.at(file, WorkoutProfile.TEST, "watch")

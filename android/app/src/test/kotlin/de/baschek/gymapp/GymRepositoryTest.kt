@@ -99,6 +99,43 @@ class GymRepositoryTest {
     }
 
     @Test
+    fun pullKeepsActiveSessionEditedAfterPendingKeysWereRead() = runBlocking {
+        val server = doc("session", "active", 1,
+            """{"status":"active","gym_id":"gym","started_at":"2026-01-01T00:00:00Z","exercises":[]}""")
+        val remote = server.copy(rev = 2, deleted = true)
+        repo.syncStore.applyRemote(listOf(server))
+        val keep = repo.syncStore.pendingKeys()
+        assertTrue(keep.isEmpty())
+
+        repo.updateSession(server.id) { it.copy(notes = "Local set notes") }
+        repo.syncStore.applyRemote(listOf(remote))
+        assertEquals("Local set notes", repo.getSession(server.id)?.notes)
+
+        repo.syncStore.applySnapshot(emptyList(), rev = 2, keep = keep)
+        assertEquals("Local set notes", repo.getSession(server.id)?.notes)
+        assertEquals(1L, repo.syncStore.pendingOps(10).single().baseRev)
+    }
+
+    @Test
+    fun pullKeepsActiveWatchReplicaAfterTheServerOutboxIsEmpty() = runBlocking {
+        val server = doc("session", "c41e939a-8340-4784-a92a-becc98a6dd8b", 1,
+            """{"status":"active","gym_id":"gym","started_at":"2026-01-01T00:00:00Z","exercises":[]}""")
+        repo.syncStore.applyRemote(listOf(server))
+        repo.enableWatchCompanion()
+        assertTrue(repo.syncStore.pendingKeys().isEmpty())
+        assertNotNull(repo.getSetting("watch_replica:${server.id}"))
+
+        val remote = server.copy(rev = 2, deleted = true)
+        repo.syncStore.applyRemote(listOf(remote))
+        repo.syncStore.applySnapshot(emptyList(), rev = 2, keep = emptySet())
+        assertNotNull(repo.getSession(server.id))
+
+        db.dao().deleteSetting("watch_replica:${server.id}")
+        repo.syncStore.applyRemote(listOf(remote))
+        assertNull(repo.getSession(server.id))
+    }
+
+    @Test
     fun snapshotNeverTouchesTestProfile() = runBlocking {
         repo.setProfile(Profile.TEST)
         repo.seedDemoData()

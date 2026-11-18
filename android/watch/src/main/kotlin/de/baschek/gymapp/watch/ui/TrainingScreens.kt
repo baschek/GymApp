@@ -429,7 +429,7 @@ private fun RightPage(ui: UiContext) {
         item { ListButton("Training beenden") { ui.push(Route.END_CONFIRM) } }
         item { ListButton("Auf Handy öffnen") { ui.dispatch(WatchAction.OpenPhone) } }
         item { ListButton("Gesundheit", state.pulse?.label ?: state.recording) { ui.push(Route.HEALTH) } }
-        item { ListButton("Verbindung", state.connection + if (state.pendingCount > 0) " · ${state.pendingCount} offen" else "") { ui.push(Route.CONNECTION) } }
+        item { ListButton("Verbindung", state.pendingChangesLabel ?: state.connection) { ui.push(Route.CONNECTION) } }
         item { ListButton("Einstellungen") { ui.push(Route.SETTINGS) } }
     }
 }

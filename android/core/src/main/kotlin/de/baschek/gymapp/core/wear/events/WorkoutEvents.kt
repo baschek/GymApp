@@ -73,8 +73,7 @@ object WorkoutEvents {
         return null
     }
 
-    fun apply(state: ReplicaState, event: WorkoutEvent): EventResult {
-        validate(state)?.let { return EventResult.Rejected(it) }
+    fun apply(state: ReplicaState, event: WorkoutEvent, predecessorWasRejected: Boolean = false): EventResult {
         if (!uuid(event.eventId) || !uuid(event.sessionId) || !id(event.deviceId) || event.occurredAtMillis < 0 ||
             !documentValid(event.before) || !documentValid(event.after) || !timerValid(event.timer) || !optionalId(event.focusExerciseId) ||
             (event.predecessorEventId != null && (!uuid(event.predecessorEventId) || event.predecessorEventId == event.eventId))) return EventResult.Rejected("invalid_event")
@@ -82,13 +81,15 @@ object WorkoutEvents {
             event.resolutions.any { !hash(it.conflictId) || it.path.isEmpty() || it.path.size > 8 || it.path.any { p -> !id(p) } || (it.chosen != it.candidateA && it.chosen != it.candidateB) } ||
             event.resolutions.map { it.conflictId }.toSet().size != event.resolutions.size ||
             GymJson.encodeToString(event).toByteArray(Charsets.UTF_8).size > MAX_DOCUMENT_BYTES * 4) return EventResult.Rejected("invalid_resolution")
+        validate(state)?.let { return EventResult.Rejected(it) }
         if (event.sessionId != state.sessionId) return EventResult.Rejected("different_session")
         if (event.profile != state.profile) return EventResult.Rejected("different_profile")
         val fingerprint = MessageDigest.getInstance("SHA-256").digest(GymJson.encodeToString(event).toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         state.receipts.firstOrNull { it.eventId == event.eventId }?.let {
             return if (it.fingerprint == fingerprint) EventResult.Replayed(state) else EventResult.Rejected("event_id_reused")
         }
-        if (event.predecessorEventId != null && state.receipts.none { it.eventId == event.predecessorEventId }) return EventResult.Rejected("missing_predecessor")
+        if (event.predecessorEventId != null && !predecessorWasRejected && state.receipts.none { it.eventId == event.predecessorEventId })
+            return EventResult.Rejected("missing_predecessor")
         if (state.receipts.size >= MAX_RECEIPTS) return EventResult.Rejected("receipt_capacity")
         val stamp = OperationStamp(event.occurredAtMillis, event.deviceId, event.eventId)
         if (event.resolutions.isNotEmpty()) return applyResolution(state, event, stamp, fingerprint)
@@ -244,5 +245,5 @@ object WorkoutEvents {
     private fun hash(s: String) = s.matches(Regex("[0-9a-f]{64}"))
     private fun optionalId(s: String?) = s == null || id(s)
     private fun id(s: String) = s.isNotBlank() && s.length <= MAX_ID && s.none { it.isISOControl() }
-    private fun uuid(s: String) = runCatching { UUID.fromString(s).toString() == s.lowercase() }.getOrDefault(false)
+    internal fun uuid(s: String) = runCatching { UUID.fromString(s).toString() == s.lowercase() }.getOrDefault(false)
 }

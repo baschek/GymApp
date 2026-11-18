@@ -132,15 +132,16 @@ class WorkoutEventsTest {
 }
 
 class EventRejectionsTest {
-    @kotlin.test.Test fun transientReasonsAreKeptForRetry() {
-        for (r in listOf("local_only", "profile_local_only", "resolution_missing_conflict"))
-            kotlin.test.assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
+    @Test fun transientReasonsAreKeptForRetry() {
+        for (reason in listOf("local_only", "profile_local_only", "resolution_missing_conflict", "resolution_missing_parent",
+            "missing_predecessor", "other_active_session", "different_active_session", "receipt_capacity",
+            "conflict_capacity", "invalid_state", "different_session", "different_profile", "event_failed"))
+            assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(reason)), reason)
     }
 
-    @kotlin.test.Test fun rejectedEventsAreNotAcknowledged() {
-        for (r in listOf("invalid_event", "invalid_session", "invalid_resolution", "event_id_reused", "receipt_capacity",
-            "conflict_capacity", "deleted_session", "different_session", "other_active_session", "different_active_session",
-            "missing_finish_time", "missing_duration", "different_profile"))
-            kotlin.test.assertFalse(EventRejections.shouldAcknowledge(EventResult.Rejected(r)), r)
+    @Test fun permanentlyRejectedEventsAreAcknowledged() {
+        for (reason in listOf("invalid_event", "invalid_session", "invalid_merge", "invalid_resolution", "event_id_reused",
+            "deleted_session", "missing_finish_time", "missing_duration"))
+            assertTrue(EventRejections.shouldAcknowledge(EventResult.Rejected(reason)), reason)
     }
 }

@@ -169,6 +169,87 @@ class WatchRepositoryTest {
         assertEquals(milestones, repo.observeMilestones().first())
     }
 
+    @Test fun rejectedHeadIsAcknowledgedAndItsSuccessorSurvivesRestart() = runBlocking {
+        val rejected = event(base, base.copy(gymId = null))
+        val successor = event(base, finish(set(base, 0, 30.0, "2026-01-01T00:01:00Z"))).copy(
+            predecessorEventId = rejected.eventId, occurredAtMillis = rejected.occurredAtMillis + 1)
+        val firstResult = repo.importWatchEvents(listOf(rejected))
+        assertEquals(listOf(rejected.eventId), firstResult.acknowledgements)
+        assertEquals(0, firstResult.appliedCount)
+        assertNull(repo.getSession(sessionId))
+
+        val restarted = GymRepository(db)
+        val result = restarted.importWatchEvents(listOf(successor))
+        assertEquals(listOf(successor.eventId), result.acknowledgements)
+        assertEquals(SessionStatus.COMPLETED, restarted.getSession(sessionId)!!.status)
+        assertEquals(0, restarted.importWatchEvents(listOf(rejected, successor)).appliedCount)
+    }
+
+    @Test fun exceptionRollsBackOnlyItsOwnEventAndPreservesItForRetry() = runBlocking {
+        start()
+        var failOnce = true
+        // enqueue needs an ID after the session row is written.
+        repo = GymRepository(db, newId = {
+            if (failOnce) {
+                failOnce = false
+                error("synthetic outbox failure")
+            }
+            UUID.randomUUID().toString()
+        })
+        val withNote = base.copy(notes = "watch note")
+        val failed = event(base, withNote)
+        val independent = event(base, set(base, 0, 30.0, "2026-01-01T00:01:00Z"))
+            .copy(occurredAtMillis = failed.occurredAtMillis + 1)
+        val dependent = event(withNote, withNote.copy(notes = "corrected watch note")).copy(
+            predecessorEventId = failed.eventId, occurredAtMillis = failed.occurredAtMillis + 2)
+        val result = repo.importWatchEvents(listOf(dependent, independent, failed))
+        assertEquals(listOf(independent.eventId), result.acknowledgements)
+        assertNull(repo.getSession(sessionId)!!.notes)
+        assertEquals(SetStatus.COMPLETED, repo.getSession(sessionId)!!.exercises.single().sets.first().status)
+
+        val retry = repo.importWatchEvents(listOf(dependent, failed))
+        assertEquals(listOf(failed.eventId, dependent.eventId), retry.acknowledgements)
+        assertEquals("corrected watch note", repo.getSession(sessionId)!!.notes)
+    }
+
+    @Test fun phoneBurstAndCrossEditsStillAllowWatchToFinish() = runBlocking {
+        val exercise = base.exercises.single()
+        val initial = base.copy(exercises = listOf(exercise.copy(sets = exercise.sets +
+            listOf(SetLog(id = "set-c", order = 3), SetLog(id = "set-d", order = 4)))))
+        val started = event(initial, initial)
+        assertEquals(listOf(started.eventId), repo.importWatchEvents(listOf(started)).acknowledgements)
+        repo.enableWatchCompanion(peerEventProtocol = 2)
+        repo.updateSession(sessionId) { set(it, 0, 30.0, "2026-01-01T00:01:00Z") }
+        repo.updateSession(sessionId) { set(it, 1, 30.0, "2026-01-01T00:01:10Z") }
+        val phoneBurst = repo.observePhoneWatchEvents().first()
+        assertEquals(2, phoneBurst.size)
+        assertEquals(phoneBurst.first().eventId, phoneBurst.last().predecessorEventId)
+        val handedOff = repo.getSession(sessionId)!!
+        for (operation in phoneBurst) repo.acknowledgePhoneWatchEvent(operation.eventId)
+
+        repo.updateSession(sessionId) { set(it, 0, 32.0, "2026-01-01T00:01:20Z") }
+        val phoneCorrection = repo.observePhoneWatchEvents().first().single()
+        val watchCorrection = set(handedOff, 0, 31.0, "2026-01-01T00:01:21Z")
+        val withThird = set(watchCorrection, 2, 30.0, "2026-01-01T00:02:00Z")
+        val withFourth = set(withThird, 3, 30.0, "2026-01-01T00:03:00Z")
+        val beforeFinish = withFourth.copy(notes = "watch note")
+        val stamp = phoneCorrection.occurredAtMillis
+        val correction = event(handedOff, watchCorrection).copy(occurredAtMillis = stamp + 1)
+        val third = event(watchCorrection, withThird).copy(predecessorEventId = correction.eventId, occurredAtMillis = stamp + 2)
+        val fourth = event(withThird, beforeFinish).copy(predecessorEventId = third.eventId, occurredAtMillis = stamp + 3)
+        val ended = event(beforeFinish, finish(beforeFinish)).copy(predecessorEventId = fourth.eventId, occurredAtMillis = stamp + 4)
+        val backlog = listOf(correction, third, fourth, ended)
+        val result = repo.importWatchEvents(backlog.reversed())
+        assertEquals(backlog.map { it.eventId }, result.acknowledgements)
+        repo.acknowledgePhoneWatchEvent(phoneCorrection.eventId)
+        assertTrue(repo.observePhoneWatchEvents().first().isEmpty())
+        val received = repo.getSession(sessionId)!!
+        assertEquals(SessionStatus.COMPLETED, received.status)
+        assertEquals("watch note", received.notes)
+        assertEquals(listOf(32.0, 30.0, 30.0, 30.0), received.exercises.single().sets.map { it.weightKg })
+        assertTrue(repo.observeWatchConflicts().first().isNotEmpty())
+    }
+
     @Test fun testProfileCannotImportOrExportCatalog() = runBlocking {
         repo.setProfile(Profile.TEST)
         assertTrue(repo.importWatchEvent(event(base, base, WorkoutProfile.TEST)) is EventResult.Rejected)
@@ -193,6 +274,22 @@ class WatchRepositoryTest {
         assertNotNull(db.dao().getSetting("watch_replica:$sessionId"))
         repo.acknowledgePhoneWatchEvent("unrelated")
         assertNull(db.dao().getSetting("watch_replica:$sessionId"))
+    }
+
+    @Test fun lateEditAfterFinishedReplicaPruningStillFindsItsPredecessor() = runBlocking {
+        start()
+        val finished = finish(set(base, 0, 30.0, "2026-01-01T00:01:00Z"))
+        val ended = event(base, finished)
+        assertEquals(listOf(ended.eventId), repo.importWatchEvents(listOf(ended)).acknowledgements)
+        repo.acknowledgePhoneWatchEvent("unrelated")
+        assertNull(db.dao().getSetting("watch_replica:$sessionId"))
+
+        val edited = event(finished, finished.copy(notes = "late watch note")).copy(
+            predecessorEventId = ended.eventId, occurredAtMillis = ended.occurredAtMillis + 1)
+        val restarted = GymRepository(db)
+        assertEquals(listOf(edited.eventId), restarted.importWatchEvents(listOf(edited)).acknowledgements)
+        assertEquals("late watch note", restarted.getSession(sessionId)!!.notes)
+        assertEquals(0, restarted.importWatchEvents(listOf(ended)).appliedCount)
     }
 
     @Test fun replicaWithConflictIsKept() = runBlocking {

@@ -6,12 +6,18 @@ import android.util.AtomicFile
 import de.baschek.gymapp.core.wear.events.WorkoutProfile
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutRepository
 import de.baschek.gymapp.watch.runtime.RestAlarm
+import de.baschek.gymapp.watch.runtime.RuntimeMonitor
+import de.baschek.gymapp.watch.runtime.TransferWorker
 import de.baschek.gymapp.watch.runtime.WatchTransport
+import de.baschek.gymapp.wear.transport.WorkoutInbox
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,11 +32,17 @@ class WatchApplication : Application() {
     private var restoreJob: Job? = null
     val deviceId: String by lazy { readDeviceId() }
     private val profileFile get() = File(noBackupFilesDir, "watch-selected-profile")
+    internal val workoutInbox = WorkoutInbox(
+        this,
+        canReceive = { restoreRepository()?.state?.value?.profile == WorkoutProfile.PERSONAL },
+        onFailure = { RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") } },
+    ) { events -> WatchTransport.receive(this, events) }
 
     override fun onCreate() {
         super.onCreate()
         NavRecorder.install(this)
         de.baschek.gymapp.watch.update.WatchUpdater.initialize(applicationContext)
+        workoutInbox.start(scope)
         restoreJob = scope.launch {
             restoreRepository()
             runCatching { WatchTransport.reconcile(this@WatchApplication) }
@@ -56,6 +68,24 @@ class WatchApplication : Application() {
         mutableRepository.value = repo
         if (profile == WorkoutProfile.PERSONAL) scope.launch { runCatching { WatchTransport.sendHello(this@WatchApplication) } }
         observing = scope.launch {
+            if (profile == WorkoutProfile.PERSONAL) {
+                launch {
+                    repo.state.map { it.outbox }.distinctUntilChanged().collect { outbox ->
+                        if (outbox.isNotEmpty()) {
+                            TransferWorker.schedule(this@WatchApplication)
+                            publishPending()
+                        }
+                    }
+                }
+                launch {
+                    repo.state.map { it.outbox.isNotEmpty() }.distinctUntilChanged().collectLatest { pending ->
+                        if (pending) while (true) {
+                            delay(30_000L)
+                            publishPending()
+                        }
+                    }
+                }
+            }
             repo.state.collect { state ->
                 NavRecorder.workoutChanged(state.sessionId.takeIf { state.session?.status == de.baschek.gymapp.core.model.SessionStatus.ACTIVE })
                 val sessionId = state.sessionId
@@ -71,14 +101,16 @@ class WatchApplication : Application() {
                 runCatching { androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester.create(this@WatchApplication,
                     android.content.ComponentName(this@WatchApplication, de.baschek.gymapp.watch.runtime.WorkoutComplication::class.java)).requestUpdateAll() }
                 de.baschek.gymapp.watch.runtime.RuntimeMonitor.state.update { it.copy(
-                    phoneLeads = state.lastDeviceId != null && state.lastDeviceId != deviceId,
                     pendingCount = state.pendingEvents + de.baschek.gymapp.watch.runtime.HeartQueue(this@WatchApplication).pending().size) }
-                if (state.profile == WorkoutProfile.PERSONAL && state.outbox.isNotEmpty()) de.baschek.gymapp.watch.runtime.TransferWorker.schedule(this@WatchApplication)
-                if (state.profile == WorkoutProfile.PERSONAL) runCatching { WatchTransport.sendPending(this@WatchApplication, state.outbox) }
-                    .onFailure { de.baschek.gymapp.watch.runtime.RuntimeMonitor.state.update { previous -> previous.copy(connectionLabel = "Sync-Fehler", pendingCount = state.pendingEvents) } }
             }
         }
         repo
+    }
+
+    private suspend fun publishPending() {
+        try { WatchTransport.sendPending(this) } catch (e: CancellationException) { throw e } catch (_: Exception) {
+            RuntimeMonitor.state.update { it.copy(connectionLabel = "Sync-Fehler") }
+        }
     }
 
     /** Remote switch to test removes personal data from the active watch view. */

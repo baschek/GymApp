@@ -53,7 +53,7 @@ internal fun HomeScreen(ui: UiContext) {
     val plan = state.homePlan
     ListScreen(if (state.sessionActive) "Training läuft" else "GymApp") {
         // Connection line, always visible and in words (spec C1, L).
-        item { ListButton(state.connection, if (state.pendingCount > 0) "${state.pendingCount} offen" else "", description = "Verbindung") { ui.push(Route.CONNECTION) } }
+        item { ListButton(state.connection, state.pendingChangesLabel.orEmpty(), description = "Verbindung") { ui.push(Route.CONNECTION) } }
         if (state.sessionActive) {
             item { ListButton("Fortsetzen", current?.let { "${it.exerciseName} · Satz ${it.number}/${it.total} · ${setValue(it.weight, it.amount, it.unit, it.weightLabel)}" }.orEmpty(), selected = true) { ui.reset(Route.TRAINING) } }
         } else {
@@ -224,7 +224,7 @@ internal fun HealthScreen(ui: UiContext) {
 internal fun ConnectionScreen(ui: UiContext) {
     val state = ui.state
     ListScreen("Verbindung") {
-        item { InfoCard(state.connection, if (state.pendingCount > 0) "${state.pendingCount} Änderungen offen" else "Keine Änderungen offen") }
+        item { InfoCard(state.connection, state.pendingChangesLabel ?: "Keine Änderungen offen") }
         if (state.testProfile) item { InfoCard("Testprofil", "Daten werden nicht synchronisiert und nicht exportiert.", Warning) }
         state.conflict?.let { message ->
             // Conflicts never block the training (spec L).
@@ -272,7 +272,7 @@ internal fun SummaryScreen(ui: UiContext) {
             item { InfoCard("Dauer", s.duration) }
             item { InfoCard("Puls Ø / max", s.pulse) }
         }
-        item { InfoCard("Sync", state.connection + if (state.pendingCount > 0) " · ${state.pendingCount} offen" else " · alles übertragen") }
+        item { InfoCard(state.connection, state.pendingChangesLabel ?: "Alles übertragen") }
         item { InfoCard("Gesundheit", if (state.testProfile) "Testprofil: kein Export" else state.export) }
         if (state.undoAvailable) item { ListButton("Rückgängig", "Training wieder öffnen") { ui.dispatch(WatchAction.Undo) } }
         item { ListButton("Fertig", selected = true) { ui.celebration.intValue = 0; ui.reset(Route.HOME) } }

@@ -29,9 +29,10 @@ the phone application or erase its training data to work around a signing mismat
 
 Data Layer is asynchronous: Bluetooth is preferred when available, and Google
 Play services can route traffic through Google infrastructure when necessary.
-An acknowledgement must follow durable import. DataItems/Assets carry payloads;
-MessageClient alone is not a durable event queue. Both devices remain operable
-while disconnected; no exclusive handoff lock is used.
+An acknowledgement follows a committed import or a recorded terminal rejection.
+Events continue to use individual DataItems and Assets. Receivers allow a short
+grace period for a partial batch before attempting its items in predecessor order.
+Both devices remain operable while disconnected.
 
 The last known operator coordinates timer/alarm leadership after event delivery.
 During a network partition, both independently operated devices cannot know the

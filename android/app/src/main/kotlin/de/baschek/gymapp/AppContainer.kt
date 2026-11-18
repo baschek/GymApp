@@ -7,6 +7,7 @@ import de.baschek.gymapp.health.AutomaticHealthExport
 import de.baschek.gymapp.data.AppPrefs
 import de.baschek.gymapp.data.DeviceKeys
 import de.baschek.gymapp.data.GymRepository
+import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.data.SecureStore
 import de.baschek.gymapp.data.db.GymDatabase
 import de.baschek.gymapp.sync.SyncManager
@@ -22,6 +23,8 @@ import kotlinx.coroutines.launch
 import de.baschek.gymapp.workout.WorkoutActions
 import de.baschek.gymapp.wear.WatchCatalogPublisher
 import de.baschek.gymapp.wear.PhoneEventPublisher
+import de.baschek.gymapp.wear.transport.WorkoutDataItems
+import de.baschek.gymapp.wear.transport.WorkoutInbox
 
 /** Hand-wired dependencies (no DI framework needed at this size). */
 class AppContainer(app: Application) {
@@ -38,6 +41,31 @@ class AppContainer(app: Application) {
     val timer = TimerController(repository, appScope)
     val workout = WorkoutActions(repository, timer, scheduler, appScope)
     val updater = AppUpdater(app, httpClient)
+    private val restoreWorkout = appScope.launch {
+        runCatching { timer.restore() }
+        runCatching { workout.restoreRepsOverride() }
+    }
+    internal val phoneEventPublisher = PhoneEventPublisher(appContext, repository)
+    internal val workoutInbox = WorkoutInbox(
+        appContext,
+        canReceive = { repository.currentProfile() == Profile.PERSONAL },
+        pollWhenVisible = { repository.getSetting("watch_companion_enabled") == "1" },
+    ) { events ->
+        // A startup restore must not overwrite the state received from the watch.
+        restoreWorkout.join()
+        val result = repository.importWatchEvents(events)
+        try {
+            if (result.appliedCount > 0) scheduler.requestSync()
+            val state = result.lastLeader
+            if (state != null && state.lastOperation?.eventId == repository.getSetting("watch_leader_event")) {
+                timer.applyRemote(state.timer)
+                workout.setFocus(state.focusExerciseId, fromRemote = true)
+            }
+        } finally {
+            // A UI or alarm failure must not withhold receipts for committed operations.
+            WorkoutDataItems.acknowledge(appContext, result.acknowledgements)
+        }
+    }
 
     /** Local-only exercise photos (the contract does not sync photo bytes). */
     fun photoDir(): java.io.File = java.io.File(appContext.filesDir, "photos").apply { mkdirs() }
@@ -49,10 +77,7 @@ class AppContainer(app: Application) {
         Telemetry.install(repository, appScope)
         health.start(appScope)
         WatchCatalogPublisher(appContext, repository, prefs).start(appScope)
-        PhoneEventPublisher(appContext, repository).start(appScope)
-        // Bring back a running timer after process death.
-        appScope.launch { runCatching { timer.restore() } }
-        appScope.launch { runCatching { workout.restoreRepsOverride() } }
+        phoneEventPublisher.start(appScope)
         // An adjustment changes sets of several exercises: the one-step undo of the last action would undo the wrong thing.
         syncManager.onAdjustmentsResolved = { workout.clearUndo() }
     }

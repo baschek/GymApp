@@ -1,7 +1,15 @@
 package de.baschek.gymapp.core.wear.events
 
-/** A rejection is never proof of durable application; keep the originating event for recovery. */
+/** Only terminal rejections may be acknowledged, after recording the reason durably. */
 object EventRejections {
-    @Suppress("UNUSED_PARAMETER")
-    fun shouldAcknowledge(rejected: EventResult.Rejected): Boolean = false
+    fun shouldAcknowledge(rejected: EventResult.Rejected): Boolean = when (rejected.reason) {
+        "invalid_event", "invalid_resolution", "invalid_session", "invalid_merge", "event_id_reused", "deleted_session",
+        "missing_finish_time", "missing_duration" -> true
+        // Capacity, missing causal history, active workouts and profile selection can change.
+        else -> false
+    }
+
+    /** A receipt is scoped to one session. Invalid IDs cannot be valid predecessors. */
+    fun receiptKey(sessionId: String, eventId: String): String? =
+        if (WorkoutEvents.uuid(sessionId) && WorkoutEvents.uuid(eventId)) "$sessionId:$eventId" else null
 }
