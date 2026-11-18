@@ -42,6 +42,7 @@ import androidx.wear.compose.material3.TimeText
 import androidx.wear.compose.material3.curvedText
 import androidx.wear.compose.material3.timeTextCurvedText
 import androidx.wear.compose.material3.timeTextSeparator
+import de.baschek.gymapp.core.health.PulseState
 import de.baschek.gymapp.core.model.Target
 import de.baschek.gymapp.core.model.WorkoutMode
 import de.baschek.gymapp.core.training.EFFORT_PICK_TIMEOUT_MILLIS
@@ -393,19 +394,27 @@ private fun RouteContent(route: Route, ui: UiContext) {
     }
 }
 
-/** Time on every screen (spec A7); during a workout the pulse, in the test profile a permanent "Testprofil" (spec L). */
+/**
+ * Time on every screen (spec A7). Kept short so it sits calmly on the curve: the time, while a heart-rate recording
+ * delivers readings a short "123 bpm", and in the test profile a short "Test" (spec L). "Puls aus" is not shown here;
+ * the pulse button and the health page carry that state.
+ */
 @Composable
 private fun WatchTimeText(state: WatchPresentation) {
-    val pulse = when {
-        !state.sessionActive -> null
-        state.ambient -> "♥ –"
-        else -> state.pulse?.label ?: state.bpm?.let { "♥ $it" } ?: "Puls aus"
-    }
+    val pulse = headerPulse(state)
     TimeText { time ->
         timeTextCurvedText(time)
         if (pulse != null) { timeTextSeparator(); curvedText(pulse, color = Muted) }
-        if (state.testProfile) { timeTextSeparator(); curvedText("Testprofil", color = Warning) }
+        if (state.testProfile) { timeTextSeparator(); curvedText("Test", color = Warning) }
     }
+}
+
+/** "123 bpm" while a reading of the running workout's recording exists (not in ambient mode), else nothing. */
+internal fun headerPulse(state: WatchPresentation): String? {
+    val bpm = state.bpm ?: return null
+    if (!state.sessionActive || state.ambient) return null
+    val measuring = state.pulse?.state?.let { it == PulseState.MEASURING } ?: true
+    return if (measuring) "$bpm bpm" else null
 }
 
 /** Real rejections name their reason and disappear after 3 s (WatchRoot); no-ops stay silent (spec L). */

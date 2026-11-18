@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import de.baschek.gymapp.watch.R
 import de.baschek.gymapp.watch.recorder.NavRecorder
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -204,7 +205,11 @@ internal fun HealthScreen(ui: UiContext) {
     val state = ui.state
     val pulse = state.pulse
     ListScreen("Gesundheit") {
-        item { InfoCard("Puls", pulse?.let { p -> listOfNotNull(p.label, p.detail).joinToString(" · ") } ?: if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "♥ ${state.bpm}") }
+        val measuring = state.bpm != null && (pulse?.state == PulseState.MEASURING || pulse == null && state.pulsePermission)
+        item {
+            if (measuring) InfoCard("Puls", "${state.bpm} bpm", valueIcon = R.drawable.ic_favorite)
+            else InfoCard("Puls", pulse?.let { p -> listOfNotNull(p.label, p.detail).joinToString(" · ") } ?: if (!state.pulsePermission) "Erlaubnis fehlt" else "Kein Messwert")
+        }
         if (pulse?.state == PulseState.MEASURING || (pulse == null && state.bpm != null)) item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PulseCurve(state.pulseSamples) } }
         if (state.sessionActive && (pulse?.canStart ?: true)) item {
             ListButton(if (pulse?.state == PulseState.PERMISSION_MISSING || !state.pulsePermission) "Erlauben und starten" else "Puls starten", selected = true) { ui.dispatch(WatchAction.StartRecording) }

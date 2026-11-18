@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -47,6 +48,7 @@ import androidx.wear.compose.material3.HorizontalPagerScaffold
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import de.baschek.gymapp.core.training.effortChoices
+import de.baschek.gymapp.watch.R
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
@@ -54,6 +56,9 @@ import kotlin.math.abs
  * Training (spec B, D-H, J): three pages, the set in the middle. The middle page shows the phase of the workout
  * (set, effort picker, rest, exercise finished, device setup); it changes only with real events.
  */
+
+/** Top edge of the exercise title on the set page, as a fraction of the screen height (below the curved time). */
+private const val SET_TITLE_TOP = 0.14f
 
 private val QUICK_NOTES = listOf("Sitz +1", "Sitz −1", "Schmerz", "Gerät besetzt", "Griff gewechselt")
 
@@ -102,15 +107,21 @@ private fun SetPage(ui: UiContext) {
     val current = state.current ?: return
     val pulseStart = state.pulse?.canStart == true
     val elapsed = state.timedElapsedSeconds
+    var titleLines by remember(current.exerciseName) { mutableIntStateOf(1) }
     ScreenScaffold { _ ->
         BoxWithConstraints(Modifier.fillMaxSize()) {
             if (state.durationRingEnabled && state.durationRing != null) EdgeRing(state.durationRing, color = Muted, width = 3.dp)
             val rowCenter = maxHeight * (if (pulseStart) 0.74f else 0.80f)
-            val top = maxHeight * 0.11f
-            Column(Modifier.align(Alignment.TopCenter).padding(top = top).fillMaxWidth().padding(horizontal = maxWidth * 0.1f).height(rowCenter - 30.dp - top),
+            // Round-safe title: it starts below the curved time and is no wider than the chord of the circle at its top edge.
+            val top = maxHeight * SET_TITLE_TOP
+            val width = (minOf(maxWidth, maxHeight) * chordFraction(SET_TITLE_TOP) - 8.dp).coerceAtLeast(0.dp)
+            val progress = if (current.isDuration && elapsed != null) "Zeit ${clock(elapsed)}" else "Satz ${current.number} von ${current.total}"
+            Column(Modifier.align(Alignment.TopCenter).padding(top = top).width(width).height(rowCenter - 30.dp - top),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                Title(current.exerciseName, size = 15, maxLines = if (pulseStart) 1 else 2)
-                Small(if (current.isDuration && elapsed != null) "Zeit ${clock(elapsed)}" else "Satz ${current.number} von ${current.total}")
+                FitTitle(current.exerciseName, Modifier.fillMaxWidth().testTag("set-title"), maxLines = 2) { titleLines = it }
+                // A two-line name leaves no room for a separate target line: it joins the progress line.
+                if (titleLines > 1) Small(listOf(progress, current.target).filter { it.isNotBlank() }.joinToString(" · "), size = 11, maxLines = 1)
+                else Small(progress)
                 Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     if (current.hasWeight) {
                         ValueButton(ui.draft.total(current)?.let(::formatWeight) ?: "–", current.weightLabel, "Gewicht ändern") { ui.openEditor(EditorKind.WEIGHT) }
@@ -118,16 +129,16 @@ private fun SetPage(ui: UiContext) {
                     }
                     ValueButton(formatWeight(if (current.isDuration && elapsed != null) elapsed.toDouble() else ui.draft.amount), current.unit, "${current.unit} ändern") { ui.openEditor(EditorKind.AMOUNT) }
                 }
-                Small(current.target, size = 11, maxLines = 1)
+                if (titleLines <= 1) Small(current.target, size = 11, maxLines = 1)
             }
             val heart: (@Composable () -> Unit)? = if (pulseStart) {
-                { RoundButton("♥", "Puls starten", primary = false, size = 48.dp) { ui.dispatch(WatchAction.StartRecording) } }
+                { RoundButton("", "Puls starten", primary = false, size = 48.dp, icon = R.drawable.ic_favorite_outline) { ui.dispatch(WatchAction.StartRecording) } }
             } else null
             PrimaryRow(rowCenter, heart) {
                 when {
-                    current.isDuration && elapsed == null -> RoundButton("▶", "Zeit starten") { ui.dispatch(WatchAction.StartSetTimer) }
-                    current.isDuration -> RoundButton("■", "Stopp und speichern") { ui.check(elapsed!!.coerceAtLeast(1).toDouble()) }
-                    else -> RoundButton("✓", "Satz geschafft") { ui.check(ui.draft.amount) }
+                    current.isDuration && elapsed == null -> RoundButton("", "Zeit starten", icon = R.drawable.ic_play) { ui.dispatch(WatchAction.StartSetTimer) }
+                    current.isDuration -> RoundButton("", "Stopp und speichern", icon = R.drawable.ic_stop) { ui.check(elapsed!!.coerceAtLeast(1).toDouble()) }
+                    else -> RoundButton("", "Satz geschafft", icon = R.drawable.ic_check) { ui.check(ui.draft.amount) }
                 }
             }
         }
@@ -229,8 +240,8 @@ private fun RestMain(ui: UiContext) {
                         .clickable { track("vorschlag_uebernehmen"); ui.acceptSuggestion() }
                         .semantics(mergeDescendants = true) { contentDescription = "Vorschlag übernehmen: $suggestion" } else Modifier
                     Column(clickable, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Small(head, size = 11, maxLines = 1)
-                        if (next.newExercise && next.setupText.isNotBlank()) Small(next.setupText, color = Paper, size = 12, maxLines = 1)
+                        Small(head, size = 11, maxLines = 1, marquee = true)
+                        if (next.newExercise && next.setupText.isNotBlank()) Small(next.setupText, color = Paper, size = 12, maxLines = 1, marquee = true)
                         when {
                             accepted -> Small("${formatWeight(ui.draft.total(current!!) ?: 0.0)} kg übernommen", color = accent.color, size = 13, maxLines = 1)
                             suggestion != null -> Small(suggestion, color = accent.color, size = 13, maxLines = 1)
@@ -241,11 +252,11 @@ private fun RestMain(ui: UiContext) {
               }
             }
             val undo: (@Composable () -> Unit)? = if (ui.undoVisible && state.undoAvailable) {
-                { RoundButton("↶", "Rückgängig", primary = false, size = 48.dp) { ui.dispatch(WatchAction.Undo) } }
+                { RoundButton("", "Rückgängig", primary = false, size = 48.dp, icon = R.drawable.ic_undo) { ui.dispatch(WatchAction.Undo) } }
             } else null
             // "Weiter" never moves: the undo slot is always reserved. The watch never goes on by itself (spec A5).
             PrimaryRow(rowCenter, undo, reserveLeft = true) {
-                RoundButton("▶", "Weiter") { ui.dispatch(WatchAction.SkipRest) }
+                RoundButton("", "Weiter", icon = R.drawable.ic_play) { ui.dispatch(WatchAction.SkipRest) }
             }
         }
     }
@@ -292,12 +303,12 @@ private fun SetupPage(ui: UiContext) {
             Column(Modifier.align(Alignment.TopCenter).padding(top = top).fillMaxWidth().padding(horizontal = maxWidth * 0.1f).height(rowCenter - 30.dp - top),
                 horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Small("Gerät einstellen", size = 11)
-                Title(state.current?.exerciseName.orEmpty(), size = 14, maxLines = 1)
+                Title(state.current?.exerciseName.orEmpty(), size = 14, marquee = true)
                 Title(state.current?.setup.orEmpty(), size = 19, color = LocalAccent.current.color, maxLines = 2)
                 Small(clock(remaining), size = 12)
             }
             // The timer never closes the screen by itself, also not at 0 (spec G).
-            PrimaryRow(rowCenter, null) { RoundButton("✓", "Fertig") { ui.dispatch(WatchAction.FinishSetup) } }
+            PrimaryRow(rowCenter, null) { RoundButton("", "Fertig", icon = R.drawable.ic_check) { ui.dispatch(WatchAction.FinishSetup) } }
         }
     }
 }
@@ -384,8 +395,8 @@ internal fun SetEditScreen(ui: UiContext) {
                     ValueButton(formatWeight(ui.selection.editAmount), row.unit, "Wert ändern") { ui.openEditor(EditorKind.SET_AMOUNT) }
                 }
             }
-            PrimaryRow(rowCenter, { RoundButton("✕", "Löschen", primary = false, size = 48.dp) { ui.dispatch(WatchAction.DeleteSet(current.exerciseId, row.id)); ui.back() } }) {
-                RoundButton("✓", "Änderung speichern") { ui.dispatch(WatchAction.CorrectSet(current.exerciseId, row.id, ui.selection.editWeight, ui.selection.editAmount, row.effort)); ui.back() }
+            PrimaryRow(rowCenter, { RoundButton("", "Löschen", primary = false, size = 48.dp, icon = R.drawable.ic_close) { ui.dispatch(WatchAction.DeleteSet(current.exerciseId, row.id)); ui.back() } }) {
+                RoundButton("", "Änderung speichern", icon = R.drawable.ic_check) { ui.dispatch(WatchAction.CorrectSet(current.exerciseId, row.id, ui.selection.editWeight, ui.selection.editAmount, row.effort)); ui.back() }
             }
         }
     }
@@ -445,8 +456,8 @@ internal fun EndConfirmScreen(ui: UiContext) {
                 Title("Training beenden?", size = 16)
                 Small("Offene Sätze werden übersprungen.")
             }
-            PrimaryRow(rowCenter, { RoundButton("✕", "Abbrechen", primary = false, size = 48.dp) { ui.back() } }) {
-                RoundButton("✓", "Beenden") { ui.back(); ui.dispatch(WatchAction.Finish) }
+            PrimaryRow(rowCenter, { RoundButton("", "Abbrechen", primary = false, size = 48.dp, icon = R.drawable.ic_close) { ui.back() } }) {
+                RoundButton("", "Beenden", icon = R.drawable.ic_check) { ui.back(); ui.dispatch(WatchAction.Finish) }
             }
         }
     }
@@ -530,7 +541,7 @@ internal fun ValueEditor(ui: UiContext) {
                 else -> ""
             }
             Small(below, Modifier.align(Alignment.TopCenter).padding(top = h * 0.655f), size = 11, maxLines = 1)
-            Box(Modifier.align(Alignment.TopCenter).offset(y = h * 0.72f)) { RoundButton("✓", "Fertig", size = 48.dp) { ui.back() } }
+            Box(Modifier.align(Alignment.TopCenter).offset(y = h * 0.72f)) { RoundButton("", "Fertig", size = 48.dp, icon = R.drawable.ic_check) { ui.back() } }
         }
     }
 }
