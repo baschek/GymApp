@@ -223,7 +223,10 @@ class WorkoutService : Service() {
             getString(R.string.notif_title, exercise.name, setNo, exercise.sets.size)
         } else getString(R.string.notif_session_running)
 
-        val planned = next?.let {
+        // While the stopwatch of that very set runs, "Satz geschafft" saves the measured time, not the prefill: the
+        // chronometer shows the time, so the planned value is left out of the text.
+        val measuring = timer != null && timer.phase == TimerPhase.SET && next != null && timer.matchesSet(next.sessionId, next.exercise.id, next.set.id)
+        val planned = next?.takeUnless { measuring }?.let {
             NotificationReps.summary(it.prefill.weightKg, it.prefill.value, it.exercise.target.metric, it.prefill.effort, prefillLabels())
         }
         val phase = when (timer?.phase) {

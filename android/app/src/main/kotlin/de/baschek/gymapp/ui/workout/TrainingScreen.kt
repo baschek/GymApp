@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.Session
-import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
@@ -48,7 +47,11 @@ import de.baschek.gymapp.core.progression.freeWeights
 import de.baschek.gymapp.core.training.NotificationReps
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
+import de.baschek.gymapp.core.training.StopwatchState
 import de.baschek.gymapp.core.training.canAddSet
+import de.baschek.gymapp.core.training.isTimed
+import de.baschek.gymapp.core.training.stopwatchState
+import de.baschek.gymapp.core.training.targetLine
 import de.baschek.gymapp.core.training.hasSkippedSets
 import de.baschek.gymapp.core.training.setRows
 import de.baschek.gymapp.core.training.viewExerciseIndex
@@ -125,6 +128,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val runningSetTimer = timer?.takeIf { it.phase == TimerPhase.SET }
     val timedHere = runningSetTimer != null && ex != null && set != null && runningSetTimer.matchesSet(sessionId, ex.id, set.id)
     val elapsed = if (timedHere) runningSetTimer!!.elapsedSeconds(now) else 0
+    val stopwatch = stopwatchState(ex != null && ex.isTimed, set != null, timedHere, runningSetTimer != null && !timedHere)
 
     val info = ex?.let { machines[it.exerciseId] }
     val levels = info?.levels.orEmpty()
@@ -229,14 +233,6 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                             }
                         },
                     )
-                    if (ex.target.metric == Metric.SECONDS) {
-                        if (timedHere) {
-                            Text("Gemessene Zeit: ${formatElapsed(elapsed.toLong())}", style = MaterialTheme.typography.titleMedium)
-                            LinkButton("Zeitmessung abbrechen", tracked(SCREEN, "timer_cancel") { vm.cancelSetTimer() }, height = Spacing.TouchMin)
-                        } else if (runningSetTimer == null) {
-                            SoftButton("Zeitmessung starten", tracked(SCREEN, "timer_start") { vm.startTimedSet(ex.id, set.id, ex.name) }, Modifier.fillMaxWidth(), height = 52.dp)
-                        }
-                    }
                     if (runningSetTimer != null && !timedHere) {
                         Text("Eine Zeitmessung für einen anderen Satz läuft. Wechsle dorthin oder brich sie ab.", style = MaterialTheme.typography.bodyMedium)
                         LinkButton("Zeitmessung abbrechen", tracked(SCREEN, "timer_cancel_other") { vm.cancelSetTimer() }, height = Spacing.TouchMin)
@@ -255,7 +251,35 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
         }
 
         PinnedBottom(Modifier.align(Alignment.BottomCenter).onSizeChanged { pinnedPx = it.height }) {
-            PrimaryButton(if (timedHere) "Zeit stoppen und Satz speichern" else "Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = ex != null && set != null && (runningSetTimer == null || timedHere && elapsed > 0))
+            // Timed sets (hold, plank): the stopwatch is the main action and always pinned, never below the wheels.
+            when (stopwatch) {
+                StopwatchState.RUNNING -> {
+                    Row(Modifier.fillMaxWidth().padding(bottom = Spacing.s2), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(Spacing.s3)) {
+                        Text(
+                            formatElapsed(elapsed.toLong()),
+                            style = MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = "tnum"),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        targetLine(ex!!.target).takeIf { it.isNotEmpty() }?.let {
+                            Text(it, Modifier.padding(bottom = 10.dp), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    PrimaryButton("Stopp und Satz speichern", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = elapsed > 0)
+                    LinkButton("Zeitmessung abbrechen", tracked(SCREEN, "timer_cancel") { vm.cancelSetTimer() }, Modifier.fillMaxWidth(), height = 44.dp)
+                }
+                StopwatchState.IDLE, StopwatchState.BLOCKED -> {
+                    PrimaryButton(
+                        "Zeit starten", icon = GymIcons.Play, height = 64.dp, enabled = stopwatch == StopwatchState.IDLE,
+                        onClick = tracked(SCREEN, "timer_start") { vm.startTimedSet(ex!!.id, set!!.id, ex.name) },
+                    )
+                    LinkButton(
+                        "${fmtNum(draft.value)} s ohne Messung speichern", logSet, Modifier.fillMaxWidth(), height = 44.dp,
+                        enabled = stopwatch == StopwatchState.IDLE,
+                    )
+                }
+                StopwatchState.NONE ->
+                    PrimaryButton("Satz geschafft", onClick = logSet, icon = GymIcons.Check, height = 64.dp, enabled = ex != null && set != null && (runningSetTimer == null || timedHere))
+            }
             val pad = PaddingValues(horizontal = 0.dp)
             // Four equal columns; labels never wrap. Disabled actions stay readable (60 % instead of 40 %).
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {

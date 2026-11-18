@@ -41,6 +41,9 @@ import de.baschek.gymapp.ui.components.SegmentItem
 import de.baschek.gymapp.ui.components.Segmented
 import de.baschek.gymapp.ui.components.StepRow
 import de.baschek.gymapp.ui.fmtNum
+import de.baschek.gymapp.core.model.Metric
+import de.baschek.gymapp.core.training.stepTargetMax
+import de.baschek.gymapp.core.training.stepTargetMin
 import de.baschek.gymapp.ui.fmtDay
 import de.baschek.gymapp.ui.parseInstant
 import de.baschek.gymapp.ui.theme.Spacing
@@ -49,8 +52,10 @@ import de.baschek.gymapp.ui.tracked
 private const val SCREEN = "plan_editor"
 
 private fun summary(e: PlanExercise): String =
-    "N ${e.modeSets.normal} · S ${e.modeSets.fast} · U ${e.modeSets.ultra} · ${e.target.min.toInt()}–${e.target.max.toInt()} Wdh." +
+    "N ${e.modeSets.normal} · S ${e.modeSets.fast} · U ${e.modeSets.ultra} · ${e.target.min.toInt()}–${e.target.max.toInt()} ${targetUnitLabel(e.target.metric)}" +
         (e.startingWeightKg ?: e.currentWeightKg)?.let { " · ${fmtNum(it)} kg" }.orEmpty()
+
+private fun targetUnitLabel(metric: String): String = when (metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." }
 
 /** Plan editor: exercises with up/down arrows, a stepper sheet per exercise, the assistant notice. */
 @Composable
@@ -144,7 +149,7 @@ fun PlanEditorScreen(planId: String, nav: Navigator) {
         )
     }
     if (picking) {
-        ExercisePickerSheet(catalog, onPick = { picked -> picking = false; vm.add(picked.id) { openId = it } }, onDismiss = { picking = false })
+        ExercisePickerSheet(catalog, onPick = { picked -> picking = false; vm.add(picked.id, picked.value.measurementType) { openId = it } }, onDismiss = { picking = false })
     }
     if (renaming && plan != null) {
         var name by remember { mutableStateOf(plan.name) }
@@ -175,19 +180,16 @@ private fun PlanExerciseSheet(title: String, e: PlanExercise, onEdit: ((PlanExer
         SetsRow("Sätze Ultra", e.modeSets.ultra) { v -> onEdit { it.copy(modeSets = it.modeSets.copy(ultra = v)) } }
         val min = e.target.min.toInt()
         val max = e.target.max.toInt()
+        val unit = targetUnitLabel(e.target.metric)
         StepRow(
-            "Wdh. von", "$min",
-            onMinus = tracked(SCREEN, "step") { onEdit { it.copy(target = it.target.copy(min = (min - 1).coerceAtLeast(1).toDouble())) } },
-            onPlus = tracked(SCREEN, "step") {
-                onEdit { it.copy(target = it.target.copy(min = (min + 1).toDouble(), max = maxOf(max, min + 1).toDouble())) }
-            },
+            "$unit von", "$min",
+            onMinus = tracked(SCREEN, "step") { onEdit { it.copy(target = stepTargetMin(it.target, -1)) } },
+            onPlus = tracked(SCREEN, "step") { onEdit { it.copy(target = stepTargetMin(it.target, 1)) } },
         )
         StepRow(
-            "Wdh. bis", "$max",
-            onMinus = tracked(SCREEN, "step") {
-                onEdit { it.copy(target = it.target.copy(max = (max - 1).coerceAtLeast(1).toDouble(), min = minOf(min, max - 1).coerceAtLeast(1).toDouble())) }
-            },
-            onPlus = tracked(SCREEN, "step") { onEdit { it.copy(target = it.target.copy(max = (max + 1).coerceAtMost(60).toDouble())) } },
+            "$unit bis", "$max",
+            onMinus = tracked(SCREEN, "step") { onEdit { it.copy(target = stepTargetMax(it.target, -1)) } },
+            onPlus = tracked(SCREEN, "step") { onEdit { it.copy(target = stepTargetMax(it.target, 1)) } },
         )
         val rirMin = e.target.rirMin.toInt()
         val rirMax = e.target.rirMax.toInt()
