@@ -1,5 +1,6 @@
 package de.baschek.gymapp.core.training
 
+import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
@@ -26,10 +27,13 @@ fun viewExerciseIndex(exercises: List<SessionExercise>, focusedId: String?): Int
     return if (focused >= 0) focused else currentExerciseIndex(exercises)
 }
 
-/** Index of the exercise that comes after the rest: the focused one if it has open sets, else the first with open sets. */
+/**
+ * Index of the exercise that comes after the rest: the focused one if it has open sets, else [nextAfter] (the first
+ * exercise with open sets; the same rule the watch uses for "Nächste Übung").
+ */
 fun upNextExerciseIndex(exercises: List<SessionExercise>, focusedId: String?): Int {
     val focused = if (focusedId == null) -1 else exercises.indexOfFirst { it.id == focusedId }
-    return if (focused >= 0 && hasPending(exercises[focused])) focused else currentExerciseIndex(exercises)
+    return if (focused >= 0 && hasPending(exercises[focused])) focused else nextAfter(exercises, focusedId)
 }
 
 /**
@@ -49,6 +53,8 @@ data class SetCorrection(
     val value: Double?,
     val effort: String?,
     val addonWeightsKg: List<Double>? = null,
+    /** Origin of [effort] when the caller knows it ([EffortSource]); a changed band always counts as chosen by the user. */
+    val effortSource: String? = null,
 )
 
 private fun mapSet(session: Session, exerciseId: String, setId: String, change: (SessionExercise, SetLog) -> SetLog): Session =
@@ -69,12 +75,19 @@ fun correctSet(session: Session, exerciseId: String, setId: String, correction: 
             seconds = if (ex.target.metric == Metric.SECONDS) correction.value?.toInt() else set.seconds,
             meters = if (ex.target.metric == Metric.METERS) correction.value else set.meters,
             effort = if (set.setType == SetType.WARMUP) set.effort else correction.effort,
+            effortSource = when {
+                set.setType == SetType.WARMUP -> set.effortSource
+                correction.effort == null -> null
+                // a band the person changed is chosen by them; an unchanged band keeps its origin
+                correction.effort != set.effort -> EffortSource.USER
+                else -> correction.effortSource ?: set.effortSource
+            },
         )
     }
 
 private fun SetLog.reopened() = copy(
     status = SetStatus.PENDING, weightKg = null, addonWeightsKg = null, reps = null, seconds = null, meters = null,
-    effort = null, setDurationSeconds = null, restBeforeSeconds = null, setupBeforeSeconds = null, completedAt = null,
+    effort = null, effortSource = null, setDurationSeconds = null, restBeforeSeconds = null, setupBeforeSeconds = null, completedAt = null,
 )
 
 /** Makes a logged or skipped set open again (its values are cleared). Open sets stay as they are. */

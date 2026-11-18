@@ -19,6 +19,10 @@ import androidx.wear.compose.foundation.rememberSwipeToDismissBoxState
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import de.baschek.gymapp.core.health.PulseState
+import de.baschek.gymapp.core.health.PulseStatus
+import de.baschek.gymapp.core.training.SetPreview
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -99,6 +103,17 @@ data class WatchPresentation(
     val testProfile: Boolean = false, val ambientOffsetX: Int = 0, val ambientOffsetY: Int = 0, val durationRing: Float? = null,
     val setupRemainingSeconds: Int? = null, val timedElapsedSeconds: Int? = null, val durationRingEnabled: Boolean = false, val packChecked: Map<String, Set<String>> = emptyMap(), val summary: WatchSummary? = null, val celebrations: List<WatchCelebration> = emptyList(),
     val error: String? = null,
+    /**
+     * Changes only on real events (set logged, rest started or ended, exercise changed, workout started or ended, also
+     * from the phone), never per second; automatic screen changes are keyed on it (spec A4/A5).
+     */
+    val navigationKey: String = "",
+    /** The next set for the rest/set screens (spec D/F): values, target line, suggestion, setup of a new exercise. */
+    val nextSet: SetPreview? = null,
+    /** Heart-rate status with reason (spec J); null outside the app's runtime (previews, tests). */
+    val pulse: PulseStatus? = null,
+    /** "Puls bei jedem Training aufzeichnen": null until answered once. */
+    val heartAutoConsent: Boolean? = null,
 )
 
 /** Events are handled by the local-first repository; UI never fabricates training data. */
@@ -106,7 +121,8 @@ sealed interface WatchAction {
     data class StartPlan(val plan: String, val gym: String, val mode: String) : WatchAction
     data class StartDay(val day: String, val gym: String, val mode: String) : WatchAction
     data class StartSpontaneous(val exercise: String, val gym: String, val mode: String) : WatchAction
-    data class Log(val exercise: String, val set: String, val weight: Double?, val amount: Double, val addons: List<Double> = emptyList(), val effort: String? = null) : WatchAction
+    /** [effortSource]: "user" when the band was chosen in the effort picker; null saves [effort] as the automatic preselection. */
+    data class Log(val exercise: String, val set: String, val weight: Double?, val amount: Double, val addons: List<Double> = emptyList(), val effort: String? = null, val effortSource: String? = null) : WatchAction
     data class Focus(val exercise: String) : WatchAction
     data class Move(val exercise: String, val delta: Int) : WatchAction
     data class ToggleExercise(val exercise: String, val skipped: Boolean) : WatchAction
@@ -116,6 +132,8 @@ sealed interface WatchAction {
     data object StartSetTimer : WatchAction
     data object StartRecording : WatchAction
     data class SetDurationRing(val enabled: Boolean) : WatchAction
+    /** Answer to "Puls bei jedem Training aufzeichnen" (spec J). */
+    data class SetHeartAuto(val enabled: Boolean) : WatchAction
     data class TogglePack(val gym: String, val day: String, val item: String) : WatchAction
     data class AddExercise(val exercise: String) : WatchAction
     data class AddSet(val exercise: String) : WatchAction
@@ -139,7 +157,7 @@ private enum class Editor { WEIGHT, AMOUNT, REST }
 
 @Composable
 fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
-    var screen by remember { mutableStateOf(if (state.sessionActive) Screen.TRAIN else Screen.HOME) }
+    var screen by rememberSaveable { mutableStateOf(if (state.sessionActive) Screen.TRAIN else Screen.HOME) }
     var previous by remember { mutableStateOf(Screen.HOME) }
     var healthReturn by remember { mutableStateOf(Screen.HOME) }
     var historySelection by remember { mutableStateOf<String?>(null) }
@@ -158,9 +176,15 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
     var endConfirm by remember { mutableStateOf(false) }
     val durationRing = state.durationRingEnabled
     var celebrationIndex by remember { mutableIntStateOf(0) }
-    var draftWeight by remember(state.current?.exerciseId, state.current?.setId, state.current?.weight) { mutableStateOf(state.current?.weight) }
-    var draftAmount by remember(state.current?.exerciseId, state.current?.setId, state.current?.amount) { mutableDoubleStateOf(state.current?.amount ?: 0.0) }
+    // The draft belongs to one open set. A remote update of the prefill (phone, assistant) only replaces values the person
+    // has not edited yet, so an open draft is never lost (spec A4).
+    var draftWeight by remember(state.current?.exerciseId, state.current?.setId) { mutableStateOf(state.current?.weight) }
+    var draftAmount by remember(state.current?.exerciseId, state.current?.setId) { mutableDoubleStateOf(state.current?.amount ?: 0.0) }
     var addOns by remember(state.current?.exerciseId, state.current?.setId) { mutableStateOf(state.current?.selectedAddOns ?: emptySet()) }
+    var draftEdited by remember(state.current?.exerciseId, state.current?.setId) { mutableStateOf(false) }
+    LaunchedEffect(state.current?.weight, state.current?.amount, state.current?.selectedAddOns) {
+        if (!draftEdited) { draftWeight = state.current?.weight; draftAmount = state.current?.amount ?: 0.0; addOns = state.current?.selectedAddOns ?: emptySet() }
+    }
     val current = state.current
     val packItems = (state.packsByGym[gym] ?: state.packItems) + state.packsByDay[day].orEmpty()
     val checked = state.packChecked[gym].orEmpty() + state.packChecked["day:$day"].orEmpty()
@@ -169,14 +193,16 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
     val scope = rememberCoroutineScope()
     val setRequester = remember { FocusRequester() }
     LaunchedEffect(pager.currentPage, editor, screen) { if (pager.currentPage == 1 && editor == null && screen == Screen.TRAIN) runCatching { setRequester.requestFocus() } }
-    LaunchedEffect(state.sessionActive, state.restRemainingSeconds, state.setupRemainingSeconds, state.exerciseFinished, state.summary) {
+    // Automatic screen changes only on real events (navigationKey), never on the per-second countdowns: the watch never
+    // pulls the person back to a screen and never moves on to the next set or exercise by itself (spec A4/A5).
+    LaunchedEffect(state.sessionActive, state.navigationKey, state.summary != null) {
         if (state.summary != null && !state.sessionActive) {
             screen = if (state.celebrations.isNotEmpty()) Screen.CELEBRATION else Screen.SUMMARY
         } else if (state.sessionActive) {
             if (state.setupRemainingSeconds != null) screen = Screen.SETUP
             else if (state.restRemainingSeconds != null) screen = Screen.REST
             else if (state.exerciseFinished) screen = Screen.EXERCISE_DONE
-            else if (screen in listOf(Screen.HOME, Screen.PACK, Screen.REST, Screen.EXERCISE_DONE, Screen.SUMMARY, Screen.CELEBRATION)) screen = Screen.TRAIN
+            else if (screen in listOf(Screen.HOME, Screen.PACK, Screen.REST, Screen.EXERCISE_DONE, Screen.SETUP, Screen.SUMMARY, Screen.CELEBRATION)) screen = Screen.TRAIN
         }
     }
     fun back() {
@@ -311,8 +337,13 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                         item { RowPill("Zurück") { back() } }
                     }
                     Screen.TRAIN_PULSE -> ListScreen("Puls") {
-                        if (!state.pulsePermission) { item { InfoCard("Pulserlaubnis fehlt", "Puls während des Trainings anzeigen und aufzeichnen.") }; item { RowPill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } } }
-                        else if (state.bpm == null) item { InfoCard("Kein Messwert", "Trag die Uhr enger und halte den Arm ruhig.") }
+                        val pulse = state.pulse
+                        if (pulse != null && pulse.state != PulseState.MEASURING) {
+                            item { InfoCard(pulse.label, pulse.detail ?: state.recording) }
+                            if (pulse.canStart) item { RowPill(if (pulse.state == PulseState.PERMISSION_MISSING) "Erlauben und starten" else "Puls starten") { dispatch(WatchAction.StartRecording) } }
+                            if (pulse.askConsent) item { RowPill("Bei jedem Training aufzeichnen") { dispatch(WatchAction.SetHeartAuto(true)) } }
+                        } else if (!state.pulsePermission) { item { InfoCard("Pulserlaubnis fehlt", "Puls während des Trainings anzeigen und aufzeichnen.") }; item { RowPill("Auf Handy öffnen") { dispatch(WatchAction.OpenPhone) } } }
+                        else if (state.bpm == null) item { InfoCard("Kein Messwert", state.recording) }
                         else { item { InfoCard("Schläge pro Minute", state.bpm.toString()) }; item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { PulseCurve(state.pulseSamples) } }; item { InfoCard("Aufzeichnung", state.recording) } }
                         item { RowPill("Zurück") { back() } }
                     }
@@ -384,7 +415,8 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                         item { InfoCard("Aufzeichnung", state.recording) }
                         item { InfoCard("Puls", "Puls während des Trainings anzeigen und aufzeichnen.") }
                         if (state.sessionActive) item { RowPill("Puls aufzeichnen") { dispatch(WatchAction.StartRecording) } }
-                        item { InfoCard("Puls", if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "Wird gemessen") }
+                        item { InfoCard("Puls", state.pulse?.let { p -> listOfNotNull(p.label, p.detail).joinToString(" · ") } ?: if (!state.pulsePermission) "Erlaubnis fehlt" else if (state.bpm == null) "Kein Messwert" else "Wird gemessen") }
+                        item { RowPill("Bei jedem Training aufzeichnen", selected = state.heartAutoConsent == true) { dispatch(WatchAction.SetHeartAuto(state.heartAutoConsent != true)) } }
                         if (state.testProfile) item { InfoCard("Gesundheitsdaten", "Testprofil: nur lokal, kein Export") }
                         else {
                             item { InfoCard("Export in Health Connect", state.export) }
@@ -402,6 +434,7 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                         item { InfoCard("Rand im Training", if (durationRing) "Dauer anzeigen" else "Dauer ausblenden") }
                         item { RowPill("Dauer anzeigen", selected = durationRing) { dispatch(WatchAction.SetDurationRing(true)) } }
                         item { RowPill("Dauer ausblenden", selected = !durationRing) { dispatch(WatchAction.SetDurationRing(false)) } }
+                        item { RowPill("Puls bei jedem Training aufzeichnen", if (state.heartAutoConsent == true) "an" else "aus", selected = state.heartAutoConsent == true) { dispatch(WatchAction.SetHeartAuto(state.heartAutoConsent != true)) } }
                         item { RowPill("Gesundheit") { healthReturn = Screen.SETTINGS; screen = Screen.HEALTH } }
                         item { InfoCard("Uhr-App-Update", state.updateStatus) }
                         item { RowPill("Nach Update suchen") { dispatch(WatchAction.CheckUpdate) } }
@@ -430,7 +463,7 @@ fun WatchUi(state: WatchPresentation, dispatch: (WatchAction) -> Unit) {
                     item { RowPill(if (ex.skipped) "Wieder aufnehmen" else "Überspringen") { dispatch(WatchAction.ToggleExercise(ex.id, ex.skipped)); exerciseMenu = null } }
                     item { RowPill("Nach oben") { dispatch(WatchAction.Move(ex.id, -1)); exerciseMenu = null } }; item { RowPill("Nach unten") { dispatch(WatchAction.Move(ex.id, 1)); exerciseMenu = null } }; item { RowPill("Schließen") { exerciseMenu = null } }
                 } }
-                if (editor != null) ValueEditor(editor!!, current, if (editingSet != null) editWeight else draftWeight, if (editingSet != null) editAmount else draftAmount, onWeight = { if (editingSet != null) editWeight = it else draftWeight = it }, onAmount = { if (editingSet != null) editAmount = it else draftAmount = it }, onRest = { dispatch(WatchAction.ChangeRest(it)) }, addOns = if (editingSet != null) emptySet() else addOns, onAddOns = { addOns = it }, onClose = { editor = null })
+                if (editor != null) ValueEditor(editor!!, current, if (editingSet != null) editWeight else draftWeight, if (editingSet != null) editAmount else draftAmount, onWeight = { if (editingSet != null) editWeight = it else { draftWeight = it; draftEdited = true } }, onAmount = { if (editingSet != null) editAmount = it else { draftAmount = it; draftEdited = true } }, onRest = { dispatch(WatchAction.ChangeRest(it)) }, addOns = if (editingSet != null) emptySet() else addOns, onAddOns = { addOns = it; draftEdited = true }, onClose = { editor = null })
                 if (endConfirm) CenterColumn(Modifier.background(Color.Black)) { Title("Training beenden?"); Small("Offene Sätze werden übersprungen."); Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) { Pill("Weiter") { endConfirm = false }; Pill("Beenden", true) { endConfirm = false; dispatch(WatchAction.Finish) } } }
             }
         }

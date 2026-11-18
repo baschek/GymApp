@@ -1,6 +1,8 @@
 package de.baschek.gymapp.wear.backend.workout
 
 import de.baschek.gymapp.core.model.*
+import de.baschek.gymapp.core.training.ActionOutcome
+import de.baschek.gymapp.core.training.RejectReason
 import de.baschek.gymapp.core.wear.events.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
@@ -27,12 +29,12 @@ class WatchWorkoutRepositoryTest {
         val id = repository.startPlan("plan", "gym", WorkoutMode.NORMAL)
         assertNotNull(id)
         val exercise = repository.state.value.session!!.exercises.single()
-        assertTrue(repository.logSet(exercise.id, exercise.sets[0].id, WatchSetInput(20.0, 12.0, "one_two")))
-        assertTrue(repository.skipRest())
+        assertTrue(repository.logSet(exercise.id, exercise.sets[0].id, WatchSetInput(20.0, 12.0, "one_two")).changed)
+        assertTrue(repository.skipRest().changed)
         val restored = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch", now = { 1767261700000L })
         assertEquals(id, restored.state.value.sessionId)
         assertEquals(SetStatus.COMPLETED, restored.state.value.session!!.exercises.single().sets.first().status)
-        assertTrue(restored.logSet(exercise.id, exercise.sets[1].id, WatchSetInput(20.0, 12.0, "one_two")))
+        assertTrue(restored.logSet(exercise.id, exercise.sets[1].id, WatchSetInput(20.0, 12.0, "one_two")).changed)
         assertEquals(SessionStatus.COMPLETED, restored.state.value.session!!.status)
         assertTrue(restored.state.value.pendingEvents >= 4)
         assertEquals(1, restored.state.value.milestones.size)
@@ -43,7 +45,7 @@ class WatchWorkoutRepositoryTest {
         assertTrue(repository.replaceCatalog(catalog(WorkoutProfile.TEST)))
         assertNotNull(repository.startSpontaneous("exercise", "gym"))
         val session = repository.state.value.session!!; val exercise = session.exercises.single()
-        assertTrue(repository.logSet(exercise.id, exercise.sets.single().id, WatchSetInput(10.0, 10.0, "one_two")))
+        assertTrue(repository.logSet(exercise.id, exercise.sets.single().id, WatchSetInput(10.0, 10.0, "one_two")).changed)
         assertEquals(0, repository.state.value.pendingEvents)
         assertFalse(repository.replaceCatalog(catalog(WorkoutProfile.PERSONAL)))
     }
@@ -53,7 +55,7 @@ class WatchWorkoutRepositoryTest {
         repository.replaceCatalog(catalog(WorkoutProfile.PERSONAL)); repository.startPlan("plan", "gym", WorkoutMode.NORMAL)
         val exercise = repository.state.value.session!!.exercises.single()
         repository.logSet(exercise.id, exercise.sets[0].id, WatchSetInput(20.0, 10.0, "one_two"))
-        assertTrue(repository.undo())
+        assertTrue(repository.undo().changed)
         assertEquals(SetStatus.PENDING, repository.state.value.session!!.exercises.single().sets.first().status)
     }
     @Test fun `final set undo reverses progression and corrected finish reapplies it`() = runTest {
@@ -65,12 +67,12 @@ class WatchWorkoutRepositoryTest {
         r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 12.0, "one_two"))
         assertEquals(SessionStatus.COMPLETED, r.state.value.session!!.status)
         assertEquals(1, r.state.value.milestones.size)
-        assertTrue(r.undo())
+        assertTrue(r.undo().changed)
         assertEquals(SessionStatus.ACTIVE, r.state.value.session!!.status)
         assertEquals(SetStatus.PENDING, r.state.value.session!!.exercises.single().sets[1].status)
         assertTrue(r.state.value.milestones.isEmpty())
         assertTrue(r.state.value.catalog.machineProfiles.isEmpty())
-        assertTrue(r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 11.0, "one_two")))
+        assertTrue(r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 11.0, "one_two")).changed)
         assertEquals(SessionStatus.COMPLETED, r.state.value.session!!.status)
         assertEquals(1, r.state.value.milestones.size)
     }
@@ -97,10 +99,10 @@ class WatchWorkoutRepositoryTest {
         val r = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch", now = { clock })
         r.replaceCatalog(catalog(WorkoutProfile.PERSONAL)); r.startPlan("plan", "gym", WorkoutMode.NORMAL)
         val ex = r.state.value.session!!.exercises.single()
-        assertTrue(r.startSetTimer())
+        assertTrue(r.startSetTimer().changed)
         assertEquals(ex.sets[0].id, r.state.value.timer?.setId)
         clock += 15000
-        assertTrue(r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 10.0, "one_two")))
+        assertTrue(r.logSet(ex.id, ex.sets[1].id, WatchSetInput(20.0, 10.0, "one_two")).changed)
         assertNull(r.state.value.session!!.exercises.single().sets[1].setDurationSeconds)
     }
 
@@ -173,5 +175,40 @@ class WatchWorkoutRepositoryTest {
         assertTrue("session with unsent events survives", archived.containsKey(ids.first()))
         assertTrue(archived.containsKey(ids[7]))
         assertFalse(archived.containsKey(ids[1]))
+    }
+
+    @Test fun `no-op actions are silent, rejections name the reason, next exercise is the first open one`() = runTest {
+        val file = temporary.newFile("outcomes.json").also { it.delete() }
+        val names = listOf("A", "B", "C", "D")
+        val cat = WatchCatalog(profile = WorkoutProfile.PERSONAL,
+            gyms = mapOf("gym" to raw(Gym(name = "Synthetic"))),
+            exercises = names.associate { "x$it" to raw(Exercise(name = it)) },
+            plans = mapOf("plan" to raw(Plan(name = "Plan", exercises = names.mapIndexed { i, n ->
+                PlanExercise(id = "p$n", exerciseId = "x$n", order = i, modeSets = ModeSets(1, 1, 1), target = Target(Metric.REPS, 8.0, 12.0, 1.0, 2.0))
+            }))))
+        val r = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch", now = { 1767261600000L })
+        r.replaceCatalog(cat); r.startPlan("plan", "gym", WorkoutMode.NORMAL)
+        val list = r.state.value.session!!.exercises
+        assertEquals(ActionOutcome.Unchanged, r.setFocus(list[0].id))
+        assertEquals(ActionOutcome.Unchanged, r.moveExercise(list[0].id, -1))
+        assertEquals(ActionOutcome.Changed, r.setFocus(list[2].id))
+        val set = list[2].sets.single().id
+        assertEquals(ActionOutcome.Changed, r.logSet(list[2].id, set, WatchSetInput(20.0, 10.0, "three_four", effortSource = EffortSource.USER)))
+        val logged = r.state.value.session!!.exercises[2].sets.single()
+        assertEquals(EffortSource.USER, logged.effortSource)
+        assertEquals(ActionOutcome.Rejected(RejectReason.SET_ALREADY_DONE), r.logSet(list[2].id, set, WatchSetInput(20.0, 10.0, "one_two")))
+        // after the jump to C the label and the action both go to A (the first open exercise)
+        assertEquals("A", r.nextExerciseName())
+        assertEquals(ActionOutcome.Changed, r.skipRest())
+        assertEquals(ActionOutcome.Unchanged, r.skipRest())
+        assertEquals(ActionOutcome.Rejected(RejectReason.REST_ALREADY_OVER), r.changeRest(15))
+        assertEquals(ActionOutcome.Changed, r.nextExercise())
+        assertEquals(list[0].id, r.state.value.focusExerciseId)
+        assertEquals(ActionOutcome.Rejected(RejectReason.EXERCISE_DONE), r.setFocus(list[2].id))
+        val preview = r.nextSetPreview()!!
+        assertEquals(list[0].id, preview.exerciseId)
+        assertEquals("Ziel 8–12", preview.targetText)
+        r.setHeartAutoConsent(true)
+        assertEquals(true, WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch").state.value.heartAutoConsent)
     }
 }

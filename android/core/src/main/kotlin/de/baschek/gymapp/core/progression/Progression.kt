@@ -1,6 +1,7 @@
 package de.baschek.gymapp.core.progression
 
 import de.baschek.gymapp.core.model.EffortLowerBound
+import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.LoadBasis
 import de.baschek.gymapp.core.model.LoadDirection
 import de.baschek.gymapp.core.model.MeasurementType
@@ -71,64 +72,85 @@ fun estimatedOneRepMax(set: SetLog, baseLoadKg: Double = 0.0): Double? {
     return totalLoad * (1 + effectiveReps / 30.0)
 }
 
+/**
+ * Suggestion for the next set during a workout (watch design spec K, "Nächster Satz im Training"; double progression):
+ * - value at or above the upper bound of the target AND reserve at least the target RIR: the next available step
+ *   ([nextStepUp]: next main level, an add-on first when that jump is very large; assisted exercises: less assistance);
+ * - value inside the target range, or reserve too low: hold the weight;
+ * - clear miss (below the lower bound at the limit, or two steps of the metric short): one step lighter (assisted: more
+ *   assistance).
+ * Seconds and meters work like reps. Only a suggestion: the prefill of the next set does not change by itself.
+ * [availableWeightsKg] are the main levels of the machine (or every selectable total when [addonWeightsKg] is null),
+ * [addonWeightsKg] its add-on weights. Null for warm-up and non-completed sets, without effort, or without a weight.
+ */
+@Suppress("UNUSED_PARAMETER") // bodyWeightKg: kept for callers; the step rule does not need the body weight
 fun suggestNextWeight(
     set: SetLog,
     target: Target,
     measurementType: String,
     availableWeightsKg: List<Double>? = null,
     bodyWeightKg: Double? = null,
+    addonWeightsKg: List<Double>? = null,
 ): WeightSuggestion? {
     if (set.status != SetStatus.COMPLETED || set.setType == SetType.WARMUP) return null
     val effort = effortLb(set.effort) ?: return null
-    val weights = availableWeightsKg
+    val levels = availableWeightsKg.orEmpty()
+    val addons = addonWeightsKg.orEmpty()
+    val weight = set.weightKg ?: return null
+    val achieved: Double = when (target.metric) {
+        Metric.SECONDS -> set.seconds?.toDouble()
+        Metric.METERS -> set.meters
+        else -> set.reps?.toDouble()
+    } ?: return null
+    if (achieved <= 0.0) return null
+    val assisted = measurementType == MeasurementType.ASSISTED_REPS
+    val loaded = measurementType == MeasurementType.LOAD_REPS || measurementType == MeasurementType.ADDED_WEIGHT_REPS ||
+        measurementType == MeasurementType.LOAD_DURATION || measurementType == MeasurementType.LOAD_DISTANCE_DURATION
+    if (!assisted && !loaded) return null
+    if (weight <= 0.0 && measurementType != MeasurementType.ADDED_WEIGHT_REPS) return null
 
-    if (measurementType == MeasurementType.LOAD_REPS || measurementType == MeasurementType.ADDED_WEIGHT_REPS) {
-        val baseLoadKg = if (measurementType == MeasurementType.ADDED_WEIGHT_REPS) (bodyWeightKg ?: 0.0) else 0.0
-        val estimate = estimatedOneRepMax(set, baseLoadKg) ?: return null
-        val reps = set.reps ?: return null
-        val desiredEffectiveReps = target.max + (target.rirMin + target.rirMax) / 2
-        val calculated = max(0.0, estimate / (1 + desiredEffectiveReps / 30) - baseLoadKg)
-        val chosen = nearestAvailableWeight(calculated, weights)
-        return WeightSuggestion(
-            weightKg = chosen,
-            reason = if (chosen > (set.weightKg ?: 0.0)) "This set supports a heavier trial" else "Use this target",
-            detail = "Calculated ${toFixed1(calculated)} kg from $reps reps and at least $effort reps in reserve; ${fmt(chosen)} kg is the nearest available weight.",
-            evidence = "Current working set: $reps reps at ${fmt(set.weightKg ?: 0.0)} kg with $effort or more reps in reserve.",
-        )
-    }
+    val step = metricStep(target.metric)
+    val unit = when (target.metric) { Metric.SECONDS -> " s"; Metric.METERS -> " m"; else -> " reps" }
+    val result = "${fmt(achieved)}$unit at ${fmt(weight)} kg with $effort or more reps in reserve"
+    val evidence = "Current working set: $result."
+    val topReached = achieved >= target.max && effort >= target.rirMin
+    val clearMiss = achieved < target.min && (effort == 0 || achieved <= target.min - 2 * step)
+    val timed = measurementType == MeasurementType.LOAD_DURATION || measurementType == MeasurementType.LOAD_DISTANCE_DURATION
 
-    val weight = set.weightKg
-    if (measurementType == MeasurementType.ASSISTED_REPS && weight != null && weight != 0.0 && (set.reps ?: 0) != 0) {
-        val sorted = (weights ?: emptyList()).sortedDescending()
-        val idx = sorted.indexOfFirst { it == weight }
-        if ((set.reps ?: 0) >= target.max && effort >= target.rirMin && idx >= 0 && idx < sorted.size - 1) {
+    if (topReached) {
+        val next = if (assisted) nextStepDown(weight, levels) else nextStepUp(weight, levels, addons)
+        if (next != null) {
             return WeightSuggestion(
-                weightKg = sorted[idx + 1],
-                reason = "Try less assistance",
-                detail = "You reached the top of the target with reserve. Lower assistance is harder.",
-                evidence = "Current working set reached ${set.reps} reps with at least $effort reps in reserve.",
+                weightKg = next,
+                reason = when {
+                    assisted -> "Try less assistance"
+                    timed -> "Try the next available load"
+                    else -> "This set supports a heavier trial"
+                },
+                detail = "The top of the target (${fmt(target.max)}) was reached with at least ${fmt(target.rirMin)} reps in reserve; " +
+                    "${fmt(next)} kg is the next available step.",
+                evidence = evidence,
             )
         }
     }
-
-    if (weight != null && weight != 0.0 &&
-        (measurementType == MeasurementType.LOAD_DURATION || measurementType == MeasurementType.LOAD_DISTANCE_DURATION)
-    ) {
-        val achieved: Double? = if (target.metric == Metric.METERS) set.meters else set.seconds?.toDouble()
-        val sorted = (weights ?: emptyList()).sorted()
-        val idx = sorted.indexOfFirst { it == weight }
-        if (achieved != null && achieved != 0.0 && achieved >= target.max && effort >= target.rirMin &&
-            idx >= 0 && idx < sorted.size - 1
-        ) {
+    if (clearMiss) {
+        val lighter = if (assisted) nextStepUp(weight, levels) else nextStepDown(weight, levels)
+        if (lighter != null) {
             return WeightSuggestion(
-                weightKg = sorted[idx + 1],
-                reason = "Try the next available load",
-                detail = "The target duration or distance was reached with reserve.",
-                evidence = "Current working set reached ${fmt(achieved)} ${target.metric} with at least $effort reps in reserve.",
+                weightKg = lighter,
+                reason = if (assisted) "Use more assistance" else "Use one step less",
+                detail = "Clearly below the target (${fmt(target.min)}–${fmt(target.max)}); ${fmt(lighter)} kg is one step ${if (assisted) "more assistance" else "lighter"}.",
+                evidence = evidence,
             )
         }
     }
-    return null
+    return WeightSuggestion(
+        weightKg = weight,
+        reason = "Use this target",
+        detail = if (achieved >= target.max) "The top of the target was reached without the required reserve; keep ${fmt(weight)} kg."
+        else "Keep ${fmt(weight)} kg until the top of the target (${fmt(target.max)}) is reached with reserve.",
+        evidence = evidence,
+    )
 }
 
 private fun normalizeTotalLoad(weightKg: Double, basis: String) =
@@ -207,14 +229,16 @@ fun historicalWorkingWeight(
     )
 }
 
+private fun achievedValue(set: SetLog, target: Target): Double? = when (target.metric) {
+    Metric.REPS -> set.reps?.toDouble()
+    Metric.SECONDS -> set.seconds?.toDouble()
+    else -> set.meters
+}
+
 internal fun setMeetsTarget(set: SetLog, target: Target): Boolean {
     if (set.status != SetStatus.COMPLETED || set.setType != SetType.WORKING) return false
     val lb = effortLb(set.effort) ?: return false
-    val actual: Double = when (target.metric) {
-        Metric.REPS -> set.reps?.toDouble()
-        Metric.SECONDS -> set.seconds?.toDouble()
-        else -> set.meters
-    } ?: return false
+    val actual = achievedValue(set, target) ?: return false
     if (actual < target.min) return false
     return lb >= target.rirMin
 }
@@ -222,24 +246,94 @@ internal fun setMeetsTarget(set: SetLog, target: Target): Boolean {
 internal fun qualifyingWeights(exercise: SessionExercise): List<Double> =
     exercise.sets.filter { it.weightKg != null && setMeetsTarget(it, exercise.target) }.map { it.weightKg!! }
 
-fun provenWorkingWeight(exercise: SessionExercise, currentWeightKg: Double?): Double? {
+/** Days without this exercise after which the first working set cannot prove a new weight alone. */
+const val LONG_BREAK_DAYS = 14L
+
+private fun improves(weight: Double, currentWeightKg: Double, lower: Boolean) =
+    if (lower) weight < currentWeightKg - 1e-9 else weight > currentWeightKg + 1e-9
+
+/** A later set at the same weight that speaks against a proof: failed, below the target, or (entered) too little reserve. */
+private fun contradicts(set: SetLog, target: Target): Boolean {
+    if (set.setType != SetType.WORKING) return false
+    if (set.status == SetStatus.FAILED) return true
+    if (set.status != SetStatus.COMPLETED) return false
+    val actual = achievedValue(set, target) ?: return false
+    if (actual < target.min) return true
+    val lb = effortLb(set.effort)
+    return set.effortSource == EffortSource.USER && lb != null && lb < target.rirMin
+}
+
+/**
+ * Single-set proof (watch design spec K, "Nächstes Training"): a weight beyond [currentWeightKg] counts as proven by ONE
+ * working set when its value is at least the lower bound plus one step ([metricStep]: 9 at 8–12), its reserve reaches
+ * the target RIR, and that reserve was entered by the person ([EffortSource.USER]; a preselected band does not count).
+ * Guards: the first working set after a break of more than [LONG_BREAK_DAYS] days ([afterLongBreak]) is no proof, and a
+ * later set at the same weight in this session must not contradict it. Needs an existing working weight. Returns the
+ * best such weight (highest; assisted: lowest) or null.
+ */
+fun singleSetProvenWeight(exercise: SessionExercise, currentWeightKg: Double?, afterLongBreak: Boolean = false): Double? {
+    if (currentWeightKg == null) return null
+    val target = exercise.target
+    val lower = exercise.loadDirection == LoadDirection.LOWER_ASSISTANCE
+    val sets = exercise.sets
+    val firstWorking = sets.indexOfFirst { it.setType == SetType.WORKING && it.status == SetStatus.COMPLETED }
+    val proofs = sets.withIndex().filter { (i, set) ->
+        val weight = set.weightKg
+        val actual = achievedValue(set, target)
+        weight != null && actual != null &&
+            set.status == SetStatus.COMPLETED && set.setType == SetType.WORKING &&
+            set.effortSource == EffortSource.USER && (effortLb(set.effort) ?: -1) >= target.rirMin &&
+            actual >= target.min + metricStep(target.metric) &&
+            improves(weight, currentWeightKg, lower) &&
+            !(afterLongBreak && i == firstWorking) &&
+            sets.drop(i + 1).none { later -> later.weightKg != null && abs(later.weightKg - weight) < 1e-9 && contradicts(later, target) }
+    }.map { it.value.weightKg!! }
+    if (proofs.isEmpty()) return null
+    return if (lower) proofs.min() else proofs.max()
+}
+
+/** The classic rule: two qualifying working sets in one session; the second best qualifying weight. */
+private fun twoSetProvenWeight(exercise: SessionExercise, currentWeightKg: Double?): Double? {
     val qualifying = qualifyingWeights(exercise)
     if (qualifying.size < 2) return null
     val sorted = qualifying.sorted()
     val lower = exercise.loadDirection == LoadDirection.LOWER_ASSISTANCE
     val candidate = if (lower) sorted[1] else sorted[sorted.size - 2]
     if (currentWeightKg == null) return candidate
-    return if (lower) {
-        if (candidate < currentWeightKg) candidate else null
-    } else {
-        if (candidate > currentWeightKg) candidate else null
+    return if (improves(candidate, currentWeightKg, lower)) candidate else null
+}
+
+/**
+ * The new working weight this session proves, or null: the better of the two-set rule and the single-set rule
+ * ([singleSetProvenWeight], only with entered reserve). [afterLongBreak]: the previous session with this exercise (same
+ * gym) is more than [LONG_BREAK_DAYS] days ago.
+ */
+fun provenWorkingWeight(exercise: SessionExercise, currentWeightKg: Double?, afterLongBreak: Boolean = false): Double? {
+    val two = twoSetProvenWeight(exercise, currentWeightKg)
+    val one = singleSetProvenWeight(exercise, currentWeightKg, afterLongBreak)
+    val lower = exercise.loadDirection == LoadDirection.LOWER_ASSISTANCE
+    return when {
+        two == null -> one
+        one == null -> two
+        lower -> minOf(one, two)
+        else -> maxOf(one, two)
     }
 }
 
-fun progressionEvidence(exercise: SessionExercise, currentWeightKg: Double?): String {
+/** Whether the proven weight comes from the single-set rule (for the evidence texts). */
+fun provenBySingleSet(exercise: SessionExercise, currentWeightKg: Double?, afterLongBreak: Boolean = false): Boolean {
+    val proven = provenWorkingWeight(exercise, currentWeightKg, afterLongBreak) ?: return false
+    val two = twoSetProvenWeight(exercise, currentWeightKg)
+    return two == null || abs(two - proven) > 1e-9
+}
+
+fun progressionEvidence(exercise: SessionExercise, currentWeightKg: Double?, afterLongBreak: Boolean = false): String {
     val qualifying = qualifyingWeights(exercise)
-    val proven = provenWorkingWeight(exercise, currentWeightKg)
+    val proven = provenWorkingWeight(exercise, currentWeightKg, afterLongBreak)
     if (proven != null) {
+        if (provenBySingleSet(exercise, currentWeightKg, afterLongBreak)) {
+            return "${fmt(proven)} kg is proven by one strong working set with reported reserve and will be saved when the workout finishes."
+        }
         return "${fmt(proven)} kg is proven by two qualifying working sets and will be saved when the workout finishes."
     }
     if (currentWeightKg == null) {

@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SessionExercise
@@ -90,6 +91,7 @@ private fun reasonText(ex: SessionExercise, total: Double): String? {
         "cross_gym_estimate" -> "Schätzung aus einem anderen Studio. Vorsichtig testen."
         "guided_estimate" -> "Vorsichtiger Startwert aus einer verwandten Übung."
         "plan_weight" -> "Startgewicht aus dem Plan."
+        "deload_after_failures" -> "Eine Stufe leichter: die letzten zwei Trainings mit dem Arbeitsgewicht waren zu schwer."
         else -> null
     }
 }
@@ -137,7 +139,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     LaunchedEffect(set?.id, overrideReps) { overrideReps?.let { draft.value = it } }
 
     val hint = remember(ex, info, bodyWeight, warm) {
-        if (ex == null || warm || !weighted) null else weightHint(ex, info?.candidates.orEmpty(), info?.workingWeightKg, bodyWeight)
+        if (ex == null || warm || !weighted) null else weightHint(ex, info?.levels.orEmpty(), info?.workingWeightKg, bodyWeight, info?.addons.orEmpty())
     }
 
     val workingTotal = ex?.sets?.count { it.setType == SetType.WORKING } ?: 0
@@ -152,6 +154,8 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                     value = draft.value,
                     effort = draft.effortBand(warm),
                     addonWeightsKg = draft.addons.sorted().takeIf { it.isNotEmpty() && weighted },
+                    // the effort picker is visible in the set entry: the band counts as entered (spec E)
+                    effortSource = if (warm) null else EffortSource.USER,
                 ),
             )
         }

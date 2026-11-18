@@ -25,7 +25,7 @@ object WorkoutNotification {
         val exercise = session.exercises.firstOrNull { it.id == state.focusExerciseId }
         val index = exercise?.sets?.indexOfFirst { it.status == SetStatus.PENDING } ?: -1
         val description = if (index >= 0 && exercise != null) "Satz ${index + 1}/${exercise.sets.size}" else "Training läuft"
-        val touch = PendingIntent.getActivity(context, ID, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val touch = PendingIntent.getActivity(context, ID, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(context, "watch_workout")
             .setSmallIcon(android.R.drawable.ic_menu_compass).setContentTitle("GymApp")
             .setContentText(description).setOngoing(true).setContentIntent(touch)

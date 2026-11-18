@@ -23,7 +23,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 
-@Serializable data class WatchSetInput(val weightKg: Double?, val value: Double?, val effort: String?, val addonWeightsKg: List<Double>? = null)
+/** One set as entered on the watch. [effortSource]: [EffortSource.USER] when the band was chosen, [EffortSource.AUTO] for the preselection (see `resolveEffort`). */
+@Serializable data class WatchSetInput(val weightKg: Double?, val value: Double?, val effort: String?, val addonWeightsKg: List<Double>? = null,
+    val effortSource: String? = null)
 @Serializable data class WatchUndo(val exerciseId: String, val exercise: SessionExercise, val index: Int, val label: String)
 @Serializable data class WatchFinishUndo(val sessionId: String, val machineBefore: Map<String, JsonObject?>,
     val milestoneIds: List<String>, val previousHistory: JsonObject?)
@@ -44,6 +46,8 @@ import kotlinx.serialization.json.JsonObject
     val catalogSessionIds: Set<String> = emptySet(),
     val catalogSessionIdsInitialized: Boolean = false,
     val deletedSessionIds: Set<String> = emptySet(),
+    /** "Puls bei jedem Training aufzeichnen" (spec J): null until the one-time question is answered. */
+    val heartAutoConsent: Boolean? = null,
 ) {
     val sessionId: String? get() = replica?.sessionId
     val session: Session? get() = replica?.document?.let { runCatching { DocumentCodec.decode(Session.serializer(), it) }.getOrNull() }
@@ -144,6 +148,8 @@ class WatchWorkoutRepository private constructor(
             milestones = s.milestones.filterValues { it.sessionId !in removable })
     }
     suspend fun setDurationRing(enabled: Boolean) = locked { it.copy(durationRing = enabled) to Unit }
+    /** Stores the answer to "Puls bei jedem Training aufzeichnen" (device only, never synced). */
+    suspend fun setHeartAutoConsent(enabled: Boolean) = locked { it.copy(heartAutoConsent = enabled) to Unit }
     suspend fun togglePackItem(key: String, day: String, itemId: String, defaults: Set<String> = emptySet()) = locked { s ->
         val selected = PackState.decodeOrNull(s.packChecks[key], day) ?: defaults
         s.copy(packChecks = s.packChecks + (key to PackState.encode(day, PackState.toggle(selected, itemId)))) to Unit
@@ -207,28 +213,40 @@ class WatchWorkoutRepository private constructor(
         start(s, Plan(name = "Spontan", exercises = listOf(pe)), null, gymId, mode)
     }
 
-    /** Returns false for an invalid or obsolete action; caller may surface an error. */
-    private suspend fun change(exerciseId: String?, label: String, transform: (WatchWorkoutState, Session) -> Triple<Session, WorkoutTimer?, String?>): Boolean = locked { s ->
-        val r = s.replica ?: return@locked s to false
-        val before = session(s) ?: return@locked s to false
-        if (before.status != SessionStatus.ACTIVE) return@locked s to false
-        val (after, timer, focus) = transform(s, before)
-        if (after == before && timer == r.timer && focus == r.focusExerciseId) return@locked s to false
+    /** Thrown inside a transform to refuse an action with a reason (spec L). */
+    private class Reject(val reason: RejectReason) : Exception(null, null, false, false)
+    private fun reject(reason: RejectReason): Nothing = throw Reject(reason)
+
+    /**
+     * Applies one action. [ActionOutcome.Unchanged] when it changes nothing (to be ignored silently), [ActionOutcome.Rejected]
+     * with a reason for a real refusal, [ActionOutcome.Changed] otherwise.
+     */
+    private suspend fun change(exerciseId: String?, label: String, transform: (WatchWorkoutState, Session) -> Triple<Session, WorkoutTimer?, String?>): ActionOutcome = locked { s ->
+        val r = s.replica ?: return@locked s to ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT)
+        val before = session(s) ?: return@locked s to ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT)
+        if (before.status != SessionStatus.ACTIVE) return@locked s to ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT)
+        val (after, timer, focus) = try { transform(s, before) } catch (e: Reject) { return@locked s to ActionOutcome.Rejected(e.reason) }
+        if (after == before && timer == r.timer && focus == r.focusExerciseId) return@locked s to ActionOutcome.Unchanged
         val raw = DocumentCodec.encodeMerged(Session.serializer(), after.copy(focusExerciseId = focus), r.document)
         val index = before.exercises.indexOfFirst { it.id == exerciseId }
         val undo = if (index >= 0) WatchUndo(exerciseId!!, before.exercises[index], index, label) else null
         val next = event(s.copy(undo = undo, finishUndo = null), r, raw, timer, focus)
-        if (label == "Satz geloggt" && after.exercises.none { ex -> ex.sets.any { it.status == SetStatus.PENDING } }) finishState(next, preserveUndo = true) else next to true
+        val (state, _) = if (label == "Satz geloggt" && after.exercises.none { ex -> ex.sets.any { it.status == SetStatus.PENDING } }) finishState(next, preserveUndo = true) else next to true
+        state to ActionOutcome.Changed
     }
+    private fun exercise(session: Session, exerciseId: String): SessionExercise =
+        session.exercises.firstOrNull { it.id == exerciseId } ?: reject(RejectReason.EXERCISE_GONE)
     fun prefill(exerciseId: String): SetPrefill? {
         val s = state.value; val ex = s.session?.exercises?.firstOrNull { it.id == exerciseId } ?: return null
         val profile = docs<MachineProfile>(s.catalog.machineProfiles).values.firstOrNull { it.gymId == s.session?.gymId && it.exerciseId == ex.exerciseId }
         return prefillSet(ex, profile?.let { weightCandidates(it.effectiveWeights(), it.effectiveAddons()) }.orEmpty())
     }
-    suspend fun logSet(exerciseId: String, setId: String, input: WatchSetInput): Boolean = change(exerciseId, "Satz geloggt") { s, session ->
-        val ex = session.exercises.firstOrNull { it.id == exerciseId }
-        val set = ex?.sets?.firstOrNull { it.id == setId && it.status == SetStatus.PENDING }
-        if (ex == null || set == null || input.value?.let { !it.isFinite() || it <= 0.0 } == true || input.weightKg?.let { !it.isFinite() || it < 0.0 } == true) return@change Triple(session, s.timer, s.focusExerciseId)
+    /** Logs a set; the effort is stored with its [WatchSetInput.effortSource] (spec E). */
+    suspend fun logSet(exerciseId: String, setId: String, input: WatchSetInput): ActionOutcome = change(exerciseId, "Satz geloggt") { s, session ->
+        val ex = exercise(session, exerciseId)
+        val set = ex.sets.firstOrNull { it.id == setId } ?: reject(RejectReason.SET_ALREADY_DONE)
+        if (set.status != SetStatus.PENDING) reject(RejectReason.SET_ALREADY_DONE)
+        if (input.value?.let { !it.isFinite() || it <= 0.0 } == true || input.weightKg?.let { !it.isFinite() || it < 0.0 } == true) reject(RejectReason.INVALID_VALUE)
         val clock = now(); val timer = s.timer
         val elapsed = if (timer?.phase == "SET" && timer.sessionId == s.sessionId && timer.exerciseId == exerciseId && timer.setId == setId) ((clock - timer.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         val timerForSession = timer?.takeIf { it.sessionId == s.sessionId }
@@ -241,35 +259,56 @@ class WatchWorkoutRepository private constructor(
                 reps = if (item.target.metric == Metric.REPS) input.value?.toInt() else entry.reps,
                 seconds = if (item.target.metric == Metric.SECONDS) input.value?.toInt() else entry.seconds,
                 meters = if (item.target.metric == Metric.METERS) input.value else entry.meters, effort = input.effort,
+                effortSource = input.effortSource?.takeIf { input.effort != null && it in setOf(EffortSource.USER, EffortSource.AUTO) },
                 setDurationSeconds = elapsed, restBeforeSeconds = beforeRest, setupBeforeSeconds = beforeSetup, completedAt = iso(clock))
         }), setId) })
         val rest = if (updated.exercises.any { it.sets.any { entry -> entry.status == SetStatus.PENDING } }) WorkoutTimer("REST", clock, clock + ex.restSeconds * 1000L, ex.name, sessionId = s.sessionId, exerciseId = exerciseId, setId = setId) else null
         Triple(updated, rest, exerciseId)
     }
-    suspend fun correctSet(exerciseId: String, setId: String, correction: SetCorrection): Boolean = change(exerciseId, "Satz geändert") { s, session -> Triple(de.baschek.gymapp.core.training.correctSet(session, exerciseId, setId, correction), s.timer, s.focusExerciseId) }
-    suspend fun reopenSet(exerciseId: String, setId: String): Boolean = change(exerciseId, "Satz gelöscht") { s, session -> Triple(de.baschek.gymapp.core.training.reopenSet(session, exerciseId, setId), s.timer, exerciseId) }
-    suspend fun skipSet(exerciseId: String, setId: String, reason: SkipReason = SkipReason.OTHER): Boolean = change(exerciseId, "Satz übersprungen") { s, session -> Triple(de.baschek.gymapp.core.training.skipSet(session, exerciseId, setId, reason), s.timer, exerciseId) }
-    suspend fun addSet(exerciseId: String): Boolean = change(exerciseId, "Satz hinzugefügt") { s, session -> Triple(de.baschek.gymapp.core.training.addSet(session, exerciseId, newId), s.timer, exerciseId) }
-    suspend fun addWarmup(exerciseId: String): Boolean = change(exerciseId, "Aufwärmsatz hinzugefügt") { s, session -> Triple(insertWarmup(session, exerciseId, newId), s.timer, exerciseId) }
-    suspend fun moveExercise(exerciseId: String, delta: Int): Boolean = change(exerciseId, "Übung verschoben") { s, session -> Triple(de.baschek.gymapp.core.training.moveExercise(session, exerciseId, delta), s.timer, s.focusExerciseId) }
-    suspend fun toggleSkipExercise(exerciseId: String): Boolean = change(exerciseId, "Übung übersprungen") { s, session -> Triple(de.baschek.gymapp.core.training.toggleSkipExercise(session, exerciseId), s.timer, s.focusExerciseId) }
-    suspend fun resumeSkipped(exerciseId: String): Boolean = change(exerciseId, "Übung wieder aufgenommen") { s, session -> Triple(resumeSkippedSets(session, exerciseId), s.timer, exerciseId) }
-    suspend fun setNote(exerciseId: String, note: String): Boolean = change(exerciseId, "Notiz geändert") { s, session -> Triple(setExerciseNote(session, exerciseId, note), s.timer, s.focusExerciseId) }
-    suspend fun setFocus(exerciseId: String): Boolean = change(null, "Übung gewählt") { s, session ->
-        val ex = session.exercises.firstOrNull { it.id == exerciseId && it.sets.any { set -> set.status == SetStatus.PENDING } }
-        Triple(session, s.timer, ex?.id ?: s.focusExerciseId)
+    suspend fun correctSet(exerciseId: String, setId: String, correction: SetCorrection): ActionOutcome = change(exerciseId, "Satz geändert") { s, session ->
+        val set = exercise(session, exerciseId).sets.firstOrNull { it.id == setId } ?: reject(RejectReason.EXERCISE_GONE)
+        if (set.status != SetStatus.COMPLETED) reject(RejectReason.SET_ALREADY_DONE)
+        Triple(de.baschek.gymapp.core.training.correctSet(session, exerciseId, setId, correction), s.timer, s.focusExerciseId)
     }
-    suspend fun nextExercise(): Boolean = change(null, "Nächste Übung") { s, session ->
-        val list = session.exercises; val current = list.indexOfFirst { it.id == s.focusExerciseId }
-        val next = (list.drop((current + 1).coerceAtLeast(0)) + list.take((current + 1).coerceAtLeast(0))).firstOrNull { it.id != s.focusExerciseId && it.sets.any { set -> set.status == SetStatus.PENDING } }
-        Triple(session, s.timer, next?.id ?: s.focusExerciseId)
+    suspend fun reopenSet(exerciseId: String, setId: String): ActionOutcome = change(exerciseId, "Satz gelöscht") { s, session -> exercise(session, exerciseId); Triple(de.baschek.gymapp.core.training.reopenSet(session, exerciseId, setId), s.timer, exerciseId) }
+    suspend fun skipSet(exerciseId: String, setId: String, reason: SkipReason = SkipReason.OTHER): ActionOutcome = change(exerciseId, "Satz übersprungen") { s, session ->
+        val set = exercise(session, exerciseId).sets.firstOrNull { it.id == setId }
+        if (set == null || set.status != SetStatus.PENDING) reject(RejectReason.SET_ALREADY_DONE)
+        Triple(de.baschek.gymapp.core.training.skipSet(session, exerciseId, setId, reason), s.timer, exerciseId)
     }
-    suspend fun addExercise(catalogExerciseId: String): Boolean = change(null, "Übung hinzugefügt") { s, session ->
-        val ex = decode<Exercise>(s.catalog.exercises[catalogExerciseId]) ?: return@change Triple(session, s.timer, s.focusExerciseId)
+    suspend fun addSet(exerciseId: String): ActionOutcome = change(exerciseId, "Satz hinzugefügt") { s, session ->
+        exercise(session, exerciseId)
+        if (!canAddSet(session, exerciseId)) reject(RejectReason.SET_LIMIT)
+        Triple(de.baschek.gymapp.core.training.addSet(session, exerciseId, newId), s.timer, exerciseId)
+    }
+    suspend fun addWarmup(exerciseId: String): ActionOutcome = change(exerciseId, "Aufwärmsatz hinzugefügt") { s, session -> exercise(session, exerciseId); Triple(insertWarmup(session, exerciseId, newId), s.timer, exerciseId) }
+    /** Moving the first exercise up or the last one down changes nothing and is ignored. */
+    suspend fun moveExercise(exerciseId: String, delta: Int): ActionOutcome = change(exerciseId, "Übung verschoben") { s, session -> exercise(session, exerciseId); Triple(de.baschek.gymapp.core.training.moveExercise(session, exerciseId, delta), s.timer, s.focusExerciseId) }
+    suspend fun toggleSkipExercise(exerciseId: String): ActionOutcome = change(exerciseId, "Übung übersprungen") { s, session -> exercise(session, exerciseId); Triple(de.baschek.gymapp.core.training.toggleSkipExercise(session, exerciseId), s.timer, s.focusExerciseId) }
+    suspend fun resumeSkipped(exerciseId: String): ActionOutcome = change(exerciseId, "Übung wieder aufgenommen") { s, session -> exercise(session, exerciseId); Triple(resumeSkippedSets(session, exerciseId), s.timer, exerciseId) }
+    suspend fun setNote(exerciseId: String, note: String): ActionOutcome = change(exerciseId, "Notiz geändert") { s, session -> exercise(session, exerciseId); Triple(setExerciseNote(session, exerciseId, note), s.timer, s.focusExerciseId) }
+    /** "Jetzt": the current exercise again is ignored; an exercise without open sets is refused. */
+    suspend fun setFocus(exerciseId: String): ActionOutcome = change(null, "Übung gewählt") { s, session ->
+        val ex = exercise(session, exerciseId)
+        if (ex.id == s.focusExerciseId) return@change Triple(session, s.timer, s.focusExerciseId)
+        if (ex.sets.none { set -> set.status == SetStatus.PENDING }) reject(RejectReason.EXERCISE_DONE)
+        Triple(session, s.timer, ex.id)
+    }
+    /** Goes to [nextAfter] the focus: the first exercise with open sets (spec A6), the same one [nextExerciseName] names. */
+    suspend fun nextExercise(): ActionOutcome = change(null, "Nächste Übung") { s, session ->
+        Triple(session, s.timer, nextExerciseAfter(session.exercises, s.focusExerciseId)?.id ?: s.focusExerciseId)
+    }
+    /** Name of the exercise [nextExercise] would go to, or null when no other exercise has open sets. */
+    fun nextExerciseName(): String? {
+        val s = state.value
+        return s.session?.let { nextExerciseAfter(it.exercises, s.focusExerciseId)?.name }
+    }
+    suspend fun addExercise(catalogExerciseId: String): ActionOutcome = change(null, "Übung hinzugefügt") { s, session ->
+        val ex = decode<Exercise>(s.catalog.exercises[catalogExerciseId]) ?: reject(RejectReason.EXERCISE_GONE)
         val updated = de.baschek.gymapp.core.training.addExercise(session, templateFor(catalogExerciseId, ex.name, ex.measurementType, ex.loadDirection, ex.loadBasis), 1, newId)
         Triple(updated, s.timer, updated.exercises.lastOrNull()?.id)
     }
-    suspend fun startSetTimer(): Boolean = change(null, "Satz gestartet") { s, session ->
+    suspend fun startSetTimer(): ActionOutcome = change(null, "Satz gestartet") { s, session ->
         val clock = now(); val prior = s.timer
         val exercise = session.exercises.firstOrNull { it.id == s.focusExerciseId } ?: return@change Triple(session, prior, s.focusExerciseId)
         val set = exercise.sets.firstOrNull { it.status == SetStatus.PENDING } ?: return@change Triple(session, prior, s.focusExerciseId)
@@ -278,30 +317,32 @@ class WatchWorkoutRepository private constructor(
         val setup = prior?.pendingSetupSeconds ?: if (prior?.phase == "MACHINE_SETUP") ((clock - prior.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         Triple(session, WorkoutTimer("SET", clock, pendingRestSeconds = rest, pendingSetupSeconds = setup, sessionId = s.sessionId, exerciseId = exercise.id, setId = set.id), s.focusExerciseId)
     }
-    suspend fun startSetupTimer(label: String): Boolean = change(null, "Gerät einstellen") { s, session ->
+    suspend fun startSetupTimer(label: String): ActionOutcome = change(null, "Gerät einstellen") { s, session ->
         Triple(session, WorkoutTimer("MACHINE_SETUP", now(), label = label, pendingRestSeconds = s.timer?.pendingRestSeconds, sessionId = s.sessionId, exerciseId = s.focusExerciseId), s.focusExerciseId)
     }
-    suspend fun finishSetupTimer(): Boolean = change(null, "Gerät eingestellt") { s, session ->
+    suspend fun finishSetupTimer(): ActionOutcome = change(null, "Gerät eingestellt") { s, session ->
         val t = s.timer
         if (t?.phase != "MACHINE_SETUP") Triple(session, t, s.focusExerciseId)
         else Triple(session, t.copy(phase = null, endsAtMillis = null, pendingSetupSeconds = ((now() - t.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()), s.focusExerciseId)
     }
-    suspend fun changeRest(seconds: Int): Boolean = change(null, "Pause geändert") { s, session ->
+    /** +/-15 s; refused with "Pause schon beendet" when no rest runs any more. */
+    suspend fun changeRest(seconds: Int): ActionOutcome = change(null, "Pause geändert") { s, session ->
         val timer = s.timer
         val end = timer?.endsAtMillis
-        if (timer?.phase != "REST" || end == null) Triple(session, timer, s.focusExerciseId)
-        else Triple(session, timer.copy(endsAtMillis = (end + seconds * 1000L).coerceAtLeast(timer.startedAtMillis)), s.focusExerciseId)
+        if (timer?.phase != "REST" || end == null) reject(RejectReason.REST_ALREADY_OVER)
+        Triple(session, timer.copy(endsAtMillis = (end + seconds * 1000L).coerceAtLeast(timer.startedAtMillis)), s.focusExerciseId)
     }
-    suspend fun skipRest(): Boolean = change(null, "Pause beendet") { s, session ->
+    /** "Weiter": without a running rest (pressed twice, or ended on the phone) nothing happens. */
+    suspend fun skipRest(): ActionOutcome = change(null, "Pause beendet") { s, session ->
         val t = s.timer
         if (t?.phase != "REST") Triple(session, t, s.focusExerciseId)
         else Triple(session, t.copy(phase = null, endsAtMillis = null, pendingRestSeconds = ((now() - t.startedAtMillis).coerceAtLeast(0) / 1000).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()), s.focusExerciseId)
     }
-    suspend fun undo(): Boolean = locked { s ->
-        val r = s.replica ?: return@locked s to false; val current = session(s) ?: return@locked s to false
-        val u = s.undo ?: return@locked s to false
+    suspend fun undo(): ActionOutcome = locked { s ->
+        val r = s.replica ?: return@locked s to ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT); val current = session(s) ?: return@locked s to ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT)
+        val u = s.undo ?: return@locked s to ActionOutcome.Rejected(RejectReason.NOTHING_TO_UNDO)
         val finish = s.finishUndo
-        if (current.status != SessionStatus.ACTIVE && (current.status != SessionStatus.COMPLETED || finish?.sessionId != r.sessionId)) return@locked s to false
+        if (current.status != SessionStatus.ACTIVE && (current.status != SessionStatus.COMPLETED || finish?.sessionId != r.sessionId)) return@locked s to ActionOutcome.Rejected(RejectReason.NOTHING_TO_UNDO)
         val reopened = if (finish != null) current.copy(status = SessionStatus.ACTIVE, completedAt = null, durationSeconds = null) else current
         val restored = applyUndo(reopened, UndoEntry(u.label, u.exerciseId, u.exercise, u.index))
         val raw = DocumentCodec.encodeMerged(Session.serializer(), restored.copy(focusExerciseId = u.exerciseId), r.document)
@@ -313,9 +354,34 @@ class WatchWorkoutRepository private constructor(
             if (finish.previousHistory == null) history.remove(finish.sessionId) else history[finish.sessionId] = finish.previousHistory
             updated = updated.copy(catalog = updated.catalog.copy(machineProfiles = machines, sessions = history), milestones = updated.milestones - finish.milestoneIds.toSet())
         }
-        updated to true
+        updated to ActionOutcome.Changed
     }
-    suspend fun finish(): Boolean = locked { s -> finishState(s) }
+    suspend fun finish(): ActionOutcome = locked { s ->
+        val (next, ok) = finishState(s)
+        next to if (ok) ActionOutcome.Changed else ActionOutcome.Rejected(RejectReason.NO_ACTIVE_WORKOUT)
+    }
+
+    /** Machine profile of a catalog exercise in the gym of the running session. */
+    private fun machineFor(s: WatchWorkoutState, exerciseId: String): MachineProfile? =
+        docs<MachineProfile>(s.catalog.machineProfiles).values.firstOrNull { it.gymId == s.session?.gymId && it.exerciseId == exerciseId }
+
+    /**
+     * The next set for the set and rest screens (spec D/F): values, "Ziel 8–12", the suggestion ("170 → 180 kg ▲") and,
+     * before a new exercise, its machine setup. [justDoneExerciseId] is the exercise of the set just logged (null: the focus).
+     */
+    fun nextSetPreview(justDoneExerciseId: String? = state.value.timer?.exerciseId): SetPreview? {
+        val s = state.value
+        val session = s.session?.takeIf { it.status == SessionStatus.ACTIVE } ?: return null
+        return de.baschek.gymapp.core.training.nextSetPreview(session, s.focusExerciseId, justDoneExerciseId ?: s.focusExerciseId) { machineFor(s, it) }
+    }
+
+    /** Weight suggestion from the last working set of an exercise (spec K), null if there is none. */
+    fun weightHint(exerciseId: String): WeightHint? {
+        val s = state.value
+        val ex = s.session?.exercises?.firstOrNull { it.id == exerciseId } ?: return null
+        val machine = machineFor(s, ex.exerciseId)
+        return de.baschek.gymapp.core.training.weightHint(ex, machine?.effectiveWeights().orEmpty(), machine?.workingWeightKg, addons = machine?.effectiveAddons().orEmpty())
+    }
     private fun finishState(s: WatchWorkoutState, preserveUndo: Boolean = false): Pair<WatchWorkoutState, Boolean> {
         val r = s.replica ?: return s to false; val session = session(s) ?: return s to false
         if (session.status != SessionStatus.ACTIVE) return s to false

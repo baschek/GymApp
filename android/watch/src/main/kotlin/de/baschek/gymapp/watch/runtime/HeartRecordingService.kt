@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import de.baschek.gymapp.core.health.RecordingProfile
@@ -34,7 +35,7 @@ class HeartRecordingService : Service() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Trainingsaufzeichnung", NotificationManager.IMPORTANCE_LOW))
-        val pending = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val pending = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentTitle("GymApp Training")
@@ -44,7 +45,7 @@ class HeartRecordingService : Service() {
             ServiceCompat.startForeground(this, NOTIFICATION, builder.build(), if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH else 0)
             foregroundReady = true
         } catch (e: SecurityException) {
-            RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulserlaubnis fehlt") }
+            RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulserlaubnis fehlt", recordingActive = false, heartError = "Heart-rate permission is missing: ${e.message}") }
             stopSelf()
         }
     }
@@ -57,12 +58,18 @@ class HeartRecordingService : Service() {
             previous?.cancelAndJoin()
             try {
                 val engine = recorder ?: WearHeartRecorder(applicationContext).also { recorder = it }
-                if (intent?.action == ACTION_START) archiveTerminal(engine)
                 when (intent?.action) {
                     ACTION_START -> {
                         val session = requireNotNull(intent.getStringExtra("session"))
                         val profile = RecordingProfile.valueOf(requireNotNull(intent.getStringExtra("profile")))
-                        engine.start(session, profile)
+                        // An old recording that never ended (process death, older workout) would block every new start:
+                        // reconnect it when it is this workout's, otherwise close and archive it first (spec J).
+                        val running = engine.reconcileBeforeStart(session, profile)
+                        archiveTerminal(engine)
+                        if (!running) {
+                            RuntimeMonitor.state.update { it.copy(heartError = null) }
+                            engine.start(session, profile)
+                        }
                     }
                     ACTION_STOP -> { engine.reconnect(); engine.stop() }
                     else -> engine.reconnect()
@@ -76,7 +83,10 @@ class HeartRecordingService : Service() {
                         null -> "Puls nicht aufgezeichnet"
                     }
                     val reliable = value?.samples?.filter { it.reliable }.orEmpty()
-                    RuntimeMonitor.state.update { it.copy(recordingLabel = label, bpm = value?.samples?.lastOrNull()?.bpm?.toInt(),
+                    val active = value?.status == RecordingStatus.STARTING || value?.status == RecordingStatus.ACTIVE
+                    RuntimeMonitor.state.update { it.copy(recordingLabel = label, recordingActive = active,
+                        heartError = if (value?.status in setOf(RecordingStatus.INTERRUPTED, RecordingStatus.ERROR)) value?.error ?: "Recording interrupted" else if (active) null else it.heartError,
+                        bpm = value?.samples?.lastOrNull()?.bpm?.toInt(),
                         pulseSamples = value?.let(::pulseWindow) ?: it.pulseSamples,
                         heartSessionId = value?.sessionId ?: it.heartSessionId, heartProfile = value?.profile ?: it.heartProfile,
                         averageBpm = if (value == null) it.averageBpm else reliable.takeIf { it.isNotEmpty() }?.map { sample -> sample.bpm }?.average()?.toInt(),
@@ -92,7 +102,8 @@ class HeartRecordingService : Service() {
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
-                RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulsaufzeichnung nicht verfügbar") }
+                Log.w(TAG, "Heart recording failed: ${e.javaClass.simpleName}: ${e.message}")
+                RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulsaufzeichnung nicht verfügbar", recordingActive = false, heartError = e.message ?: e.javaClass.simpleName) }
                 runCatching { recorder?.detach() }
                 stopSelf(startId)
             }
@@ -133,6 +144,7 @@ class HeartRecordingService : Service() {
         const val ACTION_START = "de.baschek.gymapp.watch.START_HEART"
         const val ACTION_STOP = "de.baschek.gymapp.watch.STOP_HEART"
         private const val CHANNEL = "wear_heart"
+        private const val TAG = "HeartRecording"
         private const val NOTIFICATION = 481
     }
 }

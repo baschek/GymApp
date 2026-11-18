@@ -62,6 +62,44 @@ class WearHeartRecorderTest {
         store.clear()
     }
 
+    @Test fun orphanedRecordingIsReconciledBeforeANewStart() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(context).grantPermissions("android.permission.BODY_SENSORS")
+        val store = RecordingStore(context)
+        store.clear()
+        var status = ExerciseTrackedStatus.NO_EXERCISE_IN_PROGRESS
+        var started = 0
+        var ended = 0
+        val client = Proxy.newProxyInstance(ExerciseClient::class.java.classLoader, arrayOf(ExerciseClient::class.java)) { _, method, _ ->
+            when (method.name) {
+                "getCapabilitiesAsync" -> Futures.immediateFuture(ExerciseCapabilities(mapOf(
+                    ExerciseType.STRENGTH_TRAINING to ExerciseTypeCapabilities(setOf(DataType.HEART_RATE_BPM), emptyMap(), emptyMap(), false))))
+                "getCurrentExerciseInfoAsync" -> Futures.immediateFuture(ExerciseInfo(status, if (status == ExerciseTrackedStatus.NO_EXERCISE_IN_PROGRESS) ExerciseType.UNKNOWN else ExerciseType.STRENGTH_TRAINING))
+                "startExerciseAsync" -> { started++; status = ExerciseTrackedStatus.OWNED_EXERCISE_IN_PROGRESS; Futures.immediateFuture(null) }
+                "endExerciseAsync" -> { ended++; status = ExerciseTrackedStatus.NO_EXERCISE_IN_PROGRESS; Futures.immediateFuture(null) }
+                "clearUpdateCallbackAsync" -> Futures.immediateFuture(null)
+                "setUpdateCallback" -> null
+                else -> error("Unexpected call: ${method.name}")
+            }
+        } as ExerciseClient
+        val old = WearHeartRecorder(context, client, store)
+        old.start("synthetic-a", RecordingProfile.PERSONAL)
+        old.detach()
+        // A new process finds the old, still active recording.
+        val fresh = WearHeartRecorder(context, client, RecordingStore(context))
+        assertTrue(fresh.reconcileBeforeStart("synthetic-a", RecordingProfile.PERSONAL))
+        assertEquals(RecordingStatus.ACTIVE, store.read()?.status)
+        assertFalse(fresh.reconcileBeforeStart("synthetic-b", RecordingProfile.PERSONAL))
+        assertEquals(1, ended)
+        assertEquals(RecordingStatus.INTERRUPTED, store.read()?.status)
+        fresh.clearCompleted()
+        fresh.start("synthetic-b", RecordingProfile.PERSONAL)
+        assertEquals(2, started)
+        assertEquals("synthetic-b", store.read()?.sessionId)
+        fresh.detach()
+        store.clear()
+    }
+
     @Test fun competingExerciseIsNotSuperseded() = runTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         shadowOf(context).grantPermissions("android.permission.BODY_SENSORS")

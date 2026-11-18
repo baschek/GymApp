@@ -66,6 +66,8 @@ object SuggestionReason {
     const val CROSS_GYM_ESTIMATE = "cross_gym_estimate"
     const val GUIDED_ESTIMATE = "guided_estimate"
     const val PLAN_WEIGHT = "plan_weight"
+    /** The working weight one level lower after two sessions in a row that failed at it (amendment H). */
+    const val DELOAD_AFTER_FAILURES = "deload_after_failures"
 }
 
 /** Gym id used when a session was done somewhere that is not a configured gym. */
@@ -95,6 +97,17 @@ val EffortLowerBound: Map<String, Int> = mapOf(
 )
 
 val SelectableEffortBands = listOf("limit", "one_two", "three_four", "five_plus")
+
+/**
+ * Where the effort of a set came from (`sets[].effort_source`, optional, amendment H). [USER]: the person chose the
+ * band (phone effort picker, watch effort picker); [AUTO]: a preselected band that was saved without a choice (watch
+ * timeout, notification "Satz geschafft"). Missing (older data) counts as unknown. Only [USER] counts as real reserve
+ * for the single-set proof of the progression rules.
+ */
+object EffortSource {
+    const val USER = "user"
+    const val AUTO = "auto"
+}
 
 @Serializable
 data class PackItem(
@@ -227,6 +240,8 @@ data class SetLog(
     val seconds: Int? = null,
     val meters: Double? = null,
     val effort: String? = null,
+    /** [EffortSource] of [effort]; null when unknown (older clients) or without effort. */
+    @SerialName("effort_source") val effortSource: String? = null,
     @SerialName("set_duration_seconds") val setDurationSeconds: Int? = null,
     @SerialName("rest_before_seconds") val restBeforeSeconds: Int? = null,
     @SerialName("setup_before_seconds") val setupBeforeSeconds: Int? = null,
