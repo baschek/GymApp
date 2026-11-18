@@ -24,6 +24,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
@@ -325,7 +326,7 @@ class WatchUiTest {
     @Test fun endingTheTrainingAsksFirst() {
         val actions = mutableListOf<WatchAction>()
         compose.setContent { WatchUi(WatchPresentation(sessionActive = true, current = exercise)) { actions.add(it) } }
-        compose.onNodeWithTag("training-pager").performTouchInput { swipe(androidx.compose.ui.geometry.Offset(width * .9f, centerY), androidx.compose.ui.geometry.Offset(width * .05f, centerY)) }
+        compose.onNodeWithTag("training-pager").performTouchInput { swipeLeft(startX = width * .9f, endX = width * .05f) }
         compose.onNodeWithText("Training beenden").performClick()
         assertTrue(actions.isEmpty())
         compose.onNodeWithText("Training beenden?").assertIsDisplayed()
