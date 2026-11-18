@@ -49,6 +49,16 @@ class RecordingTest {
         assertNull(session.event(NavEvent.TAP, "settings", "back", 0, deadline))
     }
 
+    @Test fun rewrittenWatchObserverNamesRemainDistinct() {
+        val session = Recording("watch", 0)
+        for (screen in listOf("start_gym", "training_left", "training_set", "training_effort", "training_rest", "set_edit", "note")) {
+            assertEquals(screen, session.event(NavEvent.SCREEN, screen, "", 1, 1)!!.screen)
+        }
+        assertEquals("satz_geschafft", session.event(NavEvent.TAP, null, "satz_geschafft", 1, 1)!!.element)
+        assertEquals("auto:phase", session.event(NavEvent.AUTO, null, "auto:phase", 1, 1)!!.element)
+        assertEquals("SetNote", session.event(NavEvent.ACTION, null, "SetNote", 1, 1)!!.element)
+    }
+
     @Test fun rejectsPayloadsIncludingTextThatLooksLikeAnIdentifier() {
         val session = Recording("watch", 0)
         for (payload in listOf("81.25 kg", "17", "synthetic_note", "note\nwith two lines", "workout|synthetic-id")) {
