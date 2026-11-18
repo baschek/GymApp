@@ -122,8 +122,8 @@ fun elementName(label: String): String {
 }
 
 /*
- * Mapping to the fixed identifiers of the temporary navigation recorder (core/recorder/RecorderIds; removal list in
- * docs/navrec-removal.md). Only names, never values.
+ * Mapping to the fixed identifiers of the always-on navigation recorder (core/recorder/RecorderIds; maintenance notes in
+ * docs/navrec.md). Only names, never values.
  */
 
 /** Visible screen for the recorder: sub-views (overlays) first, then the training page, else the route name. */
@@ -167,7 +167,6 @@ private val RECORDER_ELEMENTS = mapOf(
 
 /** Stable recorder identifier of a tapped element ([elementName] of its description); unknown ones become "tap". */
 fun recorderElement(element: String): String = RECORDER_ELEMENTS[element] ?: when {
-    element.startsWith("navigation_aufzeichnen") -> "navrec_switch"
     element.startsWith("zusatzgewicht") -> "toggle_addon"
     element.startsWith("anhaengen") -> "note"
     element.contains("uebrig") || element.contains("locker") -> "effort"

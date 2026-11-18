@@ -9,38 +9,47 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import de.baschek.gymapp.ui.components.GymSwitch
-import de.baschek.gymapp.ui.components.ListRow
 import de.baschek.gymapp.ui.components.SoftButton
 import de.baschek.gymapp.ui.tracked
-import de.baschek.gymapp.ui.tracked1
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
+/** The navigation recorder always runs; these are only its two buttons. */
 @Composable
 fun RecorderSettings() {
-    val active by NavRecorder.recording.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var sharing by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val label = "Navigation aufzeichnen (Test, nur diese Version)"
+    var busy by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
     Column {
-        ListRow(label, trailing = {
-            GymSwitch(active, tracked1<Boolean>("einstellungen", "navrec_switch", NavRecorder::setEnabled), label)
-        })
+        Text("Die Navigation (Bildschirme und Tipps ohne Inhalte, maskierte Bilder) wird im Hintergrund aufgezeichnet.")
         SoftButton("Aufzeichnung teilen", tracked("einstellungen", "navrec_export") {
-            sharing = true
-            error = null
+            busy = true
+            confirmDelete = false
+            message = null
             scope.launch {
                 try { NavRecorder.export(context) }
                 catch (e: CancellationException) { throw e }
-                catch (_: NoSuchElementException) { error = "Keine Aufzeichnung vorhanden." }
-                catch (_: Exception) { error = "Aufzeichnung konnte nicht geteilt werden." }
-                finally { sharing = false }
+                catch (_: NoSuchElementException) { message = "Keine Aufzeichnung vorhanden." }
+                catch (_: Exception) { message = "Aufzeichnung konnte nicht geteilt werden." }
+                finally { busy = false }
             }
-        }, enabled = !sharing)
-        error?.let { Text(it) }
+        }, enabled = !busy)
+        SoftButton(if (confirmDelete) "Wirklich löschen" else "Aufzeichnungen löschen", tracked("einstellungen", "navrec_delete") {
+            if (!confirmDelete) { confirmDelete = true; message = null; return@tracked }
+            busy = true
+            confirmDelete = false
+            scope.launch {
+                try {
+                    val removed = NavRecorder.deleteAll()
+                    message = "$removed Aufzeichnungen gelöscht, die laufende bleibt."
+                }
+                catch (e: CancellationException) { throw e }
+                catch (_: Exception) { message = "Aufzeichnungen konnten nicht gelöscht werden." }
+                finally { busy = false }
+            }
+        }, enabled = !busy)
+        message?.let { Text(it) }
     }
 }

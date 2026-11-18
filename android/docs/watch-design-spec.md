@@ -139,7 +139,7 @@ Pro Übung wie am Handy. Oben Schnellbausteine zum Anhängen (Vorschlag: "Sitz +
 - Auf Handy öffnen (Handy zeigt den Stand).
 - Gesundheit (Aufzeichnung läuft, Puls: gemessen / Erlaubnis fehlt / kein Messwert, Export aktuell / ausstehend, mit echtem Fehlergrund).
 - Verbindung (Zustand in Worten, Konflikt lösen mit "Neueste" oder "Meine", Erneut).
-- Einstellungen: "Dauer am Rand" (an/aus), "Puls bei jedem Training aufzeichnen" (an, nach einmaliger Zustimmung), "Navigation aufzeichnen (Test, nur diese Version)" (Schalter, standardmäßig aus).
+- Einstellungen: "Dauer am Rand" (an/aus), "Puls bei jedem Training aufzeichnen" (an, nach einmaliger Zustimmung); die Navigationsaufzeichnung läuft immer, die Einstellungen enthalten nur „Aufzeichnung ans Handy senden“.
 
 Puls: automatisch bei jedem Training nach einmaliger Zustimmung. Läuft er nicht, steht "Puls aus" mit Startknopf. Eine verwaiste alte Aufzeichnung wird beim Start abgeglichen und aufgeräumt.
 
@@ -164,7 +164,7 @@ Puls: automatisch bei jedem Training nach einmaliger Zustimmung. Läuft er nicht
 Nach dem letzten Satz pro Übung mit gestiegenem Arbeitsgewicht eine Kurzszene ("Neues Gewicht", Name, altes → neues Gewicht, bei unterstützten Übungen weniger Hilfe). Tippen geht weiter. Dann Zusammenfassung: Volumen, Sätze, Dauer, Puls Ø und max, Sync-Status in Worten, "Fertig".
 
 ## O. Navigations-Recorder (nur eine Version, hinter Schalter)
-Auf Uhr und Handy. Aufzeichnung: Zeit, Bildschirm, Element, automatische Wechsel mit Ursache (zum Beispiel `auto:remote_event`), Screenshots nur bei Bildschirmwechsel (höchstens einer alle 2 Sekunden, verkleinert). Dateien lokal auf dem Handy (Uhr sendet ihre über den Data Layer), in der Handy-App ein Export-Knopf, der alles als ZIP über die Teilen-Funktion ausgibt. Nie automatisch, nie über den Sync-Server. Wird in der Folgeversion komplett entfernt (Paket `recorder/`, Hooks, Schalter, Data-Layer-Pfad, Ordner `navrec` löschen). Keine Gewichte oder Notiztexte aufnehmen.
+Auf Uhr und Handy. Aufzeichnung: Zeit, Bildschirm, Element, automatische Wechsel mit Ursache (zum Beispiel `auto:remote_event`), Screenshots nur bei Bildschirmwechsel (Handy höchstens einer alle 2 Sekunden, Uhr alle 5 Sekunden und nie im Ambient-Modus, verkleinert, begrenztes Bildbudget je Sitzung). Dateien lokal auf dem Handy (Uhr sendet ihre über den Data Layer), in der Handy-App ein Export-Knopf, der alles als ZIP über die Teilen-Funktion ausgibt. Die Aufzeichnung läuft dauerhaft mit rollierender Aufbewahrung (`navrec.md`); geteilt wird nur per Knopf, nie automatisch, nie über den Sync-Server. Keine Gewichte oder Notiztexte aufnehmen.
 
 ## P. Zu prüfen (nicht als gegeben annehmen)
 Echte dp und sichere Fläche der 40 mm. Wischen nach rechts am Rand gegen die Systemgeste (`HorizontalPager` und `SwipeDismissableBox`, Randzone etwa 20 %). Lünetten-Verhalten und Haptik. Health Services (Puls, Berechtigungen auf Wear OS 6), Health Connect auf der Uhr. Ambient-Update-Rate. Spracheingabe für Notizen. Ton und Vibration bei Pausenende (Lautlos, Nicht stören).

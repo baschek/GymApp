@@ -50,7 +50,6 @@ class RecorderExportTest {
         phone.install(app)
         phone.start()
         phone.screen("home")
-        phone.stop()
         val watchFiles = mapOf("events.jsonl" to """{"dev":"watch"}""".encodeToByteArray(),
             "screen-0.webp" to byteArrayOf(1, 2, 3))
         repeat(2) { receiveRecording(root, watch, asset(watchFiles)) }
