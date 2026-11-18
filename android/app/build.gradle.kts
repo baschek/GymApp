@@ -12,6 +12,7 @@ plugins {
 val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 
 android {
+    sourceSets["main"].kotlin.srcDir("../navrec/src")
     namespace = "de.baschek.gymapp"
     compileSdk = 36
 

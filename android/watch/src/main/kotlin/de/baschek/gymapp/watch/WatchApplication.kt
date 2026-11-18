@@ -1,5 +1,6 @@
 package de.baschek.gymapp.watch
 
+import de.baschek.gymapp.watch.recorder.NavRecorder
 import android.app.Application
 import android.util.AtomicFile
 import de.baschek.gymapp.core.wear.events.WorkoutProfile
@@ -28,6 +29,7 @@ class WatchApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        NavRecorder.install(this)
         de.baschek.gymapp.watch.update.WatchUpdater.initialize(applicationContext)
         restoreJob = scope.launch {
             restoreRepository()
@@ -55,6 +57,7 @@ class WatchApplication : Application() {
         if (profile == WorkoutProfile.PERSONAL) scope.launch { runCatching { WatchTransport.sendHello(this@WatchApplication) } }
         observing = scope.launch {
             repo.state.collect { state ->
+                NavRecorder.workoutChanged(state.sessionId.takeIf { state.session?.status == de.baschek.gymapp.core.model.SessionStatus.ACTIVE })
                 val sessionId = state.sessionId
                 if (sessionId != null && (de.baschek.gymapp.watch.runtime.RuntimeMonitor.state.value.heartSessionId != sessionId ||
                     de.baschek.gymapp.watch.runtime.RuntimeMonitor.state.value.heartProfile?.name != state.profile.name)) {

@@ -203,6 +203,41 @@ class WearHeartRecorder(
         }
     } }
 
+    /**
+     * Call before [start] (watch design spec J): reconciles a non-terminal recording left behind by an earlier workout
+     * or process (the cause of "Export and clear the previous recording first"). Returns true when that recording
+     * belongs to [sessionId]/[profile] and our exercise is still running: it is reconnected and [start] must not be
+     * called. Otherwise a stale recording is closed as INTERRUPTED (our exercise is ended first) so the host can archive
+     * it with [clearCompleted] and start anew. Without a recording, or with a terminal one, nothing changes (false).
+     */
+    suspend fun reconcileBeforeStart(sessionId: String, profile: RecordingProfile): Boolean = withContext(Dispatchers.IO) { operation.withLock {
+        val current = mutableRecording.value ?: return@withLock false
+        if (current.status !in setOf(RecordingStatus.STARTING, RecordingStatus.ACTIVE, RecordingStatus.STOPPING)) return@withLock false
+        val info = client.getCurrentExerciseInfoAsync().await()
+        val ours = ownership(info.exerciseTrackedStatus) == ExerciseOwnership.OURS && info.exerciseType == ExerciseType.STRENGTH_TRAINING
+        if (ours && current.sessionId == sessionId && current.profile == profile && current.status != RecordingStatus.STOPPING) {
+            synchronized(lock) {
+                val now = clock(current)
+                val since = current.lastUpdateAtMillis ?: current.startedAtMillis
+                val withGap = if (current.openGapAtMillis == null && now > since) current.copy(openGapAtMillis = since) else current
+                save(closeGap(withGap, now))
+            }
+            register()
+            return@withLock true
+        }
+        if (ours) {
+            try { client.endExerciseAsync().await() }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { mutableError.value = "End request failed: ${e.message}" }
+        }
+        synchronized(lock) {
+            save(current.copy(status = RecordingStatus.INTERRUPTED,
+                endedAtMillis = maxOf(current.startedAtMillis + 1, System.currentTimeMillis()),
+                error = "Orphaned recording closed at start"))
+        }
+        false
+    } }
+
     /** Re-register only for our already-running exercise; does not create a new exercise. */
     suspend fun reconnect() = withContext(Dispatchers.IO) { operation.withLock {
         val current = mutableRecording.value ?: return@withLock

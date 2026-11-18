@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app handles swipes itself (spec B): in the training an edge swipe closes a sub-view or goes one page back,
+         and on the left page nothing happens, so the system swipe-to-dismiss must not close the app there. On the
+         start screen the app closes itself on the same swipe. -->
+    <style name="Theme.GymWatch" parent="@android:style/Theme.DeviceDefault">
+        <item name="android:windowSwipeToDismiss">false</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

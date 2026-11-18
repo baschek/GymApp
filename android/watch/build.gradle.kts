@@ -8,6 +8,7 @@ plugins {
 
 val releaseKeystorePath: String? = System.getenv("ANDROID_KEYSTORE_PATH")
 android {
+    sourceSets["main"].kotlin.srcDir("../navrec/src")
     namespace = "de.baschek.gymapp.watch"
     compileSdk = 37
     defaultConfig {
@@ -28,7 +29,11 @@ android {
     buildTypes { release { if (releaseKeystorePath != null) signingConfig = signingConfigs.getByName("release") } }
     buildFeatures { compose = true; buildConfig = true }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
-    testOptions { unitTests.isIncludeAndroidResources = true }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+        // Full assertion messages in the CI log (compose test failures are otherwise only a line number).
+        unitTests.all { it.testLogging { exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL } }
+    }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }
 kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
@@ -50,6 +55,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("androidx.wear:wear:1.4.0")
+    // RemoteInput helper for the system dictation/keyboard on the note screen (spec I).
+    implementation("androidx.wear:wear-input:1.1.0")
     implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.3.0")
     testImplementation(libs.junit)
     testImplementation("androidx.compose.ui:ui-test-junit4")

@@ -10,13 +10,21 @@ import de.baschek.gymapp.core.wear.progress.WatchProgress
 import de.baschek.gymapp.watch.update.WatchUpdater
 import de.baschek.gymapp.watch.update.WatchUpdatePhase
 import de.baschek.gymapp.core.stats.PackState
+import de.baschek.gymapp.core.health.pulseStatus
+import de.baschek.gymapp.core.training.ActionOutcome
+import de.baschek.gymapp.core.training.REJECTION_VISIBLE_MILLIS
+import de.baschek.gymapp.core.training.RejectReason
 import de.baschek.gymapp.core.training.SetCorrection
+import de.baschek.gymapp.core.training.targetLine
+import de.baschek.gymapp.core.stats.estimateDuration
+import de.baschek.gymapp.core.stats.formatEstimate
 import de.baschek.gymapp.core.progression.totalVolume
 import de.baschek.gymapp.core.progression.splitTotal
 import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.wear.backend.workout.WatchSetInput
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutRepository
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutState
+import de.baschek.gymapp.watch.recorder.NavRecorder
 import de.baschek.gymapp.watch.runtime.WatchRuntime
 import de.baschek.gymapp.watch.runtime.WatchRuntimeState
 import kotlinx.coroutines.delay
@@ -36,35 +44,66 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
     val scope = rememberCoroutineScope()
     LaunchedEffect(workout.timer, runtimeState.ambient) { while (true) { clock = System.currentTimeMillis(); delay(if (runtimeState.ambient) 60_000 else 1_000) } }
     LaunchedEffect(workout.session?.status) { if (workout.session?.status == SessionStatus.COMPLETED) runtime.stopRecording() }
+    // A rejection names its reason and disappears after 3 s (spec L).
+    LaunchedEffect(error) { if (error != null) { delay(REJECTION_VISIBLE_MILLIS); error = null } }
+    // Heart rate starts by itself for every watch workout once the person agreed (spec J); the service reconciles an
+    // orphaned old recording first. Without permission the pulse status offers the start button instead.
+    val heartProfile = if (workout.profile == WorkoutProfile.TEST) RecordingProfile.TEST else RecordingProfile.PERSONAL
+    val workoutActive = workout.session?.status == SessionStatus.ACTIVE
+    val heartRunning = runtimeState.recordingActive && runtimeState.heartSessionId == workout.sessionId && runtimeState.heartProfile == heartProfile
+    LaunchedEffect(workout.sessionId, workoutActive, workout.heartAutoConsent, runtimeState.permissionGranted) {
+        val id = workout.sessionId
+        if (id != null && workoutActive && workout.heartAutoConsent == true && runtimeState.permissionGranted && !heartRunning) runtime.startRecording(id, heartProfile)
+    }
     val today = LocalDate.now()
     val progress = remember(workout.catalog, today) { watchProgress(workout.catalog, today) }
     val presentation = present(workout, runtimeState, repository, clock, progress).copy(error = error, phoneHealthEnabled = runtimeState.phoneHealthEnabled, phoneHealthBackground = runtimeState.phoneHealthBackground, updateStatus = update.message.ifBlank { "Wird geprüft" }, updateCanInstall = update.phase in setOf(WatchUpdatePhase.READY, WatchUpdatePhase.INSTALL_PERMISSION_REQUIRED))
-    CompositionLocalProvider(LocalInteraction provides { runtime.trackInteraction("watch", "tap") }) { WatchUi(presentation) { action ->
+    // Single hook for screen changes and taps (telemetry; the navigation recorder plugs in here).
+    val observer = remember(runtime) {
+        object : WatchNavObserver {
+            override fun onTap(screen: String, element: String) {
+                runtime.trackInteraction(screen, element)
+                NavRecorder.tap(recorderElement(element))
+            }
+        }
+    }
+    WatchUi(presentation, observer = observer, onExit = { activity?.finish() }) { action ->
         runtime.trackInteraction("watch", action.javaClass.simpleName.lowercase(java.util.Locale.ROOT))
+        NavRecorder.action(action.javaClass.simpleName)
         error = null
         scope.launch {
             try {
-                val ok: Boolean = when (action) {
-                    is WatchAction.StartPlan -> repository.startPlan(action.plan, action.gym, action.mode) != null
-                    is WatchAction.StartDay -> repository.startDayWorkout(action.day, action.gym, action.mode) != null
-                    is WatchAction.StartSpontaneous -> repository.startSpontaneous(action.exercise, action.gym, action.mode) != null
-                    is WatchAction.Log -> repository.logSet(action.exercise, action.set, WatchSetInput(action.weight, action.amount, action.effort, action.addons))
+                fun started(id: String?) = if (id != null) ActionOutcome.Changed else ActionOutcome.Rejected(RejectReason.CANNOT_START)
+                val done = ActionOutcome.Changed
+                val outcome: ActionOutcome = when (action) {
+                    is WatchAction.StartPlan -> started(repository.startPlan(action.plan, action.gym, action.mode))
+                    is WatchAction.StartDay -> started(repository.startDayWorkout(action.day, action.gym, action.mode))
+                    is WatchAction.StartSpontaneous -> started(repository.startSpontaneous(action.exercise, action.gym, action.mode))
+                    // The effort picker sends "user" or "auto"; a band without source is a preselection ("auto", spec E).
+                    is WatchAction.Log -> repository.logSet(action.exercise, action.set, WatchSetInput(action.weight, action.amount, action.effort, action.addons,
+                        action.effortSource ?: action.effort?.let { EffortSource.AUTO }))
                     is WatchAction.Focus -> repository.setFocus(action.exercise)
                     is WatchAction.Move -> repository.moveExercise(action.exercise, action.delta)
                     is WatchAction.ToggleExercise -> if (action.skipped) repository.resumeSkipped(action.exercise) else repository.toggleSkipExercise(action.exercise)
                     is WatchAction.CorrectSet -> repository.correctSet(action.exercise, action.set, SetCorrection(action.weight, action.amount, action.effort.takeIf { it.isNotEmpty() }))
                     is WatchAction.DeleteSet -> repository.reopenSet(action.exercise, action.set)
+                    is WatchAction.SetNote -> repository.setNote(action.exercise, action.note)
                     WatchAction.FinishSetup -> repository.finishSetupTimer()
                     WatchAction.StartSetTimer -> repository.startSetTimer()
-                    is WatchAction.SetDurationRing -> { repository.setDurationRing(action.enabled); true }
+                    is WatchAction.SetDurationRing -> { repository.setDurationRing(action.enabled); done }
+                    is WatchAction.SetHeartAuto -> {
+                        repository.setHeartAutoConsent(action.enabled)
+                        if (action.enabled) workout.sessionId?.takeIf { workoutActive }?.let { runtime.startRecording(it, heartProfile) }
+                        done
+                    }
                     is WatchAction.TogglePack -> {
                         val dayItem = action.item.startsWith("day-item:")
                         val key = if (dayItem) "day:${action.day}" else action.gym
                         val items = if (dayItem) decodeMap<DayWorkout>(workout.catalog.dayWorkouts)[action.day]?.packlist.orEmpty() else decodeMap<Gym>(workout.catalog.gyms)[action.gym]?.packlist.orEmpty()
                         val defaults = items.filter { it.doneDefault == true }.map { if (dayItem) "day-item:${it.id}" else it.id }.toSet()
-                        repository.togglePackItem(key, LocalDate.now().toString(), action.item, defaults); true
+                        repository.togglePackItem(key, LocalDate.now().toString(), action.item, defaults); done
                     }
-                    WatchAction.StartRecording -> { workout.sessionId?.let { runtime.startRecording(it, if (workout.profile == WorkoutProfile.TEST) RecordingProfile.TEST else RecordingProfile.PERSONAL) }; true }
+                    WatchAction.StartRecording -> { workout.sessionId?.let { runtime.startRecording(it, heartProfile) }; done }
                     is WatchAction.AddExercise -> repository.addExercise(action.exercise)
                     is WatchAction.AddSet -> repository.addSet(action.exercise)
                     is WatchAction.Warmup -> repository.addWarmup(action.exercise)
@@ -74,14 +113,16 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
                     WatchAction.Finish -> repository.finish()
                     is WatchAction.ChangeRest -> repository.changeRest(action.seconds)
                     WatchAction.SkipRest -> repository.skipRest()
-                    WatchAction.Retry -> { runtime.retrySync(); true }
-                    is WatchAction.Resolve -> { runtime.resolveConflict(action.latest); true }
-                    WatchAction.OpenPhoneHealthSettings -> { runtime.openPhoneHealthSettings(); true }
-                    WatchAction.CheckUpdate -> { WatchUpdater.checkNow(); true }
-                    WatchAction.InstallUpdate -> { if (activity != null) WatchUpdater.install(activity) else error = "Installation nicht verfügbar"; true }
-                    WatchAction.OpenPhone -> { runtime.openPhone(); true }
+                    WatchAction.Retry -> { runtime.retrySync(); done }
+                    is WatchAction.Resolve -> { runtime.resolveConflict(action.latest); done }
+                    WatchAction.OpenPhoneHealthSettings -> { runtime.openPhoneHealthSettings(); done }
+                    WatchAction.CheckUpdate -> { WatchUpdater.checkNow(); done }
+                    WatchAction.InstallUpdate -> { if (activity != null) WatchUpdater.install(activity) else error = "Installation nicht verfügbar"; done }
+                    WatchAction.OpenPhone -> { runtime.openPhone(); done }
                 }
-                if (!ok) error = "Aktion nicht möglich"
+                // No-ops (spec L) stay silent; only a real rejection shows its reason.
+                outcome.message?.let { error = it }
+                val ok = outcome.changed
                 if (ok && (action is WatchAction.Focus || action is WatchAction.AddExercise || action == WatchAction.NextExercise || action is WatchAction.StartPlan || action is WatchAction.StartDay || action is WatchAction.StartSpontaneous)) {
                     val latest = repository.state.value
                     val ex = latest.session?.exercises?.firstOrNull { it.id == latest.focusExerciseId } ?: latest.session?.exercises?.firstOrNull()
@@ -90,9 +131,9 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
                     if (setup.isNotBlank()) repository.startSetupTimer(setup)
                 }
                 if (ok && action == WatchAction.Finish) runtime.stopRecording()
-            } catch (_: Exception) { error = "Änderung konnte nicht gespeichert werden" }
+            } catch (_: Exception) { error = RejectReason.NOT_SAVED.message }
         }
-    } }
+    }
 }
 
 private inline fun <reified T> decode(raw: JsonObject): T? = runCatching { DocumentCodec.decode<T>(raw) }.getOrNull()
@@ -115,7 +156,8 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
     val prefill = focus?.let { repository.prefill(it.id) }
     val logged = focus?.sets.orEmpty().filter { it.status == SetStatus.COMPLETED }
     val completedFocus = focus != null && pending == null
-    val next = session?.exercises?.firstOrNull { it.id != focus?.id && it.sets.any { set -> set.status == SetStatus.PENDING } }
+    // Label and action of "Nächste Übung" come from the same core rule (nextAfter, spec A6).
+    val nextName = repository.nextExerciseName()
     val current = if (focus != null) {
         val amount = prefill?.value ?: 0.0
         val unit = when (focus.target.metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." }
@@ -125,10 +167,26 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         WatchCurrentSet(focus.id, pending?.id.orEmpty(), focus.name, focus.sets.count { it.setType == SetType.WORKING && it.status == SetStatus.COMPLETED } + 1,
             focus.sets.count { it.setType == SetType.WORKING }, if (noWeight) null else split?.levelKg ?: prefill?.weightKg,
             amount, unit, when (focus.loadBasis) { LoadBasis.PER_HAND -> "kg pro Hand"; LoadBasis.ASSISTANCE -> "kg Hilfe"; else -> "kg" },
-            "Ziel ${focus.target.min.roundToInt()}–${focus.target.max.roundToInt()}",
+            targetLine(focus.target),
             machine?.setupParameters.orEmpty().joinToString(" · ") { "${it.name} ${it.value}" }, focus.notes ?: library[focus.exerciseId]?.notes.orEmpty(),
-            machine?.effectiveWeights().orEmpty(), addons, selectedAddOns = selectedAddonIndices(split?.addonsKg.orEmpty(), addons), effort = prefill?.effort, hasWeight = !noWeight, isDuration = focus.target.metric == Metric.SECONDS)
+            machine?.effectiveWeights().orEmpty(), addons, selectedAddOns = selectedAddonIndices(split?.addonsKg.orEmpty(), addons), effort = prefill?.effort, hasWeight = !noWeight, isDuration = focus.target.metric == Metric.SECONDS,
+            effortTarget = focus.target, exerciseNote = focus.notes.orEmpty())
     } else null
+    // The suggestion row takes over the suggested weight only for the draft's own set (spec F/K).
+    val nextSet = if (active) repository.nextSetPreview() else null
+    val suggestedHint = nextSet?.takeIf { it.suggestionText != null && current != null && it.exerciseId == current.exerciseId && it.setId == current.setId }?.hint
+    val suggestedSplit = suggestedHint?.let { splitTotal(it.weightKg, machine?.effectiveWeights().orEmpty(), machine?.effectiveAddons().orEmpty()) }
+    val finishedSessions = progress.history.map { it.session }
+    val lastGym = lastGymId(finishedSessions)
+    fun modes(planId: String?, exercises: List<PlanExercise>): List<WatchOption> =
+        listOf(WorkoutMode.NORMAL to "Normal", WorkoutMode.FAST to "Schnell", WorkoutMode.ULTRA to "Ultra").map { (id, label) ->
+            val minutes = if (exercises.isEmpty()) 0 else runCatching { estimateDuration(planId, exercises, id, finishedSessions).minutes }.getOrDefault(0)
+            WatchOption(id, label, if (minutes > 0) formatEstimate(minutes) else "")
+        }
+    val modeOptions = plans.map { (id, plan) -> "plan:$id" to modes(id, plan.exercises) }.toMap() + days.map { (id, d) -> "day:$id" to modes(null, d.exercises) }
+    val homePlan = suggestPlanId(plans.keys.toList(), finishedSessions)?.let { id ->
+        plans[id]?.let { plan -> WatchOption(id, plan.name, listOfNotNull(lastGym?.let { gyms[it]?.name }, modeOptions["plan:$id"]?.firstOrNull()?.let { "Normal ${it.detail}".trim() }).joinToString(" · ")) }
+    }
     val timer = s.timer?.takeIf { it.phase == "REST" }
     val remaining = timer?.endsAtMillis?.let { ((it - now) / 1000).toInt() }
     val summary = session?.takeIf { it.status == SessionStatus.COMPLETED }?.let { done ->
@@ -173,11 +231,17 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         },
         sets = logged.mapIndexed { i, set -> WatchSetRow(set.id, if (set.setType == SetType.WARMUP) "W" else "${logged.take(i + 1).count { it.setType == SetType.WORKING }}", listOfNotNull(set.weightKg?.let { "$it kg" }, set.reps?.let { "$it Wdh." }, set.seconds?.let { "$it s" }, set.meters?.let { "$it m" }).joinToString(" × "), set.effort.orEmpty(), set.weightKg, set.reps?.toDouble() ?: set.seconds?.toDouble() ?: set.meters ?: 0.0, when (focus?.target?.metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." }) },
         current = current, sessionActive = active, restRemainingSeconds = remaining, restTotalSeconds = timer?.let { ((it.endsAtMillis!! - it.startedAtMillis) / 1000).toInt() } ?: 0,
-        exerciseFinished = completedFocus && active, nextExerciseName = next?.name, undoAvailable = s.undo != null,
+        exerciseFinished = completedFocus && active, nextExerciseName = nextName, undoAvailable = s.undo != null,
+        navigationKey = listOf(s.sessionId, session?.status, s.timer?.phase, s.timer?.startedAtMillis, s.focusExerciseId, completedFocus).joinToString("|"),
+        nextSet = nextSet,
+        suggestedWeight = suggestedHint?.let { suggestedSplit?.levelKg ?: it.weightKg },
+        suggestedAddOns = suggestedSplit?.let { selectedAddonIndices(it.addonsKg, machine?.effectiveAddons().orEmpty()) } ?: emptySet(),
+        homePlan = homePlan, lastGymId = lastGym, dayGyms = days.mapValues { it.value.gymId }, modeOptions = modeOptions,
+        pulse = pulseStatus(active, rt.permissionGranted, heartMatches && rt.recordingActive, rt.bpm.takeIf { heartMatches }, rt.heartError, s.heartAutoConsent),
+        heartAutoConsent = s.heartAutoConsent,
         connection = rt.connectionLabel, pendingCount = s.pendingEvents, conflict = s.conflicts.firstOrNull()?.let { "Training wurde auf beiden Geräten geändert." },
         bpm = rt.bpm.takeIf { heartMatches }, pulseSamples = if (heartMatches) rt.pulseSamples.map { it.timeMillis to it.bpm } else emptyList(), pulsePermission = rt.permissionGranted, recording = if (heartMatches) rt.recordingLabel else "Puls nicht aufgezeichnet", export = rt.exportLabel, phoneLeads = rt.phoneLeads, ambient = rt.ambient,
         durationRing = session?.startedAt?.let { runCatching { ((now - java.time.Instant.parse(it).toEpochMilli()).coerceAtLeast(0L) % 3600000L) / 3600000f }.getOrNull() },
-        ambientOffsetX = ((now / 60_000) % 5).toInt() - 2, ambientOffsetY = ((now / 300_000) % 5).toInt() - 2,
         testProfile = s.profile == WorkoutProfile.TEST, setupRemainingSeconds = s.timer?.takeIf { it.phase == "MACHINE_SETUP" }?.let { (45 - ((now - it.startedAtMillis).coerceAtLeast(0) / 1000).toInt()).coerceAtLeast(0) }, timedElapsedSeconds = s.timer?.takeIf { it.phase == "SET" }?.let { ((now - it.startedAtMillis).coerceAtLeast(0) / 1000).toInt() }, summary = summary,
         celebrations = s.milestones.values.filter { it.sessionId == s.sessionId && it.previousWeightKg != null }.map { WatchCelebration(it.exerciseName.orEmpty(), "${it.previousWeightKg} kg", "${it.newWeightKg} kg") },
     )

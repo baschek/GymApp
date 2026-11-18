@@ -4,6 +4,7 @@ import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SessionStatus
+import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
@@ -269,12 +270,47 @@ class SessionRecoveryTest {
 
     @Test
     fun aMiddlingSetKeepsTheWeight() {
-        val e = ex("e1", done("a1", 140.0, 12, "one_two"), open("a2"))
+        val e = ex("e1", done("a1", 140.0, 10, "one_two"), open("a2"))
         val hint = assertNotNull(weightHint(e, levels, workingWeightKg = 140.0))
         assertEquals(140.0, hint.weightKg)
         assertEquals(0, hint.trend)
         assertEquals("", hint.arrow)
-        assertEquals("Letzter Satz 12 × bei 1–2 übrig → Gewicht halten", hint.reason)
+        assertEquals("Letzter Satz 10 × bei 1–2 übrig → Gewicht halten", hint.reason)
+    }
+
+    @Test
+    fun topOfTheRangeWithTheTargetReserveGoesOneStepUp() {
+        val e = ex("e1", done("a1", 140.0, 12, "one_two"), open("a2"))
+        val hint = assertNotNull(weightHint(e, levels, workingWeightKg = 140.0))
+        assertEquals(142.5, hint.weightKg)
+        assertEquals("Letzter Satz 12 × bei 1–2 übrig → nächste Stufe", hint.reason)
+    }
+
+    @Test
+    fun aVeryLargeJumpTakesAnAddOnFirst() {
+        val e = ex("e1", done("a1", 20.0, 12, "one_two"), open("a2"))
+        val hint = assertNotNull(weightHint(e, listOf(15.0, 20.0, 25.0), workingWeightKg = 20.0, addons = listOf(1.25)))
+        assertEquals(21.25, hint.weightKg)
+        assertEquals("Letzter Satz 12 × bei 1–2 übrig → Zusatzgewicht", hint.reason)
+        assertTrue(hint.detail.contains("Zusatzgewicht"))
+    }
+
+    @Test
+    fun aClearMissGoesOneStepDown() {
+        val e = ex("e1", done("a1", 140.0, 6, "one_two"), open("a2"))
+        val hint = assertNotNull(weightHint(e, levels, workingWeightKg = 140.0))
+        assertEquals(135.0, hint.weightKg)
+        assertEquals(-1, hint.trend)
+        assertEquals("Letzter Satz 6 × bei 1–2 übrig → eine Stufe leichter", hint.reason)
+    }
+
+    @Test
+    fun oneStrongSetWithEnteredReserveIsEnoughEvidence() {
+        val strong = SetLog(id = "a1", status = SetStatus.COMPLETED, weightKg = 145.0, reps = 10, effort = "one_two", effortSource = EffortSource.USER)
+        val e = ex("e1", strong, open("a2"))
+        assertTrue(progressionEvidenceDe(e, 140.0).startsWith("145 kg ist durch einen starken Satz"))
+        val auto = ex("e1", strong.copy(effortSource = EffortSource.AUTO), open("a2"))
+        assertTrue(progressionEvidenceDe(auto, 140.0).startsWith("1 von 2 Sätzen für dauerhaft 145 kg"))
     }
 
     @Test

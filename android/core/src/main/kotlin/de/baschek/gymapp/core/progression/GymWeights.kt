@@ -1,8 +1,11 @@
 package de.baschek.gymapp.core.progression
 
+import de.baschek.gymapp.core.model.LoadDirection
+import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionExercise
 import de.baschek.gymapp.core.model.SessionStatus
+import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.model.SuggestionReason
@@ -49,6 +52,7 @@ fun recalculateWorkingWeights(
     baselines: Map<GymExerciseKey, WorkingWeight> = emptyMap(),
 ): Map<GymExerciseKey, WorkingWeight?> {
     val current = HashMap<GymExerciseKey, WorkingWeight>()
+    val lastSeen = HashMap<GymExerciseKey, String>()
     val manual = HashMap(baselines)
     val ordered = completedWithGym(sessions).sortedWith(compareBy({ it.second.effectiveTime }, { it.first }))
     for ((id, session) in ordered) {
@@ -61,12 +65,21 @@ fun recalculateWorkingWeights(
                     manual.remove(key)
                 }
             }
-            val next = provenWorkingWeight(performed, current[key]?.weightKg) ?: continue
+            val longBreak = lastSeen[key]?.let { daysBetween(it, session.effectiveTime)?.let { d -> d > LONG_BREAK_DAYS } } ?: false
+            lastSeen[key] = session.effectiveTime
+            val next = provenWorkingWeight(performed, current[key]?.weightKg, longBreak) ?: continue
             current[key] = WorkingWeight(next, id, session.effectiveTime)
         }
     }
     for ((key, base) in manual) if (only == null || key in only) current[key] = base
     return if (only != null) only.associateWith { current[it] } else current
+}
+
+/** Whole days between the dates of two ISO timestamps (date part), or null when one cannot be read. */
+internal fun daysBetween(earlierIso: String, laterIso: String): Long? {
+    val a = runCatching { LocalDate.parse(earlierIso.take(10)) }.getOrNull() ?: return null
+    val b = runCatching { LocalDate.parse(laterIso.take(10)) }.getOrNull() ?: return null
+    return ChronoUnit.DAYS.between(a, b)
 }
 
 /**
@@ -159,8 +172,50 @@ fun estimateStartWeight(
     return StartSuggestion(roundDownToLevel(estimate, targetLevels), SuggestionReason.CROSS_GYM_ESTIMATE, sourceGym)
 }
 
+private fun reachedLowerBound(set: SetLog, ex: SessionExercise): Boolean {
+    if (set.status != SetStatus.COMPLETED) return false
+    val value = when (ex.target.metric) {
+        Metric.SECONDS -> set.seconds?.toDouble()
+        Metric.METERS -> set.meters
+        else -> set.reps?.toDouble()
+    } ?: return false
+    return value >= ex.target.min
+}
+
+/** The exercise was tried at (or beyond) [weightKg] and no such working set reached the lower bound of the target. */
+private fun failedAt(ex: SessionExercise, weightKg: Double, lower: Boolean): Boolean {
+    val attempts = ex.sets.filter { set ->
+        val w = set.weightKg
+        set.setType == SetType.WORKING && w != null &&
+            (set.status == SetStatus.COMPLETED || set.status == SetStatus.FAILED) &&
+            (if (lower) w <= weightKg + 1e-9 else w >= weightKg - 1e-9)
+    }
+    return attempts.isNotEmpty() && attempts.none { reachedLowerBound(it, ex) }
+}
+
 /**
- * Start weight for an exercise in a gym, in priority order: the gym's stored working weight,
+ * Whether the last two completed sessions in [gymId] that contain [exerciseId] both failed at the working weight
+ * [workingWeightKg] (watch design spec K: after a miss hold, after two sessions in a row one step lower). A session in
+ * which the weight was not tried at all does not count as a failure.
+ */
+fun failedTwiceAtWorkingWeight(
+    exerciseId: String,
+    gymId: String,
+    sessions: List<Pair<String, Session>>,
+    workingWeightKg: Double,
+    lower: Boolean = false,
+): Boolean {
+    val recent = completedWithGym(sessions)
+        .filter { (_, s) -> s.gymId == gymId && s.exercises.any { it.exerciseId == exerciseId } }
+        .sortedWith(compareByDescending<Pair<String, Session>> { it.second.effectiveTime }.thenByDescending { it.first })
+        .take(2)
+    if (recent.size < 2) return false
+    return recent.all { (_, s) -> s.exercises.filter { it.exerciseId == exerciseId }.any { failedAt(it, workingWeightKg, lower) } }
+}
+
+/**
+ * Start weight for an exercise in a gym, in priority order: the gym's stored working weight (one step lighter after two
+ * sessions in a row that failed at it, [failedTwiceAtWorkingWeight], reason `deload_after_failures`),
  * the latest same-gym workout, the cross-gym estimate, the guided related-exercise estimate,
  * and finally the legacy plan weight. Always rounded to the gym's levels (cross-gym: down).
  */
@@ -173,8 +228,13 @@ fun suggestStartWeight(
     storedWorkingWeightKg: Double?,
     legacyPlanWeightKg: Double?,
 ): StartSuggestion? {
-    storedWorkingWeightKg?.let {
-        return StartSuggestion(nearestAvailableWeight(it, levels), SuggestionReason.GYM_WORKING_WEIGHT)
+    storedWorkingWeightKg?.let { working ->
+        val lower = exercises.firstOrNull { it.id == exerciseId }?.loadDirection == LoadDirection.LOWER_ASSISTANCE
+        if (failedTwiceAtWorkingWeight(exerciseId, gymId, sessions, working, lower)) {
+            val lighter = if (lower) nextStepUp(working, levels.orEmpty()) else nextStepDown(working, levels.orEmpty())
+            if (lighter != null) return StartSuggestion(nearestAvailableWeight(lighter, levels), SuggestionReason.DELOAD_AFTER_FAILURES)
+        }
+        return StartSuggestion(nearestAvailableWeight(working, levels), SuggestionReason.GYM_WORKING_WEIGHT)
     }
     val plain = sessions.map { it.second }
     historicalWorkingWeight(exerciseId, plain.filter { it.gymId != null }, gymId)?.let {
@@ -198,13 +258,15 @@ fun prefillSet(ex: SessionExercise, availableWeights: List<Double>): SetPrefill 
     // a weight the assistant planned for the next open set wins until the next log (amendment D)
     val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
     val weight = if (weighted) planned ?: last ?: ex.suggestedWeightKg ?: availableWeights.minOrNull() else null
-    val effort = when {
-        ex.target.rirMin >= 5 -> "five_plus"
-        ex.target.rirMin >= 3 -> "three_four"
-        ex.target.rirMin >= 1 -> "one_two"
-        else -> "limit"
-    }
-    return SetPrefill(weight, ex.target.max, effort)
+    return SetPrefill(weight, ex.target.max, targetEffortBand(ex.target))
+}
+
+/** The effort band that matches the target reserve (the preselection of the effort pickers): rir_min 1 gives "one_two". */
+fun targetEffortBand(target: de.baschek.gymapp.core.model.Target): String = when {
+    target.rirMin >= 5 -> "five_plus"
+    target.rirMin >= 3 -> "three_four"
+    target.rirMin >= 1 -> "one_two"
+    else -> "limit"
 }
 
 val WEIGHTED_TYPES = setOf(

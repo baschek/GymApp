@@ -98,7 +98,7 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
     val nextInfo = nextEx?.let { machines[it.exerciseId] }
     val acceptedForNext = accepted?.takeIf { nextEx != null && it.first == nextEx.id }?.second
     val hint = if (nextEx == null || nextSet == null || nextSet.setType == SetType.WARMUP) null
-    else weightHint(nextEx, nextInfo?.candidates.orEmpty(), nextInfo?.workingWeightKg, bodyWeight)
+    else weightHint(nextEx, nextInfo?.levels.orEmpty(), nextInfo?.workingWeightKg, bodyWeight, nextInfo?.addons.orEmpty())
     val nextText = when {
         nextEx == null || nextSet == null -> null
         newExercise -> nextEx.name

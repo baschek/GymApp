@@ -1,5 +1,6 @@
 package de.baschek.gymapp.workout
 
+import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.progression.SetPrefill
@@ -37,6 +38,7 @@ import de.baschek.gymapp.core.training.moveExercise as coreMoveExercise
 import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
 import de.baschek.gymapp.core.training.skipSet as coreSkipSet
 import de.baschek.gymapp.core.training.templateFor
+import de.baschek.gymapp.core.training.nextExerciseAfter
 import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.core.training.withSyncedFocus
 import de.baschek.gymapp.core.training.toggleSkipExercise as coreToggleSkipExercise
@@ -54,6 +56,8 @@ data class SetInput(
     val effort: String?,
     /** Add-ons that are part of [weightKg] (the total). */
     val addonWeightsKg: List<Double>? = null,
+    /** [EffortSource] of [effort]: USER from the effort picker of the set entry, AUTO for the prefill of "Satz geschafft". */
+    val effortSource: String? = null,
 )
 
 /** Workout operations shared by the UI and the notification actions. */
@@ -198,6 +202,7 @@ class WorkoutActions(
                                 seconds = if (ex.target.metric == Metric.SECONDS) (setSeconds ?: input.value?.toInt()) else set.seconds,
                                 meters = if (ex.target.metric == Metric.METERS) input.value else set.meters,
                                 effort = input.effort,
+                                effortSource = input.effort?.let { input.effortSource },
                                 setDurationSeconds = setSeconds,
                                 restBeforeSeconds = before.restSeconds,
                                 setupBeforeSeconds = before.setupSeconds,
@@ -211,7 +216,7 @@ class WorkoutActions(
 
         val exercise = current.exercises.firstOrNull { it.id == exerciseId }
         if (_accepted.value?.first == exerciseId) _accepted.value = null
-        // last open set of a jumped-to exercise: carry on with the first exercise that still has open sets
+        // last open set of a jumped-to exercise: carry on with the first exercise that still has open sets (nextAfter, spec A6)
         if (exercise != null && exercise.sets.count { it.status == SetStatus.PENDING && it.id != setId } == 0) _focus.value = null
         val pendingLeft = current.exercises.sumOf { ex ->
             ex.sets.count { it.status == SetStatus.PENDING && !(ex.id == exerciseId && it.id == setId) }
@@ -245,7 +250,8 @@ class WorkoutActions(
             nextLogFor(active, _focus.value, _repsOverride.value) ?: return false
         }
         val pre = next.prefill
-        logSet(next.sessionId, next.exercise.id, next.set.id, SetInput(pre.weightKg, pre.value, pre.effort))
+        // the notification logs the preselected band without asking: "auto", not proof of reserve (spec E)
+        logSet(next.sessionId, next.exercise.id, next.set.id, SetInput(pre.weightKg, pre.value, pre.effort, effortSource = EffortSource.AUTO))
         return true
     }
 
@@ -345,7 +351,6 @@ class WorkoutActions(
     }
 
     companion object {
-        fun nextExercise(exercises: List<SessionExercise>): SessionExercise? =
-            exercises.firstOrNull { ex -> ex.sets.any { it.status == SetStatus.PENDING } }
+        fun nextExercise(exercises: List<SessionExercise>): SessionExercise? = nextExerciseAfter(exercises, null)
     }
 }

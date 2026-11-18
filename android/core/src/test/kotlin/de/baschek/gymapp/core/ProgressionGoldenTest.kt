@@ -22,6 +22,7 @@ import de.baschek.gymapp.core.progression.progressionEvidence
 import de.baschek.gymapp.core.progression.provenWorkingWeight
 import de.baschek.gymapp.core.progression.recalculatePlanProgression
 import de.baschek.gymapp.core.progression.suggestNextWeight
+import de.baschek.gymapp.core.progression.suggestStartWeight
 import de.baschek.gymapp.core.progression.roundDownToCandidate
 import de.baschek.gymapp.core.progression.splitTotal
 import de.baschek.gymapp.core.progression.weightCandidates
@@ -30,6 +31,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
@@ -71,6 +73,7 @@ class ProgressionGoldenTest {
 
     private inline fun <reified T> JsonObject.typed(key: String): T = GymJson.decodeFromJsonElement(this[key]!!)
     private fun JsonObject.num(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
+    private fun JsonObject.flag(key: String): Boolean = (this[key] as? JsonPrimitive)?.booleanOrNull ?: false
     private fun JsonObject.weights(key: String): List<Double>? =
         (this[key] as? JsonArray)?.map { it.jsonPrimitive.double }
 
@@ -81,14 +84,24 @@ class ProgressionGoldenTest {
         "suggestNextWeight" -> suggestion(
             suggestNextWeight(
                 i.typed<SetLog>("set"), i.typed<Target>("target"), i["measurement_type"]!!.jsonPrimitive.content,
-                i.weights("available_weights_kg"), i.num("body_weight_kg"),
+                i.weights("available_weights_kg"), i.num("body_weight_kg"), i.weights("addon_weights_kg"),
             ),
         )
         "provenWorkingWeight" ->
-            provenWorkingWeight(i.typed<SessionExercise>("exercise"), i.num("current_weight_kg"))
+            provenWorkingWeight(i.typed<SessionExercise>("exercise"), i.num("current_weight_kg"), i.flag("after_long_break"))
                 .let { it?.let(::JsonPrimitive) ?: JsonNull }
         "progressionEvidence" ->
-            JsonPrimitive(progressionEvidence(i.typed<SessionExercise>("exercise"), i.num("current_weight_kg")))
+            JsonPrimitive(progressionEvidence(i.typed<SessionExercise>("exercise"), i.num("current_weight_kg"), i.flag("after_long_break")))
+        "suggestStartWeight" -> suggestStartWeight(
+            i["exercise_id"]!!.jsonPrimitive.content, i["gym_id"]!!.jsonPrimitive.content,
+            sessionPairs(i["sessions"]!!), (i["exercises"] as? JsonArray).orEmpty().map { info(it.jsonObject) },
+            i.weights("levels"), i.num("stored_working_weight_kg"), i.num("legacy_plan_weight_kg"),
+        ).let { s ->
+            if (s == null) JsonNull else buildJsonObject {
+                put("weight_kg", s.weightKg)
+                put("reason", s.reason)
+            }
+        }
         "guidedStartingEstimate" -> suggestion(
             guidedStartingEstimate(
                 info(i["target"]!!.jsonObject),

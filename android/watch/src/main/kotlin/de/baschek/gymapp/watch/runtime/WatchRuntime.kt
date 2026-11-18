@@ -17,6 +17,10 @@ data class WatchRuntimeState(
     val maxBpm: Int? = null,
     val permissionGranted: Boolean = false,
     val recordingLabel: String = "Puls nicht aufgezeichnet",
+    /** A heart recording is starting or running (for [heartSessionId]). */
+    val recordingActive: Boolean = false,
+    /** Technical reason of the last failed or interrupted recording; mapped to German by `pulseErrorReason`. */
+    val heartError: String? = null,
     val exportLabel: String = "Gesundheitsexport ausstehend",
     val ambient: Boolean = false,
     val phoneLeads: Boolean = false,

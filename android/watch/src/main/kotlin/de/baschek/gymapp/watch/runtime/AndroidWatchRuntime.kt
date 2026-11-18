@@ -40,7 +40,7 @@ class AndroidWatchRuntime(private val app: WatchApplication, private val request
         val intent = Intent(app, HeartRecordingService::class.java).setAction(HeartRecordingService.ACTION_START)
             .putExtra("session", sessionId).putExtra("profile", profile.name)
         try { ContextCompat.startForegroundService(app, intent) }
-        catch (_: Exception) { RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulsaufzeichnung nicht verfügbar") } }
+        catch (e: Exception) { RuntimeMonitor.state.update { it.copy(recordingLabel = "Pulsaufzeichnung nicht verfügbar", heartError = "foreground service could not start: ${e.javaClass.simpleName}") } }
     }
     override fun stopRecording() {
         if (state.value.recordingLabel != "Aufzeichnung läuft" && state.value.recordingLabel != "Aufzeichnung wird beendet") return
