@@ -1,5 +1,6 @@
 package de.baschek.gymapp.telemetry
 
+import de.baschek.gymapp.recorder.NavRecorder
 import de.baschek.gymapp.data.GymRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,7 @@ object Telemetry {
     }
 
     fun track(screen: String, element: String) {
+        NavRecorder.log(screen, element)
         val repo = repository ?: return
         val s = scope ?: return
         val day = LocalDate.now().toString()

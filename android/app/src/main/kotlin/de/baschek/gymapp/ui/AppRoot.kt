@@ -1,5 +1,6 @@
 package de.baschek.gymapp.ui
 
+import de.baschek.gymapp.recorder.NavRecorder
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -73,6 +74,8 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {},
     BackHandler(enabled = nav.canPop) { nav.pop() }
 
     val route = nav.current
+    val recording by NavRecorder.recording.collectAsStateWithLifecycle()
+    LaunchedEffect(route, recording) { if (recording) NavRecorder.screen(Routes.kind(route)) }
     val inWorkout = Routes.kind(route) == "workout"
     val test = profile == Profile.TEST
     val show: (String) -> Unit = { msg -> scope.launch { snackbar.showSnackbar(msg) } }
@@ -109,6 +112,8 @@ fun AppRoot(requestedSession: String? = null, onRequestHandled: () -> Unit = {},
                         modifier = Modifier.align(Alignment.BottomCenter),
                     )
                 }
+                de.baschek.gymapp.recorder.shared.RecorderOverlay(NavRecorder, Modifier.align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.statusBars).padding(8.dp))
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = if (inWorkout) 96.dp else bottomBarSpace() + 8.dp, start = 16.dp, end = 16.dp))
             }
         }

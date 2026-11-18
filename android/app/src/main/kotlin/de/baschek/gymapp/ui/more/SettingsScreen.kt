@@ -136,6 +136,7 @@ fun SettingsScreen(nav: Navigator) {
             }
         }
 
+        item { de.baschek.gymapp.recorder.RecorderSettings() }
         item { HealthExportSettings(profile) }
 
         item {
