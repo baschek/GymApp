@@ -50,6 +50,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-wearable:20.0.1")
     implementation("androidx.wear:wear-ongoing:1.1.0")
     implementation("androidx.wear:wear:1.4.0")
+    // RemoteInput helper for the system dictation/keyboard on the note screen (spec I).
+    implementation("androidx.wear:wear-input:1.1.0")
     implementation("androidx.wear.watchface:watchface-complications-data-source-ktx:1.3.0")
     testImplementation(libs.junit)
     testImplementation("androidx.compose.ui:ui-test-junit4")

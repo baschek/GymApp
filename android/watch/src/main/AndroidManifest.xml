@@ -15,7 +15,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
-    <application android:allowBackup="false" android:name=".WatchApplication" android:label="GymApp" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.DeviceDefault">
+    <application android:allowBackup="false" android:name=".WatchApplication" android:label="GymApp" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@style/Theme.GymWatch">
         <receiver android:name=".update.InstallResultReceiver" android:exported="false" />
         <meta-data android:name="com.google.android.wearable.standalone" android:value="true" />
         <activity android:name=".MainActivity" android:exported="true">
