@@ -777,6 +777,14 @@ class GymRepository(
         put(p, Entity.SESSION, id, transform(current.value), Session.serializer())
     }
 
+    /** Store a changed draft atomically, without emitting stale or duplicate updates. */
+    suspend fun updatePlannedSetWeight(id: String, exerciseId: String, setId: String, weight: Double) = db.withTransaction {
+        val p = currentProfile()
+        val current = dao.getDoc(p, Entity.SESSION, id)?.takeIf { !it.deleted }?.toStored(Session.serializer()) ?: return@withTransaction
+        val updated = de.baschek.gymapp.core.training.setPlannedSetWeight(current.value, exerciseId, setId, weight)
+        if (updated != current.value) put(p, Entity.SESSION, id, updated, Session.serializer())
+    }
+
     /** Completes the session; pending sets get [pendingReason]; the gym's working weights follow the progression rules. */
     suspend fun finishSession(sessionId: String, pendingReason: String = SetStatus.SKIPPED_OTHER) = db.withTransaction {
         val p = currentProfile()

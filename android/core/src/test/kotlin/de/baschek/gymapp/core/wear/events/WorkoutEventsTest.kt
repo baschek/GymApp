@@ -27,6 +27,16 @@ class WorkoutEventsTest {
     private fun set(state: ReplicaState, index: Int) = state.document["exercises"]!!.jsonArray[0].jsonObject["sets"]!!.jsonArray[index].jsonObject
     private fun start() = ReplicaState(WorkoutProfile.PERSONAL, sessionId, doc())
 
+    @Test fun pendingWeightChangesReachPeerWithoutChangingFocusOrCompletingSet() {
+        val base = doc()
+        val updated = Json.parseToJsonElement(base.toString().replace("\"reps\":10", "\"reps\":10,\"weight_kg\":27.5")).jsonObject
+        val peer = apply(start(), event(aId, base, updated).copy(focusExerciseId = "exercise"))
+        assertEquals(27.5, set(peer, 0)["weight_kg"]!!.jsonPrimitive.double)
+        assertEquals("pending", set(peer, 0)["status"]!!.jsonPrimitive.content)
+        assertEquals("exercise", peer.focusExerciseId)
+        assertTrue(peer.conflicts.isEmpty())
+    }
+
     @Test fun duplicateConfirmationAndReplay() {
         val base = doc(); val phone = event(aId, base, doc(first = "completed", completedAt = "one"))
         val watch = event(bId, base, doc(first = "completed", completedAt = "two"), 2)

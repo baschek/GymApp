@@ -61,7 +61,14 @@ internal class Draft(weight: Double?, amount: Double, addOns: Set<Int>, edited: 
     var weight by mutableStateOf(weight)
     var amount by mutableDoubleStateOf(amount)
     var addOns by mutableStateOf(addOns)
-    var edited by mutableStateOf(edited)
+    var weightEdited by mutableStateOf(edited)
+    var amountEdited by mutableStateOf(edited)
+    val edited get() = weightEdited || amountEdited
+
+    fun applyPrefill(weight: Double?, amount: Double, addOns: Set<Int>) {
+        if (!weightEdited) { this.weight = weight; this.addOns = addOns }
+        if (!amountEdited) this.amount = amount
+    }
 
     fun total(current: WatchCurrentSet): Double? = weight?.plus(addOns.sumOf { current.addOns.getOrElse(it) { 0.0 } })
     fun addOnValues(current: WatchCurrentSet): List<Double> = addOns.sorted().mapNotNull { current.addOns.getOrNull(it) }
@@ -81,15 +88,19 @@ private class WorkoutDrafts {
         val Saver = listSaver<WorkoutDrafts, Any>(
             save = { drafts ->
                 drafts.bySet.entries.filter { it.value.edited }.flatMap { (set, draft) ->
-                    listOf(set.first, set.second, draft.weight ?: Double.NaN, draft.amount, draft.addOns.joinToString(","))
+                    listOf(set.first, set.second, draft.weight ?: Double.NaN, draft.amount, draft.addOns.joinToString(",") + "|" + (if (draft.weightEdited) "1" else "0") + (if (draft.amountEdited) "1" else "0"))
                 }
             },
             restore = { saved ->
                 WorkoutDrafts().apply {
                     saved.chunked(5).forEach { row ->
-                        val addOns = (row[4] as String).split(',').mapNotNull(String::toIntOrNull).toSet()
+                        val parts = (row[4] as String).split("|")
+                        val addOns = parts[0].split(',').mapNotNull(String::toIntOrNull).toSet()
                         bySet[(row[0] as String) to (row[1] as String)] =
-                            Draft((row[2] as Double).takeUnless(Double::isNaN), row[3] as Double, addOns, true)
+                            Draft((row[2] as Double).takeUnless(Double::isNaN), row[3] as Double, addOns, true).apply {
+                                weightEdited = parts.getOrNull(1)?.getOrNull(0) != '0'
+                                amountEdited = parts.getOrNull(1)?.getOrNull(1) != '0'
+                            }
                     }
                 }
             },
@@ -188,7 +199,7 @@ internal class UiContext(
         val weight = state.suggestedWeight ?: return
         draft.weight = weight
         draft.addOns = state.suggestedAddOns
-        draft.edited = true
+        draft.weightEdited = true
     }
 
     /** Start flow: training item first, then gym (preselected), mode and packing list (spec C). */
@@ -284,7 +295,7 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
     }
     // A remote update of the prefill (phone, assistant) only replaces values the person has not edited (spec A4).
     LaunchedEffect(draft, current?.weight, current?.amount, current?.selectedAddOns) {
-        if (!draft.edited) { draft.weight = current?.weight; draft.amount = current?.amount ?: 0.0; draft.addOns = current?.selectedAddOns ?: emptySet() }
+        draft.applyPrefill(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns ?: emptySet())
     }
     val selection = rememberSaveable(saver = Selection.Saver) { Selection() }
     val editingDraft by rememberUpdatedState(

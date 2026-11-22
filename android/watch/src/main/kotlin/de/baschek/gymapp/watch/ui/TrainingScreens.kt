@@ -483,8 +483,8 @@ internal fun ValueEditor(ui: UiContext) {
         (a + direction * if (current?.isDuration == true) 5 else if (current?.unit == "m") 10 else 1).coerceIn(1.0, 999.0)
     fun step(direction: Int) {
         when (kind) {
-            EditorKind.WEIGHT -> { draft.weight = stepWeight(draft.weight ?: 0.0, direction); draft.edited = true }
-            EditorKind.AMOUNT -> { draft.amount = stepAmount(draft.amount, direction); draft.edited = true }
+            EditorKind.WEIGHT -> { draft.weight = stepWeight(draft.weight ?: 0.0, direction); draft.weightEdited = true }
+            EditorKind.AMOUNT -> { draft.amount = stepAmount(draft.amount, direction); draft.amountEdited = true }
             EditorKind.REST -> ui.dispatch(WatchAction.ChangeRest(direction * 15))
             EditorKind.SET_WEIGHT -> sel.editWeight = stepWeight(sel.editWeight ?: 0.0, direction)
             EditorKind.SET_AMOUNT -> sel.editAmount = stepAmount(sel.editAmount, direction)
@@ -516,7 +516,7 @@ internal fun ValueEditor(ui: UiContext) {
                 addOns.take(2).forEachIndexed { index, value ->
                     val on = index in draft.addOns
                     Chip((if (on) "✓ " else "+ ") + formatWeight(value), on, 56.dp, description = "Zusatzgewicht ${formatWeight(value)}") {
-                        draft.addOns = if (on) draft.addOns - index else draft.addOns + index; draft.edited = true
+                        draft.addOns = if (on) draft.addOns - index else draft.addOns + index; draft.weightEdited = true
                     }
                 }
             } else Small(when (kind) {

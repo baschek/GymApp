@@ -207,7 +207,7 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
 
     fun updatePlannedWeight(exerciseId: String, setId: String, weight: Double) {
         viewModelScope.launch {
-            repo.updateSession(sessionId) { de.baschek.gymapp.core.training.setPlannedSetWeight(it, exerciseId, setId, weight) }
+            repo.updatePlannedSetWeight(sessionId, exerciseId, setId, weight)
         }
     }
 
