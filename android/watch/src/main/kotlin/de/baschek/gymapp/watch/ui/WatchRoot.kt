@@ -20,6 +20,7 @@ import de.baschek.gymapp.core.stats.estimateDuration
 import de.baschek.gymapp.core.stats.formatEstimate
 import de.baschek.gymapp.core.progression.totalVolume
 import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.progression.isSelectableWeight
 import de.baschek.gymapp.core.progression.selectedAddonIndices
 import de.baschek.gymapp.wear.backend.workout.WatchSetInput
 import de.baschek.gymapp.wear.backend.workout.WatchWorkoutRepository
@@ -163,7 +164,9 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         val unit = when (focus.target.metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." }
         val noWeight = focus.measurementType in listOf(MeasurementType.BODYWEIGHT_REPS, MeasurementType.REPS_ONLY, MeasurementType.DURATION_ONLY)
         val addons = machine?.effectiveAddons().orEmpty()
-        val split = prefill?.weightKg?.let { splitTotal(it, machine?.effectiveWeights().orEmpty(), addons) }
+        val levels = machine?.effectiveWeights().orEmpty()
+        val split = prefill?.weightKg?.takeIf { isSelectableWeight(it, levels, addons) }
+            ?.let { splitTotal(it, levels, addons) }
         WatchCurrentSet(focus.id, pending?.id.orEmpty(), focus.name, focus.sets.count { it.setType == SetType.WORKING && it.status == SetStatus.COMPLETED } + 1,
             focus.sets.count { it.setType == SetType.WORKING }, if (noWeight) null else split?.levelKg ?: prefill?.weightKg,
             amount, unit, when (focus.loadBasis) { LoadBasis.PER_HAND -> "kg pro Hand"; LoadBasis.ASSISTANCE -> "kg Hilfe"; else -> "kg" },

@@ -125,7 +125,9 @@ internal fun buildDraft(
     // reps set with "−1 / +1" in the notification win over the proposal
     val value = reps ?: if (warm) 12.0 else lastValue ?: ex.target.max
     val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
-    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort, addons)
+    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort, addons).apply {
+        if (set.weightKg != null) applyExact(total, levels, if (warm) emptyList() else addons, wheel)
+    }
 }
 
 /** Draft from a logged set, for correcting it. Values are taken exactly as logged. */
