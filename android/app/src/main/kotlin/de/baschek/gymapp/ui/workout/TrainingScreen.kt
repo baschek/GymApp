@@ -218,12 +218,13 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                         ex = ex, draft = draft, weighted = weighted, warm = warm, levels = levels, addonList = addonList, wheel = wheel,
                         screen = SCREEN,
                         onValueEdited = vm::clearRepsOverride,
+                        onWeightEdited = { vm.updatePlannedWeight(ex.id, set.id, it) },
                         onCreateProfile = tracked(SCREEN, "create_profile") { session.gymId?.let { nav.push(Routes.machine(it, ex.exerciseId)) } },
                         afterWeight = {
                             if (hint != null) {
                                 WeightHintBlock(
                                     hint, applied = abs(draft.total - hint.weightKg) < 1e-6,
-                                    onApply = { draft.applyTotal(hint.weightKg, levels, addonList) },
+                                    onApply = { draft.applyTotal(hint.weightKg, levels, addonList); vm.updatePlannedWeight(ex.id, set.id, draft.total) },
                                     screen = SCREEN, modifier = Modifier.padding(top = Spacing.s4),
                                 )
                             } else if (!warm && workingDone == 0) {

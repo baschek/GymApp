@@ -170,6 +170,7 @@ internal fun lastWorking(ex: SessionExercise): SetLog? =
 
 /** Total weight a set starts with: the last working weight of the exercise, else the suggestion. */
 internal fun prefillTotal(ex: SessionExercise, set: SetLog, levels: List<Double>): Double {
+    set.weightKg?.let { return it }
     // a weight the assistant planned for the open sets wins until the next set is logged (amendment D)
     val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
     val base = planned ?: lastWorking(ex)?.weightKg ?: ex.suggestedWeightKg ?: levels.minOrNull() ?: 20.0
