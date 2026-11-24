@@ -4,6 +4,7 @@ import de.baschek.gymapp.recorder.NavRecorder
 import android.app.Application
 import de.baschek.gymapp.core.api.createHttpClient
 import de.baschek.gymapp.health.AutomaticHealthExport
+import de.baschek.gymapp.health.TessHeartSource
 import de.baschek.gymapp.data.AppPrefs
 import de.baschek.gymapp.data.DeviceKeys
 import de.baschek.gymapp.data.GymRepository
@@ -37,7 +38,7 @@ class AppContainer(app: Application) {
     val secureStore = SecureStore(app)
     val scheduler = SyncScheduler(app)
     private val httpClient = createHttpClient(OkHttp.create())
-    val syncManager = SyncManager(repository, secureStore, httpClient, scheduler, DeviceKeys())
+    val syncManager = SyncManager(repository, secureStore, httpClient, scheduler, DeviceKeys(), TessHeartSource(appContext, repository))
     val timer = TimerController(repository, appScope)
     val workout = WorkoutActions(repository, timer, scheduler, appScope)
     val updater = AppUpdater(app, httpClient)

@@ -70,6 +70,9 @@ class HeartDataListener : WearableListenerService() {
                         val container = (application as GymApplication).container
                         container.health.onRecordingChanged(container.appScope)
                     }
+                    // A late or corrected recording goes to TESS with the next sync run (own switch, personal profile only).
+                    if (de.baschek.gymapp.health.TessHeartConsent(this).enabled())
+                        (application as GymApplication).container.scheduler.requestSync()
                 }
                 val ack = PutDataMapRequest.create("/gymapp/heart-ack/v1/$hash/$version").apply {
                     dataMap.putString("attempt", java.util.UUID.randomUUID().toString())

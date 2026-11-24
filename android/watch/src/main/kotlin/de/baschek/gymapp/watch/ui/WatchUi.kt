@@ -57,17 +57,19 @@ private const val PHONE_HANDOFF_QUIET_MILLIS = 450L
 
 /** Draft values of the open set; survive remote prefill updates once edited (spec A4) and activity re-creation. */
 @Stable
-internal class Draft(weight: Double?, amount: Double, addOns: Set<Int>, edited: Boolean) {
+internal class Draft(weight: Double?, amount: Double, addOns: Set<Int>, edited: Boolean, amountRight: Double = 0.0) {
     var weight by mutableStateOf(weight)
     var amount by mutableDoubleStateOf(amount)
+    /** Right-side reps of a left/right exercise (unused otherwise). */
+    var amountRight by mutableDoubleStateOf(amountRight)
     var addOns by mutableStateOf(addOns)
     var weightEdited by mutableStateOf(edited)
     var amountEdited by mutableStateOf(edited)
     val edited get() = weightEdited || amountEdited
 
-    fun applyPrefill(weight: Double?, amount: Double, addOns: Set<Int>) {
+    fun applyPrefill(weight: Double?, amount: Double, addOns: Set<Int>, amountRight: Double = 0.0) {
         if (!weightEdited) { this.weight = weight; this.addOns = addOns }
-        if (!amountEdited) this.amount = amount
+        if (!amountEdited) { this.amount = amount; this.amountRight = amountRight }
     }
 
     fun total(current: WatchCurrentSet): Double? = weight?.plus(addOns.sumOf { current.addOns.getOrElse(it) { 0.0 } })
@@ -79,7 +81,7 @@ private class WorkoutDrafts {
     private val bySet = mutableMapOf<Pair<String, String>, Draft>()
 
     fun forSet(current: WatchCurrentSet?): Draft {
-        fun fresh() = Draft(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns.orEmpty(), false)
+        fun fresh() = Draft(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns.orEmpty(), false, current?.amountRight ?: 0.0)
         if (current == null || current.setId.isEmpty()) return fresh()
         return bySet.getOrPut(current.exerciseId to current.setId) { fresh() }
     }
@@ -88,16 +90,16 @@ private class WorkoutDrafts {
         val Saver = listSaver<WorkoutDrafts, Any>(
             save = { drafts ->
                 drafts.bySet.entries.filter { it.value.edited }.flatMap { (set, draft) ->
-                    listOf(set.first, set.second, draft.weight ?: Double.NaN, draft.amount, draft.addOns.joinToString(",") + "|" + (if (draft.weightEdited) "1" else "0") + (if (draft.amountEdited) "1" else "0"))
+                    listOf(set.first, set.second, draft.weight ?: Double.NaN, draft.amount, draft.addOns.joinToString(",") + "|" + (if (draft.weightEdited) "1" else "0") + (if (draft.amountEdited) "1" else "0"), draft.amountRight)
                 }
             },
             restore = { saved ->
                 WorkoutDrafts().apply {
-                    saved.chunked(5).forEach { row ->
+                    saved.chunked(6).forEach { row ->
                         val parts = (row[4] as String).split("|")
                         val addOns = parts[0].split(',').mapNotNull(String::toIntOrNull).toSet()
                         bySet[(row[0] as String) to (row[1] as String)] =
-                            Draft((row[2] as Double).takeUnless(Double::isNaN), row[3] as Double, addOns, true).apply {
+                            Draft((row[2] as Double).takeUnless(Double::isNaN), row[3] as Double, addOns, true, row[5] as Double).apply {
                                 weightEdited = parts.getOrNull(1)?.getOrNull(0) != '0'
                                 amountEdited = parts.getOrNull(1)?.getOrNull(1) != '0'
                             }
@@ -121,15 +123,16 @@ internal class Selection {
     var mode by mutableStateOf(WorkoutMode.NORMAL)
     var editWeight by mutableStateOf<Double?>(null)
     var editAmount by mutableDoubleStateOf(0.0)
+    var editAmountRight by mutableDoubleStateOf(0.0)
 
     companion object {
         val Saver = listSaver<Selection, Any>(
-            save = { listOf(it.editor, it.menuExercise, it.setEdit, it.history, it.startKind, it.startId, it.gym, it.mode, it.editWeight ?: Double.NaN, it.editAmount) },
+            save = { listOf(it.editor, it.menuExercise, it.setEdit, it.history, it.startKind, it.startId, it.gym, it.mode, it.editWeight ?: Double.NaN, it.editAmount, it.editAmountRight) },
             restore = { v ->
                 Selection().apply {
                     editor = v[0] as String; menuExercise = v[1] as String; setEdit = v[2] as String; history = v[3] as String
                     startKind = v[4] as String; startId = v[5] as String; gym = v[6] as String; mode = v[7] as String
-                    editWeight = (v[8] as Double).takeUnless(Double::isNaN); editAmount = v[9] as Double
+                    editWeight = (v[8] as Double).takeUnless(Double::isNaN); editAmount = v[9] as Double; editAmountRight = (v.getOrNull(10) as? Double) ?: 0.0
                 }
             },
         )
@@ -155,7 +158,7 @@ internal class EffortState {
     }
 }
 
-enum class EditorKind { WEIGHT, AMOUNT, REST, SET_WEIGHT, SET_AMOUNT }
+enum class EditorKind { WEIGHT, AMOUNT, REST, SET_WEIGHT, SET_AMOUNT, AMOUNT_RIGHT, SET_AMOUNT_RIGHT }
 
 /** Everything a screen needs; built once per composition by [WatchUi]. */
 internal class UiContext(
@@ -179,10 +182,10 @@ internal class UiContext(
     fun openEditor(kind: EditorKind) { selection.editor = kind.name; push(Route.EDITOR) }
 
     /** The check: open the effort picker; the set is logged by [commitEffort] (spec E). */
-    fun check(amount: Double) {
+    fun check(amount: Double, amountRight: Double? = null) {
         val current = state.current ?: return
         if (current.setId.isEmpty() || effort.pending != null) return
-        effort.open(WatchAction.Log(current.exerciseId, current.setId, draft.total(current), amount, draft.addOnValues(current)), current.effortTarget)
+        effort.open(WatchAction.Log(current.exerciseId, current.setId, draft.total(current), amount, draft.addOnValues(current), amountRight = amountRight), current.effortTarget)
         if (nav.top != Route.TRAINING || nav.page != TrainingPage.MIDDLE) toPage(TrainingPage.MIDDLE)
     }
 
@@ -294,13 +297,13 @@ fun WatchUi(state: WatchPresentation, observer: WatchNavObserver = WatchNavObser
         drafts.forSet(current)
     }
     // A remote update of the prefill (phone, assistant) only replaces values the person has not edited (spec A4).
-    LaunchedEffect(draft, current?.weight, current?.amount, current?.selectedAddOns) {
-        draft.applyPrefill(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns ?: emptySet())
+    LaunchedEffect(draft, current?.weight, current?.amount, current?.amountRight, current?.selectedAddOns) {
+        draft.applyPrefill(current?.weight, current?.amount ?: 0.0, current?.selectedAddOns ?: emptySet(), current?.amountRight ?: 0.0)
     }
     val selection = rememberSaveable(saver = Selection.Saver) { Selection() }
     val editingDraft by rememberUpdatedState(
         draft.edited && nav.top == Route.EDITOR &&
-            (selection.editor == EditorKind.WEIGHT.name || selection.editor == EditorKind.AMOUNT.name),
+            (selection.editor == EditorKind.WEIGHT.name || selection.editor == EditorKind.AMOUNT.name || selection.editor == EditorKind.AMOUNT_RIGHT.name),
     )
     LaunchedEffect(incomingTarget, waitingForPhone) {
         if (waitingForPhone) {

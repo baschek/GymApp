@@ -44,10 +44,9 @@ class SyncScheduler(private val context: Context) {
 class SyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val container = (applicationContext as GymApplication).container
-        return when (container.syncManager.runSync()) {
-            SyncOutcome.RETRY -> if (runAttemptCount >= MAX_ATTEMPTS) Result.success() else Result.retry()
-            else -> Result.success()
-        }
+        val outcome = container.syncManager.runSync()
+        val retry = outcome == SyncOutcome.RETRY || (outcome == SyncOutcome.SUCCESS && container.syncManager.heartRetryPending)
+        return if (retry && runAttemptCount < MAX_ATTEMPTS) Result.retry() else Result.success()
     }
 
     private companion object {

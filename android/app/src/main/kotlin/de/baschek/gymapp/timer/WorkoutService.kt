@@ -227,7 +227,7 @@ class WorkoutService : Service() {
         // chronometer shows the time, so the planned value is left out of the text.
         val measuring = timer != null && timer.phase == TimerPhase.SET && next != null && timer.matchesSet(next.sessionId, next.exercise.id, next.set.id)
         val planned = next?.takeUnless { measuring }?.let {
-            NotificationReps.summary(it.prefill.weightKg, it.prefill.value, it.exercise.target.metric, it.prefill.effort, prefillLabels())
+            NotificationReps.summary(it.prefill.weightKg, it.prefill.value, it.exercise.target.metric, it.prefill.effort, prefillLabels(), it.prefill.valueRight)
         }
         val phase = when (timer?.phase) {
             TimerPhase.SET -> getString(R.string.workout_timer_set)

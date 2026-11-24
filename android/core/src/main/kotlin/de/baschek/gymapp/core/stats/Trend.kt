@@ -1,5 +1,6 @@
 package de.baschek.gymapp.core.stats
 
+import de.baschek.gymapp.core.training.countedReps
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.model.SessionStatus
 import de.baschek.gymapp.core.model.SetStatus
@@ -26,7 +27,7 @@ const val MIN_TREND_SESSIONS = 3
 fun oneRepMaxOf(set: de.baschek.gymapp.core.model.SetLog): Double? {
     estimatedOneRepMax(set)?.let { return it }
     val w = set.weightKg ?: return null
-    val r = set.reps ?: return null
+    val r = set.countedReps ?: return null
     return if (w > 0 && r > 0) w * (1 + minOf(20, r) / 30.0) else null
 }
 

@@ -764,6 +764,8 @@ class GymRepository(
             restSeconds = pe.restSeconds,
             supersetGroup = pe.supersetGroup,
             plannedSets = count,
+            // left/right exercise: the flag is copied, so a later change of the catalog cannot reinterpret this session
+            perSide = exercise?.perSide?.takeIf { it },
             suggestedWeightKg = suggestion?.weightKg,
             suggestionReason = suggestion?.reason,
             suggestionSourceGymId = suggestion?.sourceGymId,

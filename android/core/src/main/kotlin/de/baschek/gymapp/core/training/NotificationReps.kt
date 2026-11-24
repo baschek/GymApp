@@ -75,8 +75,9 @@ object NotificationReps {
      * Notification text for what "Satz geschafft" would save, e.g. "170 kg × 11 · 1–2 übrig"; without weight "11 Wdh" /
      * "45 s". The unit of reps is left out behind a weight ("170 kg × 11").
      */
-    fun summary(weightKg: Double?, value: Double, metric: String, effort: String?, labels: PrefillLabels): String {
-        val number = formatNumber(value)
+    fun summary(weightKg: Double?, value: Double, metric: String, effort: String?, labels: PrefillLabels, valueRight: Double? = null): String {
+        // per side: "L 11 / R 12" (left first), the unit stays out like behind a weight
+        val number = if (valueRight != null && metric == Metric.REPS) "L ${formatNumber(value)} / R ${formatNumber(valueRight)}" else formatNumber(value)
         val unit = when (metric) {
             Metric.SECONDS -> labels.seconds
             Metric.METERS -> labels.meters

@@ -34,7 +34,7 @@ fun skipSet(session: Session, exerciseId: String, setId: String, reason: SkipRea
     session.copy(
         exercises = session.exercises.map { ex ->
             if (ex.id != exerciseId) ex
-            else ex.copy(sets = ex.sets.map { if (it.id == setId && it.status == SetStatus.PENDING) it.copy(status = reason.status, weightKg = null, reps = null) else it })
+            else ex.copy(sets = ex.sets.map { if (it.id == setId && it.status == SetStatus.PENDING) it.copy(status = reason.status, weightKg = null, reps = null, repsLeft = null, repsRight = null) else it })
         },
     )
 
@@ -101,10 +101,10 @@ fun addExercise(
 }
 
 /** Default template for an exercise that is added during the workout. */
-fun templateFor(exerciseId: String, name: String, measurementType: String, loadDirection: String, loadBasis: String, rest: Int = 90): SessionExercise =
+fun templateFor(exerciseId: String, name: String, measurementType: String, loadDirection: String, loadBasis: String, rest: Int = 90, perSide: Boolean? = null): SessionExercise =
     SessionExercise(
         exerciseId = exerciseId, name = name, measurementType = measurementType, loadDirection = loadDirection,
-        loadBasis = loadBasis, target = defaultTargetFor(measurementType), restSeconds = rest,
+        loadBasis = loadBasis, target = defaultTargetFor(measurementType), restSeconds = rest, perSide = perSide?.takeIf { it },
     )
 
 /** A warm-up proposal: about half of the working weight on the nearest level, 12 reps. */

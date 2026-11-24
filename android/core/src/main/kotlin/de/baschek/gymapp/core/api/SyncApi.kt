@@ -14,6 +14,9 @@ interface SyncApi {
     suspend fun changes(since: Long, limit: Int = 500): ChangesResponse
     suspend fun push(ops: List<PushOp>): PushResponse
     suspend fun telemetry(batchId: String, counts: List<TelemetryCount>)
+
+    /** Private heart-rate curve of one session (`POST /gym/v1/heart`); [body] is the finished JSON, see `TessHeartPayload`. */
+    suspend fun heartSeries(body: String)
 }
 
 /** Failures of the sync API. Messages never contain tokens or request bodies. */

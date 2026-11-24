@@ -1,5 +1,7 @@
 package de.baschek.gymapp.core.progression
 
+import de.baschek.gymapp.core.training.countedReps
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.core.model.LoadDirection
 import de.baschek.gymapp.core.model.Metric
 import de.baschek.gymapp.core.model.Session
@@ -177,7 +179,7 @@ private fun reachedLowerBound(set: SetLog, ex: SessionExercise): Boolean {
     val value = when (ex.target.metric) {
         Metric.SECONDS -> set.seconds?.toDouble()
         Metric.METERS -> set.meters
-        else -> set.reps?.toDouble()
+        else -> set.countedReps?.toDouble()
     } ?: return false
     return value >= ex.target.min
 }
@@ -250,7 +252,14 @@ fun suggestStartWeight(
 }
 
 /** Values the workout screen (and the notification action) fill in for the next pending set. */
-data class SetPrefill(val weightKg: Double?, val value: Double, val effort: String)
+data class SetPrefill(
+    val weightKg: Double?,
+    /** Reps, seconds or meters; for a per-side exercise the LEFT reps. */
+    val value: Double,
+    val effort: String,
+    /** Right reps of a per-side exercise (amendment I); null for ordinary exercises. */
+    val valueRight: Double? = null,
+)
 
 fun prefillSet(ex: SessionExercise, availableWeights: List<Double>): SetPrefill {
     val weighted = ex.measurementType in WEIGHTED_TYPES
@@ -259,7 +268,11 @@ fun prefillSet(ex: SessionExercise, availableWeights: List<Double>): SetPrefill 
     val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING }?.weightKg
         ?: ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
     val weight = if (weighted) planned ?: last ?: ex.suggestedWeightKg ?: availableWeights.minOrNull() else null
-    return SetPrefill(weight, ex.target.max, targetEffortBand(ex.target))
+    val lastDone = ex.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.setType == SetType.WORKING }
+    // per side: both sides start from what was done last time (each side separately), else from the top of the target
+    val left = if (ex.isPerSide) lastDone?.repsLeft?.toDouble() ?: ex.target.max else ex.target.max
+    val right = if (ex.isPerSide) lastDone?.repsRight?.toDouble() ?: ex.target.max else null
+    return SetPrefill(weight, left, targetEffortBand(ex.target), right)
 }
 
 /** The effort band that matches the target reserve (the preselection of the effort pickers): rir_min 1 gives "one_two". */

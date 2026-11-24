@@ -16,6 +16,7 @@ import de.baschek.gymapp.core.training.REJECTION_VISIBLE_MILLIS
 import de.baschek.gymapp.core.training.RejectReason
 import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.targetLine
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.core.stats.estimateDuration
 import de.baschek.gymapp.core.stats.formatEstimate
 import de.baschek.gymapp.core.progression.totalVolume
@@ -82,11 +83,11 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
                     is WatchAction.StartSpontaneous -> started(repository.startSpontaneous(action.exercise, action.gym, action.mode))
                     // The effort picker sends "user" or "auto"; a band without source is a preselection ("auto", spec E).
                     is WatchAction.Log -> repository.logSet(action.exercise, action.set, WatchSetInput(action.weight, action.amount, action.effort, action.addons,
-                        action.effortSource ?: action.effort?.let { EffortSource.AUTO }))
+                        action.effortSource ?: action.effort?.let { EffortSource.AUTO }, valueRight = action.amountRight))
                     is WatchAction.Focus -> repository.setFocus(action.exercise)
                     is WatchAction.Move -> repository.moveExercise(action.exercise, action.delta)
                     is WatchAction.ToggleExercise -> if (action.skipped) repository.resumeSkipped(action.exercise) else repository.toggleSkipExercise(action.exercise)
-                    is WatchAction.CorrectSet -> repository.correctSet(action.exercise, action.set, SetCorrection(action.weight, action.amount, action.effort.takeIf { it.isNotEmpty() }))
+                    is WatchAction.CorrectSet -> repository.correctSet(action.exercise, action.set, SetCorrection(action.weight, action.amount, action.effort.takeIf { it.isNotEmpty() }, valueRight = action.amountRight))
                     is WatchAction.DeleteSet -> repository.reopenSet(action.exercise, action.set)
                     is WatchAction.SetNote -> repository.setNote(action.exercise, action.note)
                     WatchAction.FinishSetup -> repository.finishSetupTimer()
@@ -137,6 +138,13 @@ fun WatchRoot(repository: WatchWorkoutRepository, runtime: WatchRuntime) {
     }
 }
 
+/** "12 Wdh." or, for a left/right set, "L 12 / R 10 Wdh." */
+private fun repsText(set: SetLog, perSide: Boolean): String? {
+    val l = set.repsLeft
+    val r = set.repsRight
+    return if (perSide && l != null && r != null) "L $l / R $r Wdh." else set.reps?.let { "$it Wdh." }
+}
+
 private inline fun <reified T> decode(raw: JsonObject): T? = runCatching { DocumentCodec.decode<T>(raw) }.getOrNull()
 private inline fun <reified T> decodeMap(raw: Map<String, JsonObject>): Map<String, T> = raw.mapNotNull { (id, value) -> decode<T>(value)?.let { id to it } }.toMap()
 
@@ -173,7 +181,8 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
             targetLine(focus.target),
             machine?.setupParameters.orEmpty().joinToString(" · ") { "${it.name} ${it.value}" }, focus.notes ?: library[focus.exerciseId]?.notes.orEmpty(),
             machine?.effectiveWeights().orEmpty(), addons, selectedAddOns = selectedAddonIndices(split?.addonsKg.orEmpty(), addons), effort = prefill?.effort, hasWeight = !noWeight, isDuration = focus.target.metric == Metric.SECONDS,
-            effortTarget = focus.target, exerciseNote = focus.notes.orEmpty())
+            effortTarget = focus.target, exerciseNote = focus.notes.orEmpty(),
+            amountRight = prefill?.valueRight?.takeIf { focus.isPerSide && pending?.setType != SetType.WARMUP })
     } else null
     // The suggestion row takes over the suggested weight only for the draft's own set (spec F/K).
     val nextSet = if (active) repository.nextSetPreview() else null
@@ -209,7 +218,7 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
         val info = listOfNotNull(row.gymName, row.session.durationSeconds?.let { "${it / 60} min" }, "$completedSets Sätze").joinToString(" · ")
         val sections = row.session.exercises.sortedBy { it.order }.map { ex ->
             val logged = ex.sets.filter { it.status == SetStatus.COMPLETED }.map { set ->
-                val value = listOfNotNull(set.weightKg?.let { "${number(it)} kg" }, set.reps?.let { "$it Wdh." }, set.seconds?.let { "$it s" }, set.meters?.let { "${number(it)} m" }).joinToString(" × ")
+                val value = listOfNotNull(set.weightKg?.let { "${number(it)} kg" }, repsText(set, ex.isPerSide), set.seconds?.let { "$it s" }, set.meters?.let { "${number(it)} m" }).joinToString(" × ")
                 (if (set.setType == SetType.WARMUP) "W · " else "") + value
             }
             ex.name to logged.joinToString("\n").ifBlank { "Kein Satz gespeichert" }
@@ -232,7 +241,9 @@ private fun present(s: WatchWorkoutState, rt: WatchRuntimeState, repository: Wat
             val skipped = ex.sets.isNotEmpty() && ex.sets.none { it.status == SetStatus.PENDING || it.status == SetStatus.COMPLETED }
             WatchExerciseRow(ex.id, ex.name, "$done/$total", when { skipped -> "Übersprungen"; ex.id == focus?.id -> "Aktuell"; ex.sets.none { it.status == SetStatus.PENDING } -> "Fertig"; else -> "Offen" }, ex.id == focus?.id, ex.sets.none { it.status == SetStatus.PENDING }, skipped)
         },
-        sets = logged.mapIndexed { i, set -> WatchSetRow(set.id, if (set.setType == SetType.WARMUP) "W" else "${logged.take(i + 1).count { it.setType == SetType.WORKING }}", listOfNotNull(set.weightKg?.let { "$it kg" }, set.reps?.let { "$it Wdh." }, set.seconds?.let { "$it s" }, set.meters?.let { "$it m" }).joinToString(" × "), set.effort.orEmpty(), set.weightKg, set.reps?.toDouble() ?: set.seconds?.toDouble() ?: set.meters ?: 0.0, when (focus?.target?.metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." }) },
+        sets = logged.mapIndexed { i, set -> WatchSetRow(set.id, if (set.setType == SetType.WARMUP) "W" else "${logged.take(i + 1).count { it.setType == SetType.WORKING }}", listOfNotNull(set.weightKg?.let { "$it kg" }, repsText(set, focus?.isPerSide == true), set.seconds?.let { "$it s" }, set.meters?.let { "$it m" }).joinToString(" × "), set.effort.orEmpty(), set.weightKg,
+            (if (focus?.isPerSide == true) set.repsLeft?.toDouble() else null) ?: set.reps?.toDouble() ?: set.seconds?.toDouble() ?: set.meters ?: 0.0, when (focus?.target?.metric) { Metric.SECONDS -> "Sek."; Metric.METERS -> "m"; else -> "Wdh." },
+            amountRight = if (focus?.isPerSide == true && set.setType != SetType.WARMUP) set.repsRight?.toDouble() else null) },
         current = current, sessionActive = active, sessionId = s.sessionId, restRemainingSeconds = remaining, restTotalSeconds = timer?.let { ((it.endsAtMillis!! - it.startedAtMillis) / 1000).toInt() } ?: 0,
         exerciseFinished = completedFocus && active, nextExerciseName = nextName, undoAvailable = s.undo != null,
         navigationKey = listOf(s.sessionId, session?.status, s.timer?.phase, s.timer?.startedAtMillis, s.focusExerciseId, completedFocus).joinToString("|"),

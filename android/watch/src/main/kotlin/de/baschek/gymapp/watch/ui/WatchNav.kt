@@ -129,7 +129,7 @@ fun elementName(label: String): String {
 /** Visible screen for the recorder: sub-views (overlays) first, then the training page, else the route name. */
 fun recorderScreen(state: NavState, phase: SetPhase, editorKind: String = ""): String = when {
     state.top == Route.EDITOR -> when (editorKind) {
-        EditorKind.AMOUNT.name, EditorKind.SET_AMOUNT.name -> "editor_amount"
+        EditorKind.AMOUNT.name, EditorKind.SET_AMOUNT.name, EditorKind.AMOUNT_RIGHT.name, EditorKind.SET_AMOUNT_RIGHT.name -> "editor_amount"
         EditorKind.REST.name -> "editor_rest"
         else -> "editor_weight"
     }

@@ -44,6 +44,11 @@ class ExerciseDetailViewModel(private val c: AppContainer, private val exerciseI
         viewModelScope.launch { repo.updateExercise(exerciseId) { it.copy(notes = text.trim().ifEmpty { null }) } }
     }
 
+    /** Marks the exercise as left/right (two rep values per set). Only new sessions are affected. */
+    fun setPerSide(on: Boolean) {
+        viewModelScope.launch { repo.updateExercise(exerciseId) { it.copy(perSide = on.takeIf { v -> v }) } }
+    }
+
     /** Photos stay on this device (the contract does not sync photo bytes). */
     fun photoFile(): File = File(c.photoDir(), "$exerciseId.jpg")
 }

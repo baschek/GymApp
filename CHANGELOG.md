@@ -4,6 +4,10 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Left/right sets: an exercise can be marked "Pro Seite" (Mehr › Übungen). Its sets then have two rep values (left and right) and one shared weight, on phone and watch; the rest starts after the whole set, corrections and the history keep both values. Progression uses the weaker side (minimum). Sync fields `per_side`, `reps_left`, `reps_right` are optional (contract amendment I); older data works unchanged.
+
 ## [android-v2.9.1] - 2026-11-19
 
 Native Android app release (GitHub release `android-v2.9.1`) with phone APK
