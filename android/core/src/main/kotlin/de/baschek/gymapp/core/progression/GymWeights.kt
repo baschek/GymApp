@@ -256,7 +256,8 @@ fun prefillSet(ex: SessionExercise, availableWeights: List<Double>): SetPrefill 
     val weighted = ex.measurementType in WEIGHTED_TYPES
     val last = ex.sets.lastOrNull { it.status == SetStatus.COMPLETED && it.weightKg != null }?.weightKg
     // a weight the assistant planned for the next open set wins until the next log (amendment D)
-    val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
+    val planned = ex.sets.firstOrNull { it.status == SetStatus.PENDING }?.weightKg
+        ?: ex.sets.firstOrNull { it.status == SetStatus.PENDING && it.setType == SetType.WORKING }?.weightKg
     val weight = if (weighted) planned ?: last ?: ex.suggestedWeightKg ?: availableWeights.minOrNull() else null
     return SetPrefill(weight, ex.target.max, targetEffortBand(ex.target))
 }

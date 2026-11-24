@@ -205,6 +205,12 @@ class WorkoutViewModel(private val c: AppContainer, private val sessionId: Strin
         viewModelScope.launch { c.workout.logSet(sessionId, exerciseId, setId, input) }
     }
 
+    fun updatePlannedWeight(exerciseId: String, setId: String, weight: Double) {
+        viewModelScope.launch {
+            repo.updatePlannedSetWeight(sessionId, exerciseId, setId, weight)
+        }
+    }
+
     fun skipSet(exerciseId: String, setId: String, reason: SkipReason) {
         viewModelScope.launch { c.workout.skipSet(sessionId, exerciseId, setId, reason) }
     }

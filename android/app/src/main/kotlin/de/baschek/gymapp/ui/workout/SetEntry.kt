@@ -125,7 +125,9 @@ internal fun buildDraft(
     // reps set with "−1 / +1" in the notification win over the proposal
     val value = reps ?: if (warm) 12.0 else lastValue ?: ex.target.max
     val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
-    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort, addons)
+    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort, addons).apply {
+        if (set.weightKg != null) applyExact(total, levels, if (warm) emptyList() else addons, wheel)
+    }
 }
 
 /** Draft from a logged set, for correcting it. Values are taken exactly as logged. */
@@ -166,6 +168,7 @@ internal fun SetEntryCard(
     onCreateProfile: (() -> Unit)? = null,
     /** Called when the user changes reps/seconds/meters by hand (drops the notification override). */
     onValueEdited: (() -> Unit)? = null,
+    onWeightEdited: ((Double) -> Unit)? = null,
     afterWeight: @Composable ColumnScope.() -> Unit = {},
 ) {
     var dialog by remember { mutableStateOf<EntryDialog?>(null) }
@@ -189,6 +192,7 @@ internal fun SetEntryCard(
                     } else {
                         draft.level = wheel[(i + d).coerceIn(0, wheel.lastIndex)]
                     }
+                    onWeightEdited?.invoke(draft.total)
                 },
                 label = "Gewicht",
                 rowHeight = 40.dp, stepDistance = 20.dp,
@@ -215,6 +219,7 @@ internal fun SetEntryCard(
                                 draft.custom = null
                                 // by button position, so two equal add-ons toggle separately
                                 draft.selectedIdx = toggleAddonIndex(draft.selectedIdx, i)
+                                onWeightEdited?.invoke(draft.total)
                             },
                             Modifier.weight(1f),
                         )
@@ -256,7 +261,7 @@ internal fun SetEntryCard(
             title = "Gewicht eingeben", unit = "kg", initial = fmtNum(draft.total), decimal = true,
             note = if (hasProfile) "Der Wert wird exakt übernommen." else null,
             warn = { v -> if (hasProfile && !isSelectableWeight(v, levels, addonList)) "Keine Stufe im Profil – wird trotzdem übernommen." else null },
-            onConfirm = { draft.applyExact(it, levels, addonList, wheel); dialog = null },
+            onConfirm = { draft.applyExact(it, levels, addonList, wheel); onWeightEdited?.invoke(draft.total); dialog = null },
             onDismiss = { dialog = null },
         )
         EntryDialog.VALUE -> NumberEntryDialog(
