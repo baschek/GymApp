@@ -95,6 +95,7 @@ private class FakeApi : SyncApi {
         return PushResponse(ops.map(pushHandler), serverRev)
     }
     override suspend fun telemetry(batchId: String, counts: List<TelemetryCount>) = Unit
+    override suspend fun heartSeries(body: String) = Unit
 }
 
 class SyncEngineTest {

@@ -73,6 +73,10 @@ class KtorSyncApi(
         send<Unit>(HttpMethod.Post, "telemetry", body, true, null)
     }
 
+    override suspend fun heartSeries(body: String) {
+        send<Unit>(HttpMethod.Post, "heart", body, true, null)
+    }
+
     private suspend fun <T> get(path: String, serializer: KSerializer<T>): T =
         send(HttpMethod.Get, path, null, true, serializer)!!
 

@@ -6,6 +6,8 @@ import de.baschek.gymapp.core.api.BaseUrl
 import de.baschek.gymapp.core.api.InvalidBaseUrlException
 import de.baschek.gymapp.core.api.KtorSyncApi
 import de.baschek.gymapp.core.api.RequestSigner
+import de.baschek.gymapp.core.health.HeartSeriesSource
+import de.baschek.gymapp.core.health.HeartSeriesSync
 import de.baschek.gymapp.data.DeviceKeys
 import java.util.UUID
 import de.baschek.gymapp.core.api.SyncApiException
@@ -48,6 +50,7 @@ class SyncManager(
     private val httpClient: HttpClient,
     private val scheduler: SyncScheduler,
     private val deviceKeys: DeviceKeys,
+    heartSource: HeartSeriesSource? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val api = KtorSyncApi(
@@ -56,7 +59,12 @@ class SyncManager(
     )
     private val engine = SyncEngine(api, repository.syncStore)
     private val telemetry = TelemetrySync(api, repository.telemetryStore)
+    private val heartSeries = heartSource?.let { HeartSeriesSync(api, it) }
     private val mutex = Mutex()
+
+    /** The last heart-curve upload hit a temporary problem (network, rate limit, server error): the worker retries soon. */
+    @Volatile var heartRetryPending: Boolean = false
+        private set
 
     /** Called after assistant adjustments changed the running session (the one-step undo of the training screen is then stale). */
     @Volatile var onAdjustmentsResolved: (() -> Unit)? = null
@@ -98,6 +106,14 @@ class SyncManager(
                 throw e
             } catch (e: Exception) {
                 // keep batch for the next run
+            }
+            // The private heart curve is best effort as well: it never fails the sync and never logs its content.
+            try {
+                heartRetryPending = heartSeries?.upload()?.retrySoon == true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                heartRetryPending = true
             }
             repository.recordSyncSuccess(noticesOf(report))
             _state.value = SyncState.Idle

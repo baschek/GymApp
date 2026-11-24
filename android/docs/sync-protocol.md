@@ -202,3 +202,18 @@ Status: implemented in the app (`core/progression`, golden cases `... K: ...` in
 2. **Working weight, single-set proof.** In addition to the two-set rule, `proven_working_weight(exercise, previous, after_long_break)` accepts ONE completed working set at a weight beyond the previous working weight (higher; assisted: lower) when: its value is at least `target.min` plus one step (1 rep, 5 s, 10 m; at 8–12 reps: 9), its effort lower bound is at least `target.rir_min`, `effort_source` is `"user"`, it is not the first completed working set of the session after a break of more than 14 days (date of the previous completed session with that gym × exercise), and no later working set at the same weight in that session contradicts it (failed, below `target.min`, or entered effort below `rir_min`). It needs an existing working weight; the better of the two rules wins. The replay passes `after_long_break` per key.
 3. **Start weight after failures.** With a stored working weight, if the last two completed sessions in that gym containing the exercise both failed at it (tried at or beyond the working weight, no such working set reached `target.min`), the start suggestion is one step lighter (assisted: more assistance) with `suggestion_reason = "deload_after_failures"`. The stored working weight itself is not lowered.
 4. **Who computes.** The app computes working weights locally (`finishSession`, `recalculateWorkingWeights`, `reassignSessionGym`, edits of finished sessions). A server-side recalculation with the old two-set rule (for example a server gym reassignment) would write a lower `working_weight_kg` that the app adopts on the next pull; the app restores its own result only the next time it recalculates that gym × exercise. The server should adopt rules 1–3 and the new golden cases before it recalculates working weights again.
+
+## Amendment: private heart-rate curve (`POST /gym/v1/heart`)
+
+Same bearer token, device signature and 2 MiB limit as the other routes. The phone sends the exact curve of one
+finished personal session, only when the separate setting "Pulskurve an TESS" is on (default off) and only for
+trainings started after it was switched on; the Test profile and older trainings are never sent.
+
+Body (compact JSON, key order fixed, because the server compares repeats of one version byte for byte):
+`{"session_id","version","start_ms","end_ms","samples":[[delta_ms,bpm,quality],...],"gaps":[[start_offset_ms,end_offset_ms],...]}`.
+Times are UTC epoch milliseconds; the first delta is relative to `start_ms`, later ones to the previous point;
+quality 0 = reliable, 1 = unreliable; gap offsets are relative to `start_ms`. At most 100,000 samples, 10,000 gaps,
+24 h, bpm 1..300. Recordings without samples are not sent. Answers: 200 `stored`/`unchanged`/`stale` (all final),
+400 = this version is invalid (not retried until the version changes), 404/401 = wait for the regular sync,
+429/5xx/network = retried by the sync worker. Receipts (session id hash and version only) prevent resending.
+Code: `core/health/TessHeartSeries.kt`, `KtorSyncApi.heartSeries`, app `health/TessHeartSource.kt`.
