@@ -1,5 +1,7 @@
 package de.baschek.gymapp.core.progression
 
+import de.baschek.gymapp.core.training.countedReps
+import de.baschek.gymapp.core.training.totalReps
 import de.baschek.gymapp.core.model.EffortLowerBound
 import de.baschek.gymapp.core.model.EffortSource
 import de.baschek.gymapp.core.model.LoadBasis
@@ -65,7 +67,7 @@ private fun effortLb(effort: String?): Int? = effort?.let { EffortLowerBound[it]
 
 fun estimatedOneRepMax(set: SetLog, baseLoadKg: Double = 0.0): Double? {
     val totalLoad = (set.weightKg ?: 0.0) + baseLoadKg
-    val reps = set.reps
+    val reps = set.countedReps
     val lb = effortLb(set.effort)
     if (totalLoad == 0.0 || reps == null || reps == 0 || lb == null) return null
     val effectiveReps = min(20, reps + lb)
@@ -100,7 +102,7 @@ fun suggestNextWeight(
     val achieved: Double = when (target.metric) {
         Metric.SECONDS -> set.seconds?.toDouble()
         Metric.METERS -> set.meters
-        else -> set.reps?.toDouble()
+        else -> set.countedReps?.toDouble()
     } ?: return null
     if (achieved <= 0.0) return null
     val assisted = measurementType == MeasurementType.ASSISTED_REPS
@@ -230,7 +232,7 @@ fun historicalWorkingWeight(
 }
 
 private fun achievedValue(set: SetLog, target: Target): Double? = when (target.metric) {
-    Metric.REPS -> set.reps?.toDouble()
+    Metric.REPS -> set.countedReps?.toDouble()
     Metric.SECONDS -> set.seconds?.toDouble()
     else -> set.meters
 }
@@ -348,5 +350,5 @@ fun progressionEvidence(exercise: SessionExercise, currentWeightKg: Double?, aft
 fun totalVolume(exercise: SessionExercise): Double =
     exercise.sets.fold(0.0) { sum, set ->
         if (set.status != SetStatus.COMPLETED) sum
-        else sum + (set.weightKg ?: 0.0) * (set.reps ?: 0) * (if (exercise.loadBasis == LoadBasis.PER_HAND) 2 else 1)
+        else sum + (set.weightKg ?: 0.0) * (set.totalReps ?: 0) * (if (exercise.loadBasis == LoadBasis.PER_HAND) 2 else 1)
     }

@@ -278,4 +278,26 @@ class WatchWorkoutRepositoryTest {
         val added = r.state.value.session!!.exercises.last()
         assertEquals(Metric.SECONDS, added.target.metric)
     }
+
+    @Test fun `left right exercise logs both sides, corrects both and keeps the shared weight`() = runTest {
+        val file = temporary.newFile("sides.json").also { it.delete() }
+        val repository = WatchWorkoutRepository.at(file, WorkoutProfile.PERSONAL, "watch")
+        val sided = catalog(WorkoutProfile.PERSONAL).copy(exercises = mapOf("exercise" to raw(Exercise(name = "Rotation", perSide = true))))
+        repository.replaceCatalog(sided)
+        repository.startPlan("plan", "gym", WorkoutMode.NORMAL)
+        val exercise = repository.state.value.session!!.exercises.single()
+        assertEquals(true, exercise.perSide)
+        // both sides are mandatory
+        assertEquals(ActionOutcome.Rejected(RejectReason.INVALID_VALUE), repository.logSet(exercise.id, exercise.sets[0].id, WatchSetInput(20.0, 12.0, "one_two")))
+        assertTrue(repository.logSet(exercise.id, exercise.sets[0].id, WatchSetInput(20.0, 12.0, "one_two", valueRight = 9.0)).changed)
+        val set = repository.state.value.session!!.exercises.single().sets[0]
+        assertEquals(12, set.repsLeft); assertEquals(9, set.repsRight); assertEquals(9, set.reps); assertEquals(20.0, set.weightKg)
+        assertTrue(repository.correctSet(exercise.id, set.id, de.baschek.gymapp.core.training.SetCorrection(22.5, 12.0, "one_two", valueRight = 10.0)).changed)
+        val corrected = repository.state.value.session!!.exercises.single().sets[0]
+        assertEquals(12, corrected.repsLeft); assertEquals(10, corrected.repsRight); assertEquals(10, corrected.reps); assertEquals(22.5, corrected.weightKg)
+        // the event that carries it to the phone holds both values
+        val after = repository.state.value.replica!!.document["exercises"]!!.let { it as kotlinx.serialization.json.JsonArray }[0] as kotlinx.serialization.json.JsonObject
+        val rawSet = (after["sets"] as kotlinx.serialization.json.JsonArray)[0] as kotlinx.serialization.json.JsonObject
+        assertEquals("10", rawSet["reps_right"].toString()); assertEquals("12", rawSet["reps_left"].toString())
+    }
 }

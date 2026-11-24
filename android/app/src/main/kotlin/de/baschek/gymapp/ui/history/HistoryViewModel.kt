@@ -6,6 +6,7 @@ import de.baschek.gymapp.AppContainer
 import de.baschek.gymapp.core.model.Gym
 import de.baschek.gymapp.core.model.Session
 import de.baschek.gymapp.core.progression.splitTotal
+import de.baschek.gymapp.core.training.stepReps
 import de.baschek.gymapp.data.MachineInfo
 import de.baschek.gymapp.data.Stored
 import de.baschek.gymapp.telemetry.Telemetry
@@ -87,14 +88,15 @@ class SessionDetailViewModel(private val c: AppContainer, private val sessionId:
         }
     }
 
-    fun stepReps(exerciseId: String, setId: String, direction: Int) {
+    /** [side] is set for left/right exercises (the other side keeps its value), null for ordinary exercises. */
+    fun stepReps(exerciseId: String, setId: String, direction: Int, side: de.baschek.gymapp.core.training.RepSide? = null) {
         Telemetry.track("verlauf_detail", "edit_reps")
         viewModelScope.launch {
             repo.editCompletedSession(sessionId) { s ->
                 s.copy(
                     exercises = s.exercises.map { ex ->
                         if (ex.id != exerciseId) ex
-                        else ex.copy(sets = ex.sets.map { if (it.id == setId) it.copy(reps = ((it.reps ?: 0) + direction).coerceIn(0, 200)) else it })
+                        else ex.copy(sets = ex.sets.map { if (it.id == setId) it.stepReps(ex, direction, side) else it })
                     },
                 )
             }

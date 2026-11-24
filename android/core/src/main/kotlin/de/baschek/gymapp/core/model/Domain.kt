@@ -151,6 +151,11 @@ data class Exercise(
     @SerialName("muscle_groups") val muscleGroups: List<String>? = null,
     /** Optional finer muscle areas (amendment G), keys of [MuscleSub]; each belongs to one of [muscleGroups]. */
     @SerialName("muscle_subgroups") val muscleSubgroups: List<String>? = null,
+    /**
+     * Left/right exercise (amendment I): every set has two rep counts, [SetLog.repsLeft] and [SetLog.repsRight], with one
+     * shared weight. Copied to [SessionExercise.perSide] when a session starts. Only meaningful for reps targets.
+     */
+    @SerialName("per_side") val perSide: Boolean? = null,
 )
 
 @Serializable
@@ -236,7 +241,15 @@ data class SetLog(
     @SerialName("weight_kg") val weightKg: Double? = null,
     /** Add-ons that are part of [weightKg] (amendment C). */
     @SerialName("addon_weights_kg") val addonWeightsKg: List<Double>? = null,
+    /**
+     * Reps of the set. For a per-side exercise ([SessionExercise.perSide]) this is the number that counts for progression,
+     * volume-free statistics and old readers: the MINIMUM of [repsLeft] and [repsRight] (amendment I).
+     */
     val reps: Int? = null,
+    /** Reps of the left side of a per-side set (amendment I); null for ordinary sets and data from before the feature. */
+    @SerialName("reps_left") val repsLeft: Int? = null,
+    /** Reps of the right side of a per-side set (amendment I). */
+    @SerialName("reps_right") val repsRight: Int? = null,
     val seconds: Int? = null,
     val meters: Double? = null,
     val effort: String? = null,
@@ -263,6 +276,8 @@ data class SessionExercise(
     @SerialName("rest_seconds") val restSeconds: Int = 90,
     @SerialName("superset_group") val supersetGroup: String? = null,
     @SerialName("planned_sets") val plannedSets: Int = 0,
+    /** Copy of [Exercise.perSide] taken at session start (amendment I): the sets have left and right reps. */
+    @SerialName("per_side") val perSide: Boolean? = null,
     @SerialName("suggested_weight_kg") val suggestedWeightKg: Double? = null,
     @SerialName("suggestion_reason") val suggestionReason: String? = null,
     @SerialName("suggestion_source_gym_id") val suggestionSourceGymId: String? = null,

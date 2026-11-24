@@ -217,3 +217,16 @@ quality 0 = reliable, 1 = unreliable; gap offsets are relative to `start_ms`. At
 400 = this version is invalid (not retried until the version changes), 404/401 = wait for the regular sync,
 429/5xx/network = retried by the sync worker. Receipts (session id hash and version only) prevent resending.
 Code: `core/health/TessHeartSeries.kt`, `KtorSyncApi.heartSeries`, app `health/TessHeartSource.kt`.
+
+## v1 amendment I (proposed by the app, 2026-11-24): left/right sets (`per_side`)
+
+Status: implemented in the app (phone and watch). The server is not required to change: all fields are optional and unknown-field safe (see "Server" below).
+
+1. **`exercise.per_side`** (optional bool, `true` = the exercise is done per side, e.g. rotation machine). Absent/`false` = ordinary exercise. Only meaningful for exercises measured in reps (`target.metric = "reps"`); ignored for seconds/meters exercises. The app copies it to **`session.exercises[].per_side`** when a session starts (also for exercises added during the workout), so a later change of the catalog does not reinterpret old sessions.
+2. **`sets[].reps_left`, `sets[].reps_right`** (optional ints, set together). A completed working set of a per-side exercise has both, both are mandatory (no one-sided set), and there is **one** `weight_kg` (plus `addon_weights_kg`) for both sides. Warm-up sets are entered without sides.
+3. **`sets[].reps` stays and is `min(reps_left, reps_right)`** for such sets, so every reader that knows nothing about sides (older app versions, the server's progression, trend and history tools) keeps working and the weaker side decides. Old data (no fields) is unchanged and valid; the app writes none of the new keys unless an exercise is per side.
+4. **Progression:** the counted reps of a set are `min(left, right)` (`SetLog.countedReps`); working-weight proof, one-rep-max estimate, trends, personal bests and start-weight rules use it. **Volume** (tonnage) counts both sides (`reps_left + reps_right`).
+5. **Rest** starts after the whole set (both values) is saved; the "Satz geschafft" notification action saves the prefill on both sides (each side from its last value, else the target maximum; `-1/+1` moves both).
+6. **Correction** (phone while training, phone history, watch set edit) changes both values separately; `reps` follows as the minimum, the other side keeps its value. Reopening or skipping a set removes `reps`, `reps_left`, `reps_right`.
+7. **Phone/watch sync** uses the existing event queue unchanged: sessions are raw documents, a set is an atomic record, so a concurrent correction of one side on each device is a (whole-set) conflict, never a mixed set.
+8. **Server (TESS):** accepts the fields as unknown extras (`extra="allow"`). Optional later: declare `per_side`, `reps_left`, `reps_right` in the schema (type validation), pass them through the read tools and allow `per_side` in the exercise tool. Until then a server edit of an exercise keeps `per_side` (the stored `data` is the client's dict).

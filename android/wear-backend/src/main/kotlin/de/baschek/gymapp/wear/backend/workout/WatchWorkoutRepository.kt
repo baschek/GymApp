@@ -27,7 +27,9 @@ import kotlinx.serialization.json.JsonObject
 
 /** One set as entered on the watch. [effortSource]: [EffortSource.USER] when the band was chosen, [EffortSource.AUTO] for the preselection (see `resolveEffort`). */
 @Serializable data class WatchSetInput(val weightKg: Double?, val value: Double?, val effort: String?, val addonWeightsKg: List<Double>? = null,
-    val effortSource: String? = null)
+    val effortSource: String? = null,
+    /** Right-side reps of a per-side exercise ([value] is then the left side); both are mandatory there (amendment I). */
+    val valueRight: Double? = null)
 @Serializable data class WatchUndo(val exerciseId: String, val exercise: SessionExercise, val index: Int, val label: String)
 @Serializable data class WatchFinishUndo(val sessionId: String, val machineBefore: Map<String, JsonObject?>,
     val milestoneIds: List<String>, val previousHistory: JsonObject?)
@@ -189,6 +191,7 @@ class WatchWorkoutRepository private constructor(
                 order = i + 1, measurementType = measurementType,
                 loadDirection = ex?.loadDirection ?: LoadDirection.HIGHER, loadBasis = ex?.loadBasis ?: LoadBasis.STACK,
                 target = targetFor(measurementType, pe.target), restSeconds = pe.restSeconds, supersetGroup = pe.supersetGroup, plannedSets = n,
+                perSide = ex?.perSide?.takeIf { it },
                 suggestedWeightKg = suggestion?.weightKg, suggestionReason = suggestion?.reason, suggestionSourceGymId = suggestion?.sourceGymId,
                 sets = (1..n).map { SetLog(id = newId(), order = it, setType = SetType.WORKING, status = SetStatus.PENDING) })
         }
@@ -253,6 +256,8 @@ class WatchWorkoutRepository private constructor(
         val set = ex.sets.firstOrNull { it.id == setId } ?: reject(RejectReason.SET_ALREADY_DONE)
         if (set.status != SetStatus.PENDING) reject(RejectReason.SET_ALREADY_DONE)
         if (input.value?.let { !it.isFinite() || it <= 0.0 } == true || input.weightKg?.let { !it.isFinite() || it < 0.0 } == true) reject(RejectReason.INVALID_VALUE)
+        // left/right exercise: both sides are mandatory and must be real numbers
+        if (ex.isPerSide && (input.value == null || input.valueRight == null || !input.valueRight.isFinite() || input.valueRight <= 0.0)) reject(RejectReason.INVALID_VALUE)
         val clock = now(); val timer = s.timer
         val elapsed = if (timer?.phase == "SET" && timer.sessionId == s.sessionId && timer.exerciseId == exerciseId && timer.setId == setId) ((clock - timer.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         val timerForSession = timer?.takeIf { it.sessionId == s.sessionId }
@@ -260,9 +265,8 @@ class WatchWorkoutRepository private constructor(
         val beforeRest = if (!setTimerMatches) null else timerForSession?.pendingRestSeconds ?: if (timerForSession?.phase == "REST") ((clock - timerForSession.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         val beforeSetup = if (!setTimerMatches) null else timerForSession?.pendingSetupSeconds ?: if (timerForSession?.phase == "MACHINE_SETUP" && timerForSession.exerciseId == exerciseId) ((clock - timerForSession.startedAtMillis).coerceAtLeast(0L) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else null
         val updated = session.copy(exercises = session.exercises.map { item -> if (item.id != exerciseId) item else clearPlannedWeights(item.copy(sets = item.sets.map { entry ->
-            if (entry.id != setId) entry else entry.copy(status = SetStatus.COMPLETED, weightKg = input.weightKg,
+            if (entry.id != setId) entry else entry.withReps(item, input.value, input.valueRight).copy(status = SetStatus.COMPLETED, weightKg = input.weightKg,
                 addonWeightsKg = input.addonWeightsKg?.takeIf { it.isNotEmpty() },
-                reps = if (item.target.metric == Metric.REPS) input.value?.toInt() else entry.reps,
                 seconds = if (item.target.metric == Metric.SECONDS) input.value?.toInt() else entry.seconds,
                 meters = if (item.target.metric == Metric.METERS) input.value else entry.meters, effort = input.effort,
                 effortSource = input.effortSource?.takeIf { input.effort != null && it in setOf(EffortSource.USER, EffortSource.AUTO) },
@@ -311,7 +315,7 @@ class WatchWorkoutRepository private constructor(
     }
     suspend fun addExercise(catalogExerciseId: String): ActionOutcome = change(null, "Übung hinzugefügt") { s, session ->
         val ex = decode<Exercise>(s.catalog.exercises[catalogExerciseId]) ?: reject(RejectReason.EXERCISE_GONE)
-        val updated = de.baschek.gymapp.core.training.addExercise(session, templateFor(catalogExerciseId, ex.name, ex.measurementType, ex.loadDirection, ex.loadBasis), 1, newId)
+        val updated = de.baschek.gymapp.core.training.addExercise(session, templateFor(catalogExerciseId, ex.name, ex.measurementType, ex.loadDirection, ex.loadBasis, perSide = ex.perSide), 1, newId)
         Triple(updated, s.timer, updated.exercises.lastOrNull()?.id)
     }
     suspend fun startSetTimer(): ActionOutcome = change(null, "Satz gestartet") { s, session ->

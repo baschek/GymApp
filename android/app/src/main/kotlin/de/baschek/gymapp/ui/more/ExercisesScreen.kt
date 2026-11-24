@@ -51,6 +51,9 @@ import de.baschek.gymapp.ui.components.ChevronIcon
 import de.baschek.gymapp.ui.components.Group
 import de.baschek.gymapp.ui.components.GymCardSurface
 import de.baschek.gymapp.ui.components.GymField
+import de.baschek.gymapp.ui.components.GymSwitch
+import de.baschek.gymapp.ui.tracked1
+import de.baschek.gymapp.core.training.TIMED_MEASUREMENT_TYPES
 import de.baschek.gymapp.ui.components.GymIcons
 import de.baschek.gymapp.ui.components.Hairline
 import de.baschek.gymapp.ui.components.ListRow
@@ -183,6 +186,15 @@ fun ExerciseDetailScreen(exerciseId: String, nav: Navigator) {
                     ListRow("Muskelgruppe", trailing = {
                         Text(MuscleMapping.groupsOf(e).joinToString(", ") { MuscleGroup.label(it) }.ifEmpty { "–" }, style = MaterialTheme.typography.bodyLarge)
                     })
+                    // left/right exercise: only for exercises measured in reps; a running workout keeps what it started with
+                    if (e.measurementType !in TIMED_MEASUREMENT_TYPES) {
+                        Hairline()
+                        ListRow(
+                            "Pro Seite (links und rechts)",
+                            subtitle = "Pro Satz zwei Wiederholungswerte, ein gemeinsames Gewicht. Gilt ab dem nächsten Training.",
+                            trailing = { GymSwitch(e.perSide == true, tracked1<Boolean>(SCREEN + "_detail", "per_side") { vm.setPerSide(it) }, "Übung pro Seite erfassen") },
+                        )
+                    }
                 }
             }
             item {

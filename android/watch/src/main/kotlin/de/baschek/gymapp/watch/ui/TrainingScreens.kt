@@ -127,7 +127,9 @@ private fun SetPage(ui: UiContext) {
                         ValueButton(ui.draft.total(current)?.let(::formatWeight) ?: "–", current.weightLabel, "Gewicht ändern") { ui.openEditor(EditorKind.WEIGHT) }
                         Text("×", color = Muted, fontSize = 16.sp, modifier = Modifier.padding(horizontal = 2.dp))
                     }
-                    ValueButton(formatWeight(if (current.isDuration && elapsed != null) elapsed.toDouble() else ui.draft.amount), current.unit, "${current.unit} ändern") { ui.openEditor(EditorKind.AMOUNT) }
+                    // left/right exercise: two rep values next to the one shared weight
+                    ValueButton(formatWeight(if (current.isDuration && elapsed != null) elapsed.toDouble() else ui.draft.amount), if (current.amountRight != null) "links" else current.unit, "${current.unit} ändern") { ui.openEditor(EditorKind.AMOUNT) }
+                    if (current.amountRight != null) ValueButton(formatWeight(ui.draft.amountRight), "rechts", "Wdh. rechts ändern") { ui.openEditor(EditorKind.AMOUNT_RIGHT) }
                 }
                 if (titleLines <= 1) Small(current.target, size = 11, maxLines = 1)
             }
@@ -138,7 +140,7 @@ private fun SetPage(ui: UiContext) {
                 when {
                     current.isDuration && elapsed == null -> RoundButton("", "Zeit starten", icon = R.drawable.ic_play) { ui.dispatch(WatchAction.StartSetTimer) }
                     current.isDuration -> RoundButton("", "Stopp und speichern", icon = R.drawable.ic_stop) { ui.check(elapsed!!.coerceAtLeast(1).toDouble()) }
-                    else -> RoundButton("", "Satz geschafft", icon = R.drawable.ic_check) { ui.check(ui.draft.amount) }
+                    else -> RoundButton("", "Satz geschafft", icon = R.drawable.ic_check) { ui.check(ui.draft.amount, if (current.amountRight != null) ui.draft.amountRight else null) }
                 }
             }
         }
@@ -368,7 +370,7 @@ internal fun SetsScreen(ui: UiContext) {
     ListScreen(state.current?.exerciseName ?: "Sätze", state.sets.isEmpty(), "Noch kein Satz.") {
         items(state.sets, key = { it.id }) { row ->
             ListButton("${row.label}  ${row.value}", row.effort) {
-                ui.selection.setEdit = row.id; ui.selection.editWeight = row.weight; ui.selection.editAmount = row.amount
+                ui.selection.setEdit = row.id; ui.selection.editWeight = row.weight; ui.selection.editAmount = row.amount; ui.selection.editAmountRight = row.amountRight ?: 0.0
                 ui.push(Route.SET_EDIT)
             }
         }
@@ -392,11 +394,13 @@ internal fun SetEditScreen(ui: UiContext) {
                         ValueButton(formatWeight(ui.selection.editWeight ?: 0.0), "kg", "Gewicht ändern") { ui.openEditor(EditorKind.SET_WEIGHT) }
                         Text("×", color = Muted, fontSize = 16.sp)
                     }
-                    ValueButton(formatWeight(ui.selection.editAmount), row.unit, "Wert ändern") { ui.openEditor(EditorKind.SET_AMOUNT) }
+                    ValueButton(formatWeight(ui.selection.editAmount), if (row.amountRight != null) "links" else row.unit, "Wert ändern") { ui.openEditor(EditorKind.SET_AMOUNT) }
+                    // a left/right set is corrected with both values; the weight stays shared
+                    if (row.amountRight != null) ValueButton(formatWeight(ui.selection.editAmountRight), "rechts", "Wert rechts ändern") { ui.openEditor(EditorKind.SET_AMOUNT_RIGHT) }
                 }
             }
             PrimaryRow(rowCenter, { RoundButton("", "Löschen", primary = false, size = 48.dp, icon = R.drawable.ic_close) { ui.dispatch(WatchAction.DeleteSet(current.exerciseId, row.id)); ui.back() } }) {
-                RoundButton("", "Änderung speichern", icon = R.drawable.ic_check) { ui.dispatch(WatchAction.CorrectSet(current.exerciseId, row.id, ui.selection.editWeight, ui.selection.editAmount, row.effort)); ui.back() }
+                RoundButton("", "Änderung speichern", icon = R.drawable.ic_check) { ui.dispatch(WatchAction.CorrectSet(current.exerciseId, row.id, ui.selection.editWeight, ui.selection.editAmount, row.effort, amountRight = row.amountRight?.let { ui.selection.editAmountRight })); ui.back() }
             }
         }
     }
@@ -488,6 +492,8 @@ internal fun ValueEditor(ui: UiContext) {
             EditorKind.REST -> ui.dispatch(WatchAction.ChangeRest(direction * 15))
             EditorKind.SET_WEIGHT -> sel.editWeight = stepWeight(sel.editWeight ?: 0.0, direction)
             EditorKind.SET_AMOUNT -> sel.editAmount = stepAmount(sel.editAmount, direction)
+            EditorKind.AMOUNT_RIGHT -> { draft.amountRight = stepAmount(draft.amountRight, direction); draft.amountEdited = true }
+            EditorKind.SET_AMOUNT_RIGHT -> sel.editAmountRight = stepAmount(sel.editAmountRight, direction)
         }
     }
     fun valueOf(kind: EditorKind, delta: Int): String? = when (kind) {
@@ -495,8 +501,8 @@ internal fun ValueEditor(ui: UiContext) {
             val w = (if (kind == EditorKind.WEIGHT) draft.weight else sel.editWeight) ?: 0.0
             if (delta == 0) formatWeight(w) else stepWeight(w, delta).takeIf { abs(it - w) > 1e-9 }?.let(::formatWeight)
         }
-        EditorKind.AMOUNT, EditorKind.SET_AMOUNT -> {
-            val a = if (kind == EditorKind.AMOUNT) draft.amount else sel.editAmount
+        EditorKind.AMOUNT, EditorKind.SET_AMOUNT, EditorKind.AMOUNT_RIGHT, EditorKind.SET_AMOUNT_RIGHT -> {
+            val a = when (kind) { EditorKind.AMOUNT -> draft.amount; EditorKind.AMOUNT_RIGHT -> draft.amountRight; EditorKind.SET_AMOUNT_RIGHT -> sel.editAmountRight; else -> sel.editAmount }
             if (delta == 0) formatWeight(a) else stepAmount(a, delta).takeIf { abs(it - a) > 1e-9 }?.let(::formatWeight)
         }
         EditorKind.REST -> if (delta == 0) clock(state.restRemainingSeconds ?: 0) else null
@@ -521,7 +527,8 @@ internal fun ValueEditor(ui: UiContext) {
                 }
             } else Small(when (kind) {
                 EditorKind.WEIGHT, EditorKind.SET_WEIGHT -> if (steps.isEmpty()) "Gewicht · kein Maschinenprofil" else "Gewicht"
-                EditorKind.AMOUNT, EditorKind.SET_AMOUNT -> current?.unit ?: "Wert"
+                EditorKind.AMOUNT, EditorKind.SET_AMOUNT -> if (current?.amountRight != null) "Wdh. links" else current?.unit ?: "Wert"
+                EditorKind.AMOUNT_RIGHT, EditorKind.SET_AMOUNT_RIGHT -> "Wdh. rechts"
                 EditorKind.REST -> "Pause in 15-s-Schritten"
             }, Modifier.align(Alignment.TopCenter).padding(top = h * 0.16f))
             // Middle: - [neighbour / value / neighbour] +
@@ -537,7 +544,7 @@ internal fun ValueEditor(ui: UiContext) {
             }
             val below = when {
                 kind == EditorKind.WEIGHT && current != null && addOns.isNotEmpty() -> "Gesamt ${formatWeight(draft.total(current) ?: 0.0)} kg"
-                kind == EditorKind.AMOUNT -> current?.target.orEmpty()
+                kind == EditorKind.AMOUNT || kind == EditorKind.AMOUNT_RIGHT -> current?.target.orEmpty()
                 else -> ""
             }
             Small(below, Modifier.align(Alignment.TopCenter).padding(top = h * 0.655f), size = 11, maxLines = 1)

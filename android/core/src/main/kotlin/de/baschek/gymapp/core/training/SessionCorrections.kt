@@ -55,6 +55,8 @@ data class SetCorrection(
     val addonWeightsKg: List<Double>? = null,
     /** Origin of [effort] when the caller knows it ([EffortSource]); a changed band always counts as chosen by the user. */
     val effortSource: String? = null,
+    /** Right-side reps of a per-side exercise ([value] is then the left side); ignored for ordinary exercises. */
+    val valueRight: Double? = null,
 )
 
 private fun mapSet(session: Session, exerciseId: String, setId: String, change: (SessionExercise, SetLog) -> SetLog): Session =
@@ -68,10 +70,9 @@ private fun mapSet(session: Session, exerciseId: String, setId: String, change: 
 fun correctSet(session: Session, exerciseId: String, setId: String, correction: SetCorrection): Session =
     mapSet(session, exerciseId, setId) { ex, set ->
         if (set.status != SetStatus.COMPLETED) set
-        else set.copy(
+        else set.withReps(ex, correction.value, correction.valueRight).copy(
             weightKg = correction.weightKg,
             addonWeightsKg = correction.addonWeightsKg?.takeIf { it.isNotEmpty() },
-            reps = if (ex.target.metric == Metric.REPS) correction.value?.toInt() else set.reps,
             seconds = if (ex.target.metric == Metric.SECONDS) correction.value?.toInt() else set.seconds,
             meters = if (ex.target.metric == Metric.METERS) correction.value else set.meters,
             effort = if (set.setType == SetType.WARMUP) set.effort else correction.effort,
@@ -86,7 +87,7 @@ fun correctSet(session: Session, exerciseId: String, setId: String, correction: 
     }
 
 private fun SetLog.reopened() = copy(
-    status = SetStatus.PENDING, weightKg = null, addonWeightsKg = null, reps = null, seconds = null, meters = null,
+    status = SetStatus.PENDING, weightKg = null, addonWeightsKg = null, reps = null, repsLeft = null, repsRight = null, seconds = null, meters = null,
     effort = null, effortSource = null, setDurationSeconds = null, restBeforeSeconds = null, setupBeforeSeconds = null, completedAt = null,
 )
 
@@ -111,7 +112,7 @@ fun skipRemainingSets(session: Session, exerciseId: String, reason: SkipReason):
     session.copy(
         exercises = session.exercises.map { ex ->
             if (ex.id != exerciseId) ex
-            else ex.copy(sets = ex.sets.map { if (it.status == SetStatus.PENDING) it.copy(status = reason.status, weightKg = null, reps = null) else it })
+            else ex.copy(sets = ex.sets.map { if (it.status == SetStatus.PENDING) it.copy(status = reason.status, weightKg = null, reps = null, repsLeft = null, repsRight = null) else it })
         },
     )
 

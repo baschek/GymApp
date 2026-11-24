@@ -5,6 +5,9 @@ import androidx.test.core.app.ApplicationProvider
 import de.baschek.gymapp.core.model.DocKey
 import de.baschek.gymapp.core.model.Document
 import de.baschek.gymapp.core.model.GymJson
+import de.baschek.gymapp.core.training.SetCorrection
+import de.baschek.gymapp.core.training.correctSet
+import de.baschek.gymapp.core.training.withReps
 import de.baschek.gymapp.data.GymRepository
 import de.baschek.gymapp.data.Profile
 import de.baschek.gymapp.data.db.GymDatabase
@@ -479,5 +482,47 @@ class GymRepositoryTest {
     fun dayWorkoutsAreNeverExpiredInTheTestProfile() = runBlocking {
         repo.setProfile(Profile.TEST)
         assertEquals(0, repo.expireDayWorkouts("2030-01-01"))
+    }
+
+    private val sidedExercise = """{"name":"Synthetic rotation","measurement_type":"load_reps","load_direction":"higher","load_basis":"stack","per_side":true,"vendor":"keep"}"""
+
+    @Test
+    fun leftRightExerciseFlowsIntoTheSessionAndBothValuesSurviveCorrectionAndOutbox() = runBlocking {
+        repo.syncStore.applyRemote(listOf(doc("plan", "p1", 5, plan), doc("exercise", "ex1", 6, sidedExercise)))
+        val id = repo.startSession("p1", gymId = "gym-a")!!
+        val ex = repo.getSession(id)!!.exercises.single()
+        assertEquals(true, ex.perSide)
+        repo.updateSession(id) { s ->
+            s.copy(exercises = s.exercises.map { e ->
+                e.copy(sets = e.sets.mapIndexed { i, set ->
+                    set.withReps(e, 12.0, if (i == 0) 9.0 else 10.0)
+                        .copy(status = "completed", weightKg = 30.0, effort = "two_three")
+                })
+            })
+        }
+        repo.updateSession(id) { correctSet(it, ex.id, ex.sets[0].id, SetCorrection(30.0, 12.0, "two_three", valueRight = 11.0)) }
+        val set = repo.getSession(id)!!.exercises.single().sets[0]
+        assertEquals(12, set.repsLeft); assertEquals(11, set.repsRight); assertEquals(11, set.reps)
+        val op = repo.syncStore.pendingOps(100).last { it.entity == "session" }
+        val rawSet = op.data["exercises"]!!.let { it as kotlinx.serialization.json.JsonArray }[0].jsonObject["sets"]!!.let { it as kotlinx.serialization.json.JsonArray }[0].jsonObject
+        assertEquals("12", rawSet["reps_left"].toString()); assertEquals("11", rawSet["reps_right"].toString())
+        assertEquals("true", op.data["exercises"]!!.let { it as kotlinx.serialization.json.JsonArray }[0].jsonObject["per_side"].toString())
+        // the exercise flag keeps unknown fields when it is toggled in the app
+        repo.updateExercise("ex1") { it.copy(perSide = null) }
+        val toggled = repo.syncStore.pendingOps(100).last { it.entity == "exercise" }
+        assertFalse("per_side" in toggled.data)
+        assertEquals("\"keep\"", toggled.data["vendor"].toString())
+    }
+
+    @Test
+    fun sessionsFromBeforeTheFeatureLoadAndStayFreeOfTheNewFields() = runBlocking {
+        val old = doc("session", "old", 1, """{"status":"completed","gym_id":"g","plan_name":"P","started_at":"2026-01-01T10:00:00Z","completed_at":"2026-01-01T11:00:00Z",
+            "exercises":[{"id":"e","exercise_id":"x","name":"X","order":1,"sets":[{"id":"s","order":1,"set_type":"working","status":"completed","weight_kg":20,"reps":10}]}]}""")
+        repo.syncStore.applyRemote(listOf(old))
+        val set = repo.getSession("old")!!.exercises.single().sets.single()
+        assertEquals(10, set.reps); assertEquals(null, set.repsLeft); assertEquals(null, repo.getSession("old")!!.exercises.single().perSide)
+        repo.updateSession("old") { it.copy(notes = "touched") }
+        val raw = repo.syncStore.pendingOps(100).last { it.entity == "session" }.data.toString()
+        assertFalse("reps_left" in raw || "reps_right" in raw || "per_side" in raw)
     }
 }

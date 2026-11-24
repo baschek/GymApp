@@ -24,6 +24,8 @@ import de.baschek.gymapp.core.model.SetLog
 import de.baschek.gymapp.core.model.SetStatus
 import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.progression.totalVolume
+import de.baschek.gymapp.core.training.RepSide
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.telemetry.Telemetry
 import de.baschek.gymapp.ui.Navigator
 import de.baschek.gymapp.ui.appViewModelFactory
@@ -134,7 +136,7 @@ fun SessionDetailScreen(sessionId: String, nav: Navigator) {
                         Overline(ex.name, Modifier.padding(bottom = 4.dp))
                         ex.sets.forEachIndexed { i, set ->
                             if (i > 0) Hairline()
-                            SetRow(ex, set, editing, onWeight = { d -> vm.stepWeight(ex.id, set.id, d, machines[ex.exerciseId]) }, onReps = { d -> vm.stepReps(ex.id, set.id, d) })
+                            SetRow(ex, set, editing, onWeight = { d -> vm.stepWeight(ex.id, set.id, d, machines[ex.exerciseId]) }, onReps = { side, d -> vm.stepReps(ex.id, set.id, d, side) })
                         }
                     }
                 }
@@ -171,7 +173,7 @@ fun SessionDetailScreen(sessionId: String, nav: Navigator) {
 }
 
 @Composable
-private fun SetRow(ex: SessionExercise, set: SetLog, editing: Boolean, onWeight: (Int) -> Unit, onReps: (Int) -> Unit) {
+private fun SetRow(ex: SessionExercise, set: SetLog, editing: Boolean, onWeight: (Int) -> Unit, onReps: (RepSide?, Int) -> Unit) {
     val cs = MaterialTheme.colorScheme
     val done = set.status == SetStatus.COMPLETED
     val label = if (set.setType == SetType.WARMUP) "Aufwärmen" else "Satz ${set.order}"
@@ -182,7 +184,15 @@ private fun SetRow(ex: SessionExercise, set: SetLog, editing: Boolean, onWeight:
             if (set.weightKg != null) {
                 StepRow("Gewicht (kg)", fmtNum(set.weightKg!!), { onWeight(-1) }, { onWeight(1) }, minusDescription = "${ex.name}, $label: Gewicht verringern", plusDescription = "${ex.name}, $label: Gewicht erhöhen")
             }
-            StepRow("Wiederholungen", "${set.reps ?: 0}", { onReps(-1) }, { onReps(1) }, minusEnabled = (set.reps ?: 0) > 0, minusDescription = "${ex.name}, $label: Wiederholungen verringern", plusDescription = "${ex.name}, $label: Wiederholungen erhöhen")
+            if (ex.isPerSide && set.setType != SetType.WARMUP) {
+                // left/right set: both values are corrected separately, the weight stays shared
+                val left = set.repsLeft ?: set.reps ?: 0
+                val right = set.repsRight ?: set.reps ?: 0
+                StepRow("Wiederholungen links", "$left", { onReps(RepSide.LEFT, -1) }, { onReps(RepSide.LEFT, 1) }, minusEnabled = left > 0, minusDescription = "${ex.name}, $label: Wiederholungen links verringern", plusDescription = "${ex.name}, $label: Wiederholungen links erhöhen")
+                StepRow("Wiederholungen rechts", "$right", { onReps(RepSide.RIGHT, -1) }, { onReps(RepSide.RIGHT, 1) }, minusEnabled = right > 0, minusDescription = "${ex.name}, $label: Wiederholungen rechts verringern", plusDescription = "${ex.name}, $label: Wiederholungen rechts erhöhen")
+            } else {
+                StepRow("Wiederholungen", "${set.reps ?: 0}", { onReps(null, -1) }, { onReps(null, 1) }, minusEnabled = (set.reps ?: 0) > 0, minusDescription = "${ex.name}, $label: Wiederholungen verringern", plusDescription = "${ex.name}, $label: Wiederholungen erhöhen")
+            }
         }
     } else {
         Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s2)) {
@@ -195,7 +205,7 @@ private fun SetRow(ex: SessionExercise, set: SetLog, editing: Boolean, onWeight:
             if (done) {
                 val weight = set.weightKg?.let { fmtNum(it) + " kg × " }.orEmpty()
                 Text(
-                    weight + (set.reps ?: set.seconds ?: 0), style = GymTextStyles.number.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize),
+                    weight + (if (ex.isPerSide && set.repsLeft != null && set.repsRight != null) "L ${set.repsLeft} / R ${set.repsRight}" else (set.reps ?: set.seconds ?: 0).toString()), style = GymTextStyles.number.copy(fontSize = MaterialTheme.typography.bodyLarge.fontSize),
                     color = cs.onSurface,
                 )
             }

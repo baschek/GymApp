@@ -6,7 +6,9 @@ import de.baschek.gymapp.core.training.SetPreview
 
 /** Presentation data contains only values supplied by the local workout store and runtime. */
 data class WatchOption(val id: String, val name: String, val detail: String = "", val color: Long? = null)
-data class WatchSetRow(val id: String, val label: String, val value: String, val effort: String = "", val weight: Double? = null, val amount: Double = 0.0, val unit: String = "Wdh.")
+data class WatchSetRow(val id: String, val label: String, val value: String, val effort: String = "", val weight: Double? = null, val amount: Double = 0.0, val unit: String = "Wdh.",
+    /** Right-side reps of a left/right set ([amount] is then the left side); null for ordinary sets. */
+    val amountRight: Double? = null)
 data class WatchExerciseRow(
     val id: String, val name: String, val detail: String, val status: String,
     val current: Boolean = false, val completed: Boolean = false, val skipped: Boolean = false,
@@ -21,6 +23,8 @@ data class WatchCurrentSet(
     val effortTarget: Target = Target(rirMin = 1.0, rirMax = 2.0),
     /** The note of this exercise in the running workout only (the note screen appends to it, spec I). */
     val exerciseNote: String = "",
+    /** Right-side reps of a left/right exercise ([amount] is then the left side, both mandatory); null for ordinary sets. */
+    val amountRight: Double? = null,
 )
 data class WatchSummary(val volume: String, val sets: String, val duration: String, val pulse: String)
 data class WatchCelebration(val exercise: String, val from: String, val to: String)
@@ -82,11 +86,11 @@ sealed interface WatchAction {
     data class StartDay(val day: String, val gym: String, val mode: String) : WatchAction
     data class StartSpontaneous(val exercise: String, val gym: String, val mode: String) : WatchAction
     /** [effortSource]: "user" when the band was chosen in the effort picker, "auto" when the preselection applied (spec E). */
-    data class Log(val exercise: String, val set: String, val weight: Double?, val amount: Double, val addons: List<Double> = emptyList(), val effort: String? = null, val effortSource: String? = null) : WatchAction
+    data class Log(val exercise: String, val set: String, val weight: Double?, val amount: Double, val addons: List<Double> = emptyList(), val effort: String? = null, val effortSource: String? = null, val amountRight: Double? = null) : WatchAction
     data class Focus(val exercise: String) : WatchAction
     data class Move(val exercise: String, val delta: Int) : WatchAction
     data class ToggleExercise(val exercise: String, val skipped: Boolean) : WatchAction
-    data class CorrectSet(val exercise: String, val set: String, val weight: Double?, val amount: Double, val effort: String) : WatchAction
+    data class CorrectSet(val exercise: String, val set: String, val weight: Double?, val amount: Double, val effort: String, val amountRight: Double? = null) : WatchAction
     data class DeleteSet(val exercise: String, val set: String) : WatchAction
     /** Replaces the exercise's note in the running workout (the note screen appends before sending, spec I). */
     data class SetNote(val exercise: String, val note: String) : WatchAction

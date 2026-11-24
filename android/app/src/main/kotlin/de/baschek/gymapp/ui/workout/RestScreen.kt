@@ -28,6 +28,7 @@ import de.baschek.gymapp.core.model.SetType
 import de.baschek.gymapp.core.stats.estimateTimeLeft
 import de.baschek.gymapp.core.stats.finishClock
 import de.baschek.gymapp.core.training.canAddSet
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.core.training.weightHint
 import de.baschek.gymapp.telemetry.Telemetry
@@ -109,8 +110,13 @@ internal fun RestScreen(session: Session, timer: TimerState, vm: WorkoutViewMode
             val arrow = if (acceptedForNext != null && lastWeight != null) {
                 when { acceptedForNext > lastWeight + 1e-6 -> " ▲"; acceptedForNext < lastWeight - 1e-6 -> " ▼"; else -> "" }
             } else ""
-            val reps = vm.repsFor(repsOverride, nextEx.id, nextSet.id)?.toInt() ?: last?.reps ?: nextEx.target.max.toInt()
-            if (weight != null) "Dann: ${fmtNum(weight)} kg$arrow × $reps" else "Dann: $reps Wdh."
+            val override = vm.repsFor(repsOverride, nextEx.id, nextSet.id)?.toInt()
+            val reps = override ?: last?.reps ?: nextEx.target.max.toInt()
+            // left/right exercise: both sides, each from its own last value (override moves both)
+            val repsText = if (nextEx.isPerSide && nextSet.setType == SetType.WORKING) {
+                "L ${override ?: last?.repsLeft ?: reps} / R ${override ?: last?.repsRight ?: reps}"
+            } else reps.toString()
+            if (weight != null) "Dann: ${fmtNum(weight)} kg$arrow × $repsText" else "Dann: $repsText Wdh."
         }
     }
     val badge = lastLogged?.let { (ex, set) ->

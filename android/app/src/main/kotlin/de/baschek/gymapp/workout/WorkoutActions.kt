@@ -38,6 +38,8 @@ import de.baschek.gymapp.core.training.moveExercise as coreMoveExercise
 import de.baschek.gymapp.core.training.setExerciseNote as coreSetExerciseNote
 import de.baschek.gymapp.core.training.skipSet as coreSkipSet
 import de.baschek.gymapp.core.training.templateFor
+import de.baschek.gymapp.core.training.isPerSide
+import de.baschek.gymapp.core.training.withReps
 import de.baschek.gymapp.core.training.nextExerciseAfter
 import de.baschek.gymapp.core.training.upNextExerciseIndex
 import de.baschek.gymapp.core.training.withSyncedFocus
@@ -58,6 +60,8 @@ data class SetInput(
     val addonWeightsKg: List<Double>? = null,
     /** [EffortSource] of [effort]: USER from the effort picker of the set entry, AUTO for the prefill of "Satz geschafft". */
     val effortSource: String? = null,
+    /** Right-side reps of a per-side exercise ([value] is then the left side); both are mandatory there. Null for ordinary exercises. */
+    val valueRight: Double? = null,
 )
 
 /** Workout operations shared by the UI and the notification actions. */
@@ -194,11 +198,10 @@ class WorkoutActions(
                     else clearPlannedWeights(ex.copy(
                         sets = ex.sets.map { set ->
                             if (set.id != setId) set
-                            else set.copy(
+                            else set.withReps(ex, input.value, input.valueRight).copy(
                                 status = SetStatus.COMPLETED,
                                 weightKg = input.weightKg,
                                 addonWeightsKg = input.addonWeightsKg?.takeIf { it.isNotEmpty() },
-                                reps = if (ex.target.metric == Metric.REPS) input.value?.toInt() else set.reps,
                                 seconds = if (ex.target.metric == Metric.SECONDS) (setSeconds ?: input.value?.toInt()) else set.seconds,
                                 meters = if (ex.target.metric == Metric.METERS) input.value else set.meters,
                                 effort = input.effort,
@@ -239,8 +242,10 @@ class WorkoutActions(
         val set = exercise.sets.first { it.status == SetStatus.PENDING }
         val weights = repository.getMachineWeights(active.value.gymId)[exercise.exerciseId].orEmpty()
         val pre = prefillSet(exercise, weights)
-        val value = NotificationReps.valueFor(override, active.id, exercise.id, set.id) ?: pre.value
-        return NextLog(active.id, exercise, set, pre.copy(value = value))
+        val overridden = NotificationReps.valueFor(override, active.id, exercise.id, set.id)
+        val value = overridden ?: pre.value
+        // the notification's −1/+1 moves both sides of a left/right set together
+        return NextLog(active.id, exercise, set, pre.copy(value = value, valueRight = if (exercise.isPerSide) (overridden ?: pre.valueRight) else null))
     }
 
     /** Logs the next pending set with the prefilled values, reps from the notification override (notification action). */
@@ -251,7 +256,7 @@ class WorkoutActions(
         }
         val pre = next.prefill
         // the notification logs the preselected band without asking: "auto", not proof of reserve (spec E)
-        logSet(next.sessionId, next.exercise.id, next.set.id, SetInput(pre.weightKg, pre.value, pre.effort, effortSource = EffortSource.AUTO))
+        logSet(next.sessionId, next.exercise.id, next.set.id, SetInput(pre.weightKg, pre.value, pre.effort, effortSource = EffortSource.AUTO, valueRight = pre.valueRight))
         return true
     }
 
@@ -332,7 +337,7 @@ class WorkoutActions(
     /** Appends a catalog exercise (three sets) to the running workout. */
     suspend fun addExercise(sessionId: String, catalogExerciseId: String) {
         val exercise = repository.getExercise(catalogExerciseId) ?: return
-        val template = templateFor(catalogExerciseId, exercise.name, exercise.measurementType, exercise.loadDirection, exercise.loadBasis)
+        val template = templateFor(catalogExerciseId, exercise.name, exercise.measurementType, exercise.loadDirection, exercise.loadBasis, perSide = exercise.perSide)
         repository.updateSession(sessionId) { s: Session -> coreAddExercise(s, template, 3) { UUID.randomUUID().toString() } }
     }
 

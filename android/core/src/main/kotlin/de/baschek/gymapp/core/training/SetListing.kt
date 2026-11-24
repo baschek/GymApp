@@ -62,13 +62,14 @@ private fun unitSuffix(metric: String) = when (metric) {
 fun setValue(ex: SessionExercise, set: SetLog): Double? = when (ex.target.metric) {
     Metric.SECONDS -> set.seconds?.toDouble()
     Metric.METERS -> set.meters
-    else -> set.reps?.toDouble()
+    else -> set.countedReps?.toDouble()
 }
 
 /** "140 kg × 12", "12 Wdh.", "45 s", "20 kg × 45 s". */
 fun describeResult(ex: SessionExercise, set: SetLog): String {
+    val sides = if (ex.isPerSide) set.repsLeft?.let { l -> set.repsRight?.let { r -> describeSides(l, r) } } else null
     val value = setValue(ex, set)
-    val valueText = value?.let { deNum(it) + unitSuffix(ex.target.metric) }
+    val valueText = sides ?: value?.let { deNum(it) + unitSuffix(ex.target.metric) }
     val weight = set.weightKg?.let { deNum(it) + " kg" }
     return when {
         weight != null && valueText != null -> "$weight × $valueText"

@@ -1,5 +1,6 @@
 package de.baschek.gymapp.core.wear.progress
 
+import de.baschek.gymapp.core.training.countedReps
 import de.baschek.gymapp.core.model.*
 import de.baschek.gymapp.core.progression.WEIGHTED_TYPES
 import de.baschek.gymapp.core.wear.events.WatchCatalog
@@ -66,7 +67,7 @@ fun watchProgress(catalog: WatchCatalog, today: LocalDate, zone: ZoneId = ZoneId
         for (set in ex.sets) {
             if (set.status != SetStatus.COMPLETED || set.setType != SetType.WORKING || set.id.isBlank()) continue
             val measured = when (ex.target.metric) {
-                Metric.REPS -> set.reps?.toDouble()
+                Metric.REPS -> set.countedReps?.toDouble()
                 Metric.SECONDS -> set.seconds?.toDouble()
                 Metric.METERS -> set.meters
                 else -> null

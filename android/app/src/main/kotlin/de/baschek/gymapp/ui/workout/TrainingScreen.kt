@@ -49,6 +49,7 @@ import de.baschek.gymapp.core.training.SetCorrection
 import de.baschek.gymapp.core.training.SkipReason
 import de.baschek.gymapp.core.training.StopwatchState
 import de.baschek.gymapp.core.training.canAddSet
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.core.training.isTimed
 import de.baschek.gymapp.core.training.stopwatchState
 import de.baschek.gymapp.core.training.targetLine
@@ -140,7 +141,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
     val overrideReps = if (ex != null && set != null) NotificationReps.valueFor(repsOverride, sessionId, ex.id, set.id) else null
     val draft = remember(set?.id, hasProfile, acceptedForEx) { buildDraft(ex, set, levels, addonList, wheel, acceptedForEx, overrideReps) }
     // "−1 / +1" in the notification while this screen is open: the entry follows the shared value (weight edits stay).
-    LaunchedEffect(set?.id, overrideReps) { overrideReps?.let { draft.value = it } }
+    LaunchedEffect(set?.id, overrideReps) { overrideReps?.let { draft.value = it; draft.valueRight = it } }
 
     val hint = remember(ex, info, bodyWeight, warm) {
         if (ex == null || warm || !weighted) null else weightHint(ex, info?.levels.orEmpty(), info?.workingWeightKg, bodyWeight, info?.addons.orEmpty())
@@ -156,6 +157,7 @@ internal fun TrainingScreen(sessionId: String, session: Session, vm: WorkoutView
                 SetInput(
                     weightKg = if (weighted) draft.total else null,
                     value = draft.value,
+                    valueRight = if (ex.isPerSide && !warm) draft.valueRight else null,
                     effort = draft.effortBand(warm),
                     addonWeightsKg = draft.addons.sorted().takeIf { it.isNotEmpty() && weighted },
                     // the effort picker is visible in the set entry: the band counts as entered (spec E)
@@ -474,6 +476,7 @@ private fun CorrectSetSheet(
                         value = draft.value,
                         effort = draft.effortBand(warm),
                         addonWeightsKg = draft.addons.sorted().takeIf { it.isNotEmpty() && weighted },
+                        valueRight = if (ex.isPerSide && !warm) draft.valueRight else null,
                     ),
                 )
             },

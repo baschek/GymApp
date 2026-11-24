@@ -36,6 +36,7 @@ import de.baschek.gymapp.core.progression.toggleAddonIndex
 import de.baschek.gymapp.core.progression.splitTotal
 import de.baschek.gymapp.core.progression.weightCandidates
 import de.baschek.gymapp.core.training.describeTarget
+import de.baschek.gymapp.core.training.isPerSide
 import de.baschek.gymapp.core.training.setValue as resultValue
 import de.baschek.gymapp.core.model.SelectableEffortBands
 import de.baschek.gymapp.telemetry.Telemetry
@@ -57,7 +58,10 @@ import de.baschek.gymapp.ui.tracked
 internal class SetDraft(
     val initialTotal: Double, level: Double, addons: List<Double>, value: Double, effort: Int,
     private val addonList: List<Double> = emptyList(),
+    /** Right-side reps of a left/right exercise ([value] is then the left side); unused for ordinary exercises. */
+    valueRight: Double = value,
 ) {
+    var valueRight by mutableDoubleStateOf(valueRight)
     var level by mutableDoubleStateOf(level)
 
     /** Chosen add-on buttons by position, so two equal add-ons stay two separate buttons. */
@@ -123,9 +127,13 @@ internal fun buildDraft(
     val last = lastWorking(ex)
     val lastValue = last?.let { resultValue(ex, it) }
     // reps set with "−1 / +1" in the notification win over the proposal
-    val value = reps ?: if (warm) 12.0 else lastValue ?: ex.target.max
+    val perSide = ex.isPerSide && !warm
+    // left/right: each side starts from what that side did last time (the notification's −1/+1 moves both sides)
+    val value = reps ?: if (warm) 12.0 else if (perSide) last?.repsLeft?.toDouble() ?: lastValue ?: ex.target.max else lastValue ?: ex.target.max
+    val valueRight = reps ?: if (perSide) last?.repsRight?.toDouble() ?: lastValue ?: ex.target.max else value
     val effort = if (warm) 1 else bandIndex(last?.effort).takeIf { it >= 0 } ?: prefillBand(ex)
-    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(valueStep(ex.target.metric)), effort, addons).apply {
+    val min = valueStep(ex.target.metric)
+    return SetDraft(total, level, split?.addonsKg ?: emptyList(), value.coerceAtLeast(min), effort, addons, valueRight.coerceAtLeast(min)).apply {
         if (set.weightKg != null) applyExact(total, levels, if (warm) emptyList() else addons, wheel)
     }
 }
@@ -142,12 +150,16 @@ internal fun buildDraftFromSet(ex: SessionExercise, set: SetLog, levels: List<Do
         else -> wheel[nearestLevelIndex(wheel, total)]
     }
     val chosenAddons = stored?.sorted() ?: split?.addonsKg ?: emptyList()
-    val value = (resultValue(ex, set) ?: ex.target.max).coerceAtLeast(valueStep(ex.target.metric))
+    val min = valueStep(ex.target.metric)
+    // a corrected left/right set shows BOTH logged values exactly (the stored `reps` is only their minimum)
+    val perSide = ex.isPerSide && set.setType != SetType.WARMUP
+    val value = ((if (perSide) set.repsLeft?.toDouble() else null) ?: resultValue(ex, set) ?: ex.target.max).coerceAtLeast(min)
+    val valueRight = ((if (perSide) set.repsRight?.toDouble() else null) ?: value).coerceAtLeast(min)
     val effort = bandIndex(set.effort).takeIf { it >= 0 } ?: 1
-    return SetDraft(total, level, chosenAddons, value, effort, addons)
+    return SetDraft(total, level, chosenAddons, value, effort, addons, valueRight)
 }
 
-private enum class EntryDialog { WEIGHT, VALUE }
+private enum class EntryDialog { WEIGHT, VALUE, VALUE_RIGHT }
 
 /**
  * The input block of a set: weight wheel (tap the number to type it), add-on buttons, [afterWeight]
@@ -234,6 +246,8 @@ internal fun SetEntryCard(
 
         val metric = ex.target.metric
         val step = valueStep(metric)
+        // left/right exercise (not for warm-up sets): two rep wheels, one shared weight; both values are always set
+        val perSide = ex.isPerSide && !warm
         WheelRow(
             previous = (draft.value - step).takeIf { it >= step }?.let(::fmtNum),
             current = fmtNum(draft.value),
@@ -244,13 +258,32 @@ internal fun SetEntryCard(
                 draft.value = (draft.value + d * step).coerceIn(step, 999.0)
                 onValueEdited?.invoke()
             },
-            label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> "Wiederholungen" },
+            label = when (metric) { Metric.SECONDS -> "Sekunden"; Metric.METERS -> "Meter"; else -> if (perSide) "Wiederholungen links" else "Wiederholungen" },
             modifier = Modifier.padding(top = if (weighted) Spacing.s5 else 0.dp),
             rowHeight = 40.dp, stepDistance = 24.dp,
             minusEnabled = draft.value > step,
             neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
             onTapValue = tracked(screen, "value_type") { dialog = EntryDialog.VALUE },
         )
+        if (perSide) {
+            WheelRow(
+                previous = (draft.valueRight - step).takeIf { it >= step }?.let(::fmtNum),
+                current = fmtNum(draft.valueRight),
+                next = fmtNum(draft.valueRight + step),
+                unit = "Wdh. rechts",
+                onStep = { d ->
+                    Telemetry.track(screen, "reps_right_step")
+                    draft.valueRight = (draft.valueRight + d * step).coerceIn(step, 999.0)
+                    onValueEdited?.invoke()
+                },
+                label = "Wiederholungen rechts",
+                modifier = Modifier.padding(top = Spacing.s3),
+                rowHeight = 40.dp, stepDistance = 24.dp,
+                minusEnabled = draft.valueRight > step,
+                neighborHeight = 16.dp, neighborSize = 12.sp, valueSize = 28.sp,
+                onTapValue = tracked(screen, "value_right_type") { dialog = EntryDialog.VALUE_RIGHT },
+            )
+        }
         if (!warm) {
             EffortPicker(draft.effort, { Telemetry.track(screen, "effort"); draft.effort = it }, Modifier.padding(top = Spacing.s5))
         }
@@ -265,11 +298,21 @@ internal fun SetEntryCard(
             onDismiss = { dialog = null },
         )
         EntryDialog.VALUE -> NumberEntryDialog(
-            title = when (ex.target.metric) { Metric.SECONDS -> "Sekunden eingeben"; Metric.METERS -> "Meter eingeben"; else -> "Wiederholungen eingeben" },
+            title = when (ex.target.metric) { Metric.SECONDS -> "Sekunden eingeben"; Metric.METERS -> "Meter eingeben"; else -> if (ex.isPerSide && !warm) "Wiederholungen links eingeben" else "Wiederholungen eingeben" },
             unit = valueUnit(ex.target.metric), initial = fmtNum(draft.value), decimal = ex.target.metric == Metric.METERS,
             note = null,
             onConfirm = {
                 draft.value = if (ex.target.metric == Metric.METERS) it else Math.round(it).toDouble().coerceAtLeast(1.0)
+                onValueEdited?.invoke()
+                dialog = null
+            },
+            onDismiss = { dialog = null },
+        )
+        EntryDialog.VALUE_RIGHT -> NumberEntryDialog(
+            title = "Wiederholungen rechts eingeben", unit = valueUnit(ex.target.metric), initial = fmtNum(draft.valueRight), decimal = false,
+            note = null,
+            onConfirm = {
+                draft.valueRight = Math.round(it).toDouble().coerceAtLeast(1.0)
                 onValueEdited?.invoke()
                 dialog = null
             },
