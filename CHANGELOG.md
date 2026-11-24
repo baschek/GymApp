@@ -4,9 +4,20 @@ All notable GymApp changes are documented here.
 
 ## [Unreleased]
 
+## [android-v2.10.0] - 2026-11-24
+
+Native Android app release (GitHub release `android-v2.10.0`) with phone APK
+`gymapp-2.10.0.apk` and watch APK `gymapp-watch-2.10.0.apk`. Update phone and watch together.
+For the heart-rate curve, update TESS first (route `POST /gym/v1/heart`).
+
 ### Added
 
+- Heart-rate curve to TESS: new setting "Pulskurve an TESS senden" (off by default, personal profile only). When on, the exact heart-rate curve (every sample with quality, gaps kept as gaps) of each finished workout started after switching it on is sent to TESS. Older workouts and the Test profile are never sent; no heart data in logs.
 - Left/right sets: an exercise can be marked "Pro Seite" (Mehr › Übungen). Its sets then have two rep values (left and right) and one shared weight, on phone and watch; the rest starts after the whole set, corrections and the history keep both values. Progression uses the weaker side (minimum). Sync fields `per_side`, `reps_left`, `reps_right` are optional (contract amendment I); older data works unchanged.
+
+### Fixed
+
+- A weight changed on the phone for the open set (wheel, direct entry, add-ons, applied hint) now reaches the watch at once, before the set is logged. An independently edited watch draft keeps its value.
 
 ## [android-v2.9.1] - 2026-11-19
 
